@@ -1,0 +1,144 @@
+name: ocms
+x-app: &app
+  image: ocms:local
+  pull_policy: never
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  healthcheck:
+    test: [CMD, wget, -q, --spider, http://localhost:8080/healthz]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+x-common: &common
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Run python3 scripts/dev-init.py}
+  CATALOG_URL: http://catalog:8080
+  MEDIA_MAX_PDF_PAGES: ${MEDIA_MAX_PDF_PAGES:-500}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-1073741824}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+services:
+  postgres:
+    image: ocms-postgres:local
+    build:
+      context: .
+      dockerfile: infra/postgres/Dockerfile
+    environment:
+      POSTGRES_USER: ocms
+      POSTGRES_DB: ocms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/dev-init.py}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/dev-init.py}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/001-init.sh:ro
+      - ./migrations:/migrations:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U ocms -d ocms]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  s3:
+    image: chrislusf/seaweedfs:4.48
+    command: mini -dir=/data -ip=s3
+    environment:
+      S3_BUCKET: media
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Run python3 scripts/dev-init.py}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Run python3 scripts/dev-init.py}
+    volumes: [s3:/data]
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://localhost:8888/]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  catalog:
+    <<: *app
+    environment:
+      <<: *common
+      SERVICE: catalog
+      DATABASE_URL: postgres://catalog_app:${APP_DB_PASSWORD}@postgres:5432/ocms?sslmode=disable
+    depends_on:
+      postgres: {condition: service_healthy}
+  transfer:
+    <<: *app
+    environment:
+      <<: *common
+      SERVICE: transfer
+      MEDIA_URL: http://worker:8080
+      DATABASE_URL: postgres://transfer_app:${APP_DB_PASSWORD}@postgres:5432/ocms?sslmode=disable
+      CRYPTO_CONFIG: /run/secrets/crypto.yaml
+      S3_ENDPOINT: s3:8333
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    volumes: [./secrets/crypto.yaml:/run/secrets/crypto.yaml:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+      s3: {condition: service_healthy}
+      catalog: {condition: service_healthy}
+  search:
+    <<: *app
+    environment:
+      <<: *common
+      SERVICE: search
+      DATABASE_URL: postgres://search_app:${APP_DB_PASSWORD}@postgres:5432/ocms?sslmode=disable
+      MEDIA_URL: http://worker:8080
+      RUNTIME_URL: http://runtime:8080
+    depends_on:
+      catalog: {condition: service_healthy}
+  runtime:
+    image: ocms-runtime:local
+    build:
+      context: .
+      dockerfile: runtime/Dockerfile
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      INFERENCE_DTYPE: ${INFERENCE_DTYPE:-float32}
+      INFERENCE_THREADS: ${INFERENCE_THREADS:-4}
+    volumes: [models:/models]
+    tmpfs: ["/tmp:rw,size=512m,mode=1777"]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+  worker:
+    <<: *app
+    environment:
+      <<: *common
+      SERVICE: worker
+      DATABASE_URL: postgres://media_app:${APP_DB_PASSWORD}@postgres:5432/ocms?sslmode=disable
+      TRANSFER_URL: http://transfer:8080
+      SEARCH_URL: http://search:8080
+      RUNTIME_URL: http://runtime:8080
+      MEDIA_JOB_TIMEOUT_SECONDS: ${MEDIA_JOB_TIMEOUT_SECONDS:-7200}
+    tmpfs: ["/tmp:rw,size=768m,mode=1777"]
+    mem_limit: 768m
+    cpus: 1.5
+    depends_on:
+      postgres: {condition: service_healthy}
+      transfer: {condition: service_healthy}
+      search: {condition: service_healthy}
+      runtime: {condition: service_healthy}
+  bff:
+    <<: *app
+    build: .
+    environment:
+      <<: *common
+      SERVICE: bff
+      TRANSFER_URL: http://transfer:8080
+      SEARCH_URL: http://search:8080
+      MEDIA_URL: http://worker:8080
+      AUTH_MODE: ${AUTH_MODE:-development}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+    ports: ["127.0.0.1:${OCMS_PORT:-8080}:8080"]
+    depends_on:
+      transfer: {condition: service_healthy}
+      search: {condition: service_healthy}
+volumes:
+  models:
+  postgres:
+  s3:
