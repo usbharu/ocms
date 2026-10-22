@@ -1,0 +1,90 @@
+# Local human verification: OIDC app :8081, Hydra :4444, login :4446, Grafana :3000.
+# The login fixture deliberately omits real identity verification; never deploy it.
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.37.0
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - verify-telemetry:/data
+      - ./infra/verify/grafana-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ocms.yaml:ro
+      - ./infra/verify/ocms-dashboard.json:/otel-lgtm/ocms-dashboards/ocms.json:ro
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.137.0
+    command: [--config=/etc/otelcol/config.yaml]
+    volumes:
+      - ./infra/verify/collector.yaml:/etc/otelcol/config.yaml:ro
+      - ./.cache/otel:/evidence
+  hydra:
+    image: oryd/hydra:v2.3.0
+    command: serve all --dev
+    environment:
+      DSN: memory
+      URLS_SELF_ISSUER: http://localhost:4444
+      URLS_LOGIN: http://localhost:4446/login
+      URLS_CONSENT: http://localhost:4446/consent
+      SECRETS_SYSTEM: ${HYDRA_SYSTEM_SECRET:?Run python3 scripts/verify-init.py}
+      LOG_LEVEL: error
+      LOG_LEAK_SENSITIVE_VALUES: "false"
+    ports: ["127.0.0.1:4444:4444", "127.0.0.1:8081:8080"]
+  oidc-login:
+    image: python:3.12-alpine
+    command: python /fixture/oidc_provider.py
+    environment:
+      HYDRA_CLIENT_SECRET: ${HYDRA_CLIENT_SECRET}
+    volumes: [./infra/verify:/fixture:ro]
+    ports: ["127.0.0.1:4446:8080"]
+  oidc-setup:
+    image: python:3.12-alpine
+    command: python /fixture/oidc_setup.py
+    environment:
+      HYDRA_CLIENT_SECRET: ${HYDRA_CLIENT_SECRET}
+    volumes: [./infra/verify:/fixture:ro]
+    depends_on: [hydra]
+  bff-oidc:
+    image: ocms:local
+    pull_policy: never
+    # Share Hydra's loopback so the canonical browser issuer localhost:4444 also
+    # resolves for discovery, token exchange and JWKS without disabling validation.
+    network_mode: service:hydra
+    depends_on:
+      oidc-setup: {condition: service_completed_successfully}
+    environment:
+      SERVICE: bff
+      AUTH_MODE: oidc
+      PUBLIC_URL: http://localhost:8081
+      CATALOG_URL: http://catalog:8080
+      TRANSFER_URL: http://transfer:8080
+      SEARCH_URL: http://search:8080
+      MEDIA_URL: http://worker:8080
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      OIDC_ISSUER: http://localhost:4444
+      OIDC_CLIENT_ID: ocms-verify
+      OIDC_CLIENT_SECRET: ${HYDRA_CLIENT_SECRET:?Run python3 scripts/verify-init.py}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+    restart: unless-stopped
+  bff:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+  catalog:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+  transfer:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+  search:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+  worker:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+  runtime:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+volumes:
+  verify-telemetry:

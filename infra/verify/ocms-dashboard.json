@@ -1,0 +1,262 @@
+{
+  "id": null,
+  "uid": "ocms-verification",
+  "title": "OCMS verification",
+  "tags": [
+    "ocms",
+    "verification"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "OCMS manual verification",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "1. Open [OIDC OCMS](http://localhost:8081/), choose Alice/Bob and approve consent.\n2. Upload media, preview, download and search.\n3. Inspect the live metrics, traces and logs below. In Explore select **Tempo** for trace trees and **Loki** for correlated logs.\n\n[Verification guide](http://localhost:4446/) \u00b7 Data refreshes every 5 seconds. These are real application signals, including failed jobs."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Uploaded / downloaded / encrypted bytes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "0",
+          "expr": "sum(media_upload_bytes_total)",
+          "legendFormat": "Uploaded"
+        },
+        {
+          "refId": "1",
+          "expr": "sum(media_download_bytes_total)",
+          "legendFormat": "Downloaded"
+        },
+        {
+          "refId": "2",
+          "expr": "sum(media_crypto_bytes_total)",
+          "legendFormat": "Crypto"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "Jobs by result and type",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome, job_type) (media_job_completed_total)",
+          "legendFormat": "{{job_type}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 4,
+      "title": "Operation duration (mean seconds)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "0",
+          "expr": "sum(rate(media_upload_duration_seconds_sum[5m])) / sum(rate(media_upload_duration_seconds_count[5m]))",
+          "legendFormat": "upload"
+        },
+        {
+          "refId": "1",
+          "expr": "sum(rate(media_transcode_duration_seconds_sum[5m])) / sum(rate(media_transcode_duration_seconds_count[5m]))",
+          "legendFormat": "transcode"
+        },
+        {
+          "refId": "2",
+          "expr": "sum(rate(media_search_duration_seconds_sum[5m])) / sum(rate(media_search_duration_seconds_count[5m]))",
+          "legendFormat": "search"
+        },
+        {
+          "refId": "3",
+          "expr": "sum(rate(media_embedding_duration_seconds_sum[5m])) / sum(rate(media_embedding_duration_seconds_count[5m]))",
+          "legendFormat": "embedding"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "Deduplication hits",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(media_dedup_hits_total)",
+          "legendFormat": "Dedup hits"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 11,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Recent distributed traces (open Trace ID in Explore)",
+      "type": "table",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"bff\" || name = \"media.process\" || name = \"embedding.generate\" }",
+          "limit": 30,
+          "tableType": "traces"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Trace ID"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open trace tree",
+                    "url": "/explore?schemaVersion=1&panes=%7B%22trace%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22queryType%22%3A%22traceId%22%2C%22query%22%3A%22${__value.raw}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-30m%22%2C%22to%22%3A%22now%22%7D%7D%7D",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Application logs (expand a row for trace_id and span_id)",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service_name=~\"bff|catalog|transfer|search|worker|embedding-runtime\"}",
+          "queryType": "range"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true
+      }
+    }
+  ],
+  "links": [
+    {
+      "title": "OCMS OIDC",
+      "url": "http://localhost:8081/",
+      "targetBlank": true
+    },
+    {
+      "title": "Verification guide",
+      "url": "http://localhost:4446/",
+      "targetBlank": true
+    }
+  ]
+}
