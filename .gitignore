@@ -1,0 +1,7 @@
+/secrets/
+/.env
+/web/node_modules/
+/web/dist/
+/.cache/
+/ocms
+__pycache__/
