@@ -5,3 +5,5 @@
 /.cache/
 /ocms
 __pycache__/
+/web/test-results/
+/web/playwright-report/
