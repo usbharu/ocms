@@ -1,4 +1,4 @@
-"""WD 1.4 general tags only; rating and character labels never leave this module."""
+"""WD 1.4 general tags and separate character predictions; ratings are excluded."""
 import csv
 import math
 
@@ -7,12 +7,12 @@ REVISION = '4b34d1b07bdd8e95494072648960b8a6adcbc0ff'
 THRESHOLD = 0.35
 
 
-def select_tags(labels, scores):
+def select_tags(labels, scores, category=0, threshold=THRESHOLD):
     if len(labels) != len(scores) or not all(math.isfinite(float(x)) and 0 <= x <= 1 for x in scores):
         raise ValueError('invalid tagger output')
     tags = [{'name': label['name'], 'score': float(score)}
             for label, score in zip(labels, scores)
-            if int(label['category']) == 0 and float(score) >= THRESHOLD]
+            if int(label['category']) == category and float(score) >= threshold]
     return sorted(tags, key=lambda tag: (-tag['score'], tag['name']))[:256]
 
 
@@ -47,4 +47,5 @@ class Tagger:
         input = self.session.get_inputs()[0]
         value = prepare_image(image, input.shape[1])
         scores = self.session.run(None, {input.name: value})[0][0]
-        return select_tags(self.labels, scores)
+        return {'tags': select_tags(self.labels, scores),
+                'characters': select_tags(self.labels, scores, category=4, threshold=0.85)}

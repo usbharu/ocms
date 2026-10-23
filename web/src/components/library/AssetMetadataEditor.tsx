@@ -14,6 +14,8 @@ export function AssetMetadataEditor({
   const [filename, setFilename] = useState(asset.filename);
   const [tags, setTags] = useState(asset.tags);
   const [tagInput, setTagInput] = useState('');
+  const [characters, setCharacters] = useState(asset.characters ?? []);
+  const [characterInput, setCharacterInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -35,6 +37,8 @@ export function AssetMetadataEditor({
       if (changes.filename !== undefined) setFilename(updated.filename);
       setTags(updated.tags);
       if (changes.tags) setTagInput('');
+      setCharacters(updated.characters ?? []);
+      if (changes.characters) setCharacterInput('');
       setRetry(null);
       setMessage('保存しました');
     } catch {
@@ -76,6 +80,22 @@ export function AssetMetadataEditor({
       return;
     }
     void save({ tags: [...tags, tag] });
+  }
+
+  function addCharacter() {
+    const character = characterInput.trim();
+    if (locked.current || !character) return;
+    if (characters.includes(character)) {
+      setError('このキャラクターは追加済みです。');
+      setRetry(null);
+      return;
+    }
+    if (bytes(character) > 256 || characters.length >= 512) {
+      setError('キャラクターは1件256バイト以内、合計512件まで追加できます。');
+      setRetry(null);
+      return;
+    }
+    void save({ characters: [...characters, character] });
   }
 
   function clearFeedback() {
@@ -184,6 +204,72 @@ export function AssetMetadataEditor({
           variant="outline"
           type="submit"
           disabled={saving || !tagInput.trim()}
+        >
+          追加
+        </Button>
+      </form>
+      <Label htmlFor="asset-character-input">キャラクター</Label>
+      {characters.length > 0 ? (
+        <ul className="tag-chips" aria-label="登録済みキャラクター">
+          {characters.map((character, index) => (
+            <li className="tag-chip" key={character}>
+              <span>{character}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={saving}
+                aria-label={`キャラクター「${character}」を削除`}
+                onClick={() => {
+                  void save({
+                    characters: characters.filter((_, i) => i !== index),
+                  });
+                }}
+              >
+                <span aria-hidden="true">×</span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="metadata-hint">キャラクターはありません</p>
+      )}
+      <form
+        className="tag-input"
+        onSubmit={(e) => {
+          e.preventDefault();
+          addCharacter();
+        }}
+      >
+        <Input
+          id="asset-character-input"
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+          }}
+          value={characterInput}
+          disabled={saving}
+          placeholder="キャラクターを追加"
+          onChange={(e) => {
+            setCharacterInput(e.target.value);
+            clearFeedback();
+          }}
+          onKeyDown={(e) => {
+            if (
+              e.key === 'Enter' &&
+              (e.nativeEvent.isComposing ||
+                composing.current ||
+                e.keyCode === 229)
+            )
+              e.preventDefault();
+          }}
+        />
+        <Button
+          variant="outline"
+          type="submit"
+          aria-label="キャラクターを追加"
+          disabled={saving || !characterInput.trim()}
         >
           追加
         </Button>

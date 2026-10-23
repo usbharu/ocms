@@ -44,7 +44,7 @@ for name, mime in [('car.png', 'image/png'), ('car.mp4', 'video/mp4'), ('scan.pd
     bodies[name] = data
     upload = alice.create('wd14-fixture-' + name, data, mime)
     # Set manual tags before upload completion can trigger inference/reconciliation.
-    alice.call('PATCH', f"/api/v1/assets/{upload['asset_id']}", {'tags': ['wd14-manual-alice']})
+    alice.call('PATCH', f"/api/v1/assets/{upload['asset_id']}", {'tags': ['wd14-manual-alice'], 'characters': ['wd14-manual-character-alice']})
     alice.put(upload, data)
     uploads[name] = upload
 
@@ -54,6 +54,10 @@ for name, upload in uploads.items():
     blob = asset['blob_id']
     cached = json.loads(sql(f"SELECT array_to_json(tags) FROM catalog.wd14_results WHERE blob_id='{blob}'"))
     assert cached, 'synthetic visual fixture should receive general tags'
+    characters = json.loads(sql(f"SELECT array_to_json(characters) FROM catalog.wd14_character_results WHERE blob_id='{blob}'"))
+    assert 'wd14-manual-character-alice' in asset['characters'], 'manual character lost'
+    assert set(characters).issubset(asset['characters']), 'inferred characters missing'
+    assert sql(f"SELECT wd14_characters_tagged::text FROM catalog.assets WHERE id='{upload['asset_id']}'") == 'true'
     assert set(cached).issubset(asset['tags']), 'inferred tags missing from asset'
     assert sql(f"SELECT bool_and(wd14_tagged)::text FROM catalog.assets WHERE id='{upload['asset_id']}'") == 'true'
     bob.call('GET', f"/api/v1/assets/{upload['asset_id']}", expected=404)
@@ -71,11 +75,12 @@ expanded = asset['tags'] + ['wd14-edit-' + str(i) for i in range(110)]
 alice.call('PATCH', f"/api/v1/assets/{source['asset_id']}", {'tags': expanded})
 assert alice.asset(source)['tags'] == expanded, 'large combined tag set not editable'
 # Remove auto tags and wait for reconciliation: they must not come back.
-alice.call('PATCH', f"/api/v1/assets/{source['asset_id']}", {'tags': ['wd14-edited-alice']})
+alice.call('PATCH', f"/api/v1/assets/{source['asset_id']}", {'tags': ['wd14-edited-alice'], 'characters': []})
 sql(f"UPDATE media.processing_jobs SET status='retry',attempts=0,available_at=now() WHERE source_blob_id='{asset['blob_id']}' AND job_type='tags.generate'")
 wait(source)
 time.sleep(5)
 assert alice.asset(source)['tags'] == ['wd14-edited-alice']
+assert alice.asset(source)['characters'] == []
 body = bodies['car.png']
 copy = bob.create('wd14-shared.png', body)
 bob.put(copy, body)
@@ -89,8 +94,10 @@ else:
     raise AssertionError('cached tags not applied to duplicate')
 assert 'wd14-manual-alice' not in copied['tags'] and 'wd14-edited-alice' not in copied['tags']
 assert copied['blob_id'] == asset['blob_id']
+assert copied['characters'] == json.loads(sql(f"SELECT array_to_json(characters) FROM catalog.wd14_character_results WHERE blob_id='{asset['blob_id']}'"))
 assert sql(f"SELECT count(*) FROM media.processing_jobs WHERE source_blob_id='{asset['blob_id']}' AND job_type='tags.generate'") == '1'
 assert alice.asset(source)['tags'] == ['wd14-edited-alice']
+assert alice.asset(source)['characters'] == []
 check('duplicate reuses inference, manual edits remain independent and removed tags stay removed')
 
 # A full manual tag list must remain editable and must never be truncated by tagging.

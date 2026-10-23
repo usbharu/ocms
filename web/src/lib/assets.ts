@@ -3,13 +3,18 @@ export type Asset = {
   filename: string;
   mime_type: string;
   tags: string[];
+  characters?: string[];
   status: string;
   snippet?: string;
   page_number?: number;
   start_ms?: number;
   end_ms?: number;
 };
-export type AssetChanges = { filename?: string; tags?: string[] };
+export type AssetChanges = {
+  filename?: string;
+  tags?: string[];
+  characters?: string[];
+};
 
 export type Rendition = {
   rendition_id: string;
@@ -34,6 +39,7 @@ export type SearchContext = {
   mode: Mode;
   query: string;
   tag?: string;
+  character?: string;
   source?: Asset;
 };
 export type View = 'list' | 'grid' | 'detailed-grid';

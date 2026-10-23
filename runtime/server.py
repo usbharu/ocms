@@ -152,7 +152,7 @@ def tag(item: Input, x_service_token: str | None = Header(default=None)):
                 if image.width * image.height > 16_777_216:
                     raise ValueError('image dimensions exceeded')
                 tags = tagger.predict(image)
-            return {'tags': tags, 'model_id': TAG_MODEL, 'model_revision': TAG_REVISION}
+            return {**tags, 'model_id': TAG_MODEL, 'model_revision': TAG_REVISION}
     except Exception as error:
         logging.warning('tagging_failed exception_type=%s', type(error).__name__)
         raise HTTPException(503, 'TAGGING_FAILED') from None

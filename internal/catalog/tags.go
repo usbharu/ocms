@@ -20,14 +20,15 @@ func (s *Service) blobTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Tags     []string `json:"tags"`
-		Model    string   `json:"model_id"`
-		Revision string   `json:"model_revision"`
+		Tags       []string `json:"tags"`
+		Characters []string `json:"characters"`
+		Model      string   `json:"model_id"`
+		Revision   string   `json:"model_revision"`
 	}
 	if !platform.Decode(w, r, &in) {
 		return
 	}
-	if in.Model != contracts.TagModel || in.Revision != contracts.TagRevision || len(in.Tags) > 256 {
+	if in.Model != contracts.TagModel || in.Revision != contracts.TagRevision || len(in.Tags) > 256 || len(in.Characters) > 256 || !validCharacters(in.Characters) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
@@ -51,9 +52,20 @@ func (s *Service) blobTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	ids, err := lockCharacterAssets(r.Context(), tx, r.PathValue("id"))
+	if err != nil {
+		platform.RespondError(w, err)
+		return
+	}
 	_, err = tx.Exec(r.Context(), `INSERT INTO catalog.wd14_results(blob_id,tags,model_id,model_revision) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, r.PathValue("id"), in.Tags, in.Model, in.Revision)
 	if err == nil {
 		_, err = tx.Exec(r.Context(), applyWD14Tags, r.PathValue("id"))
+	}
+	if err == nil && in.Characters != nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.wd14_character_results(blob_id,characters,model_id,model_revision) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, r.PathValue("id"), in.Characters, in.Model, in.Revision)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), applyWD14Characters, r.PathValue("id"), ids)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -81,12 +93,20 @@ func validAssetTags(tags []string) bool {
 // Aggregate only authorized, live Assets, deduplicating tags within each Asset.
 // Nodes and edges share a single database snapshot. Graph work is bounded to 60 tags.
 func (s *Service) listTags(w http.ResponseWriter, r *http.Request) {
+	s.listLabels(w, r, "tags", `CROSS JOIN LATERAL unnest(a.tags) t(name)`)
+}
+
+func (s *Service) listCharacters(w http.ResponseWriter, r *http.Request) {
+	s.listLabels(w, r, "characters", `JOIN catalog.asset_characters t ON t.asset_id=a.id`)
+}
+
+func (s *Service) listLabels(w http.ResponseWriter, r *http.Request, key, source string) {
 	if !guard(w, r) {
 		return
 	}
 	var result json.RawMessage
 	err := s.DB.QueryRow(r.Context(), `WITH visible AS MATERIALIZED (
- SELECT DISTINCT a.id,t.name FROM catalog.assets a CROSS JOIN LATERAL unnest(a.tags) t(name)
+ SELECT DISTINCT a.id,t.name FROM catalog.assets a `+source+`
  WHERE `+allowed+` AND btrim(t.name)<>''
  ), counts AS MATERIALIZED (
  SELECT name,count(*) AS asset_count FROM visible WHERE strpos(lower(name),lower($2))>0 GROUP BY name
@@ -101,7 +121,7 @@ func (s *Service) listTags(w http.ResponseWriter, r *http.Request) {
  FROM graph_assets a JOIN graph_assets b ON a.id=b.id AND a.name COLLATE "C" < b.name COLLATE "C"
  GROUP BY a.name,b.name
  ) SELECT json_build_object(
- 'tags',COALESCE((SELECT json_agg(t ORDER BY asset_count DESC,name COLLATE "C") FROM top_tags t),'[]'::json),
+ '`+key+`',COALESCE((SELECT json_agg(t ORDER BY asset_count DESC,name COLLATE "C") FROM top_tags t),'[]'::json),
  'total',(SELECT count(*) FROM counts),
  'links',COALESCE((SELECT json_agg(l ORDER BY source COLLATE "C",target COLLATE "C") FROM links l),'[]'::json)
  )`, user(r), r.URL.Query().Get("q")).Scan(&result)

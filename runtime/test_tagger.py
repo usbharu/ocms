@@ -9,6 +9,14 @@ class TaggerTest(unittest.TestCase):
         self.assertEqual(select_tags(labels, [1, 1, .349, .35, .9]),
                          [{'name': 'a', 'score': .9}, {'name': 'z', 'score': .35}])
 
+    def test_characters_have_independent_category_threshold_and_limit(self):
+        labels = [{'name': name, 'category': category} for name, category in
+                  [('rating', '9'), ('general', '0'), ('low', '4'), ('character', '4')]]
+        self.assertEqual(select_tags(labels, [1, 1, .849, .85], category=4, threshold=.85),
+                         [{'name': 'character', 'score': .85}])
+        labels = [{'name': str(i), 'category': '4'} for i in range(300)]
+        self.assertEqual(len(select_tags(labels, [1] * 300, category=4, threshold=.85)), 256)
+
     def test_invalid_output_rejected(self):
         for scores in [[float('nan')], [float('inf')], [-1], [1.1], []]:
             with self.assertRaises(ValueError):

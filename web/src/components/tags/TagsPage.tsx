@@ -8,7 +8,14 @@ export type TagData = { tags: Tag[]; links: Link[]; total: number };
 type TagView = 'list' | 'cloud' | 'graph';
 const TagVisualization = lazy(() => import('./TagVisualization'));
 
-export function TagsPage({ onOpen }: { onOpen: (tag: string) => void }) {
+export function TagsPage({
+  onOpen,
+  kind = 'tags',
+}: {
+  onOpen: (tag: string) => void;
+  kind?: 'tags' | 'characters';
+}) {
+  const label = kind === 'characters' ? 'キャラクター' : 'タグ';
   const searchId = useId();
   const [query, setQuery] = useState('');
   const [view, setView] = useState<TagView>('cloud');
@@ -25,11 +32,12 @@ export function TagsPage({ onOpen }: { onOpen: (tag: string) => void }) {
     const timer = window.setTimeout(async () => {
       try {
         const response = await fetch(
-          `/api/v1/tags?${new URLSearchParams({ q: query.trim() })}`,
+          `/api/v1/${kind}?${new URLSearchParams({ q: query.trim() })}`,
           { signal: controller.signal },
         );
         if (!response.ok) throw new Error('tags');
-        const result: TagData = await response.json();
+        const raw = await response.json();
+        const result: TagData = { ...raw, tags: raw[kind] };
         if (!controller.signal.aborted) setData(result);
       } catch {
         if (!controller.signal.aborted) setError(true);
@@ -41,24 +49,24 @@ export function TagsPage({ onOpen }: { onOpen: (tag: string) => void }) {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query, revision]);
+  }, [query, revision, kind]);
   return (
-    <section className="tags-page" aria-label="タグ一覧">
-      <h1 className="visually-hidden">タグ</h1>
+    <section className="tags-page" aria-label={`${label}一覧`}>
+      <h1 className="visually-hidden">{label}</h1>
       <div className="tags-toolbar">
         <div className="tag-search">
-          <label htmlFor={searchId}>タグを検索</label>
+          <label htmlFor={searchId}>{label}を検索</label>
           <Input
             id={searchId}
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="タグ名"
+            placeholder={`${label}名`}
           />
         </div>
         <fieldset
           className="view-switch tag-controls"
-          aria-label="タグの表示方法"
+          aria-label={`${label}の表示方法`}
         >
           {(['list', 'cloud', 'graph'] as const).map((id) => (
             <Button
@@ -85,11 +93,11 @@ export function TagsPage({ onOpen }: { onOpen: (tag: string) => void }) {
       </div>
       {loading ? (
         <div className="empty" role="status">
-          タグを読み込み中…
+          {label}を読み込み中…
         </div>
       ) : error ? (
         <div className="empty" role="alert">
-          タグを読み込めません。
+          {label}を読み込めません。
           <Button
             variant="outline"
             onClick={() => setRevision((value) => value + 1)}
@@ -102,20 +110,25 @@ export function TagsPage({ onOpen }: { onOpen: (tag: string) => void }) {
           <>
             <div className="result-heading">
               <h2>
-                {query.trim() ? `「${query.trim()}」のタグ` : 'すべてのタグ'}
+                {query.trim()
+                  ? `「${query.trim()}」の${label}`
+                  : `すべての${label}`}
               </h2>
-              <span>{data.total}タグ</span>
+              <span>
+                {data.total}
+                {label}
+              </span>
             </div>
             {data.total === 0 ? (
               <div className="empty">
                 {query.trim()
-                  ? '一致するタグがありません。'
-                  : 'タグがありません。ライブラリでファイルにタグを追加してください。'}
+                  ? `一致する${label}がありません。`
+                  : `${label}がありません。ライブラリでファイルに${label}を追加してください。`}
               </div>
             ) : (
               <>
                 <p className="tag-hint">
-                  被リンク数：タグが付いたファイルの件数
+                  被リンク数：{label}が付いたファイルの件数
                 </p>
                 {view !== 'list' ? (
                   <Suspense
@@ -127,6 +140,7 @@ export function TagsPage({ onOpen }: { onOpen: (tag: string) => void }) {
                   >
                     <TagVisualization
                       key={query + view}
+                      label={label}
                       data={data}
                       view={view}
                       onOpen={onOpen}
@@ -147,7 +161,7 @@ export function TagsPage({ onOpen }: { onOpen: (tag: string) => void }) {
                 {data.total > data.tags.length && (
                   <p className="tag-hint">
                     被リンク数の上位{data.tags.length}
-                    タグを表示しています。検索で絞り込めます。
+                    {label}を表示しています。検索で絞り込めます。
                   </p>
                 )}
               </>

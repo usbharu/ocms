@@ -93,7 +93,7 @@ flowchart TB
 | **Transfer Service** | マスターキー読み込み、DEK生成/ラップ、AES-CTR暗号化・復号、S3 I/O、SHA-256計算、HTTP Range、Blob登録 | OCR、全文検索 |
 | **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、Catalog経由の一括認可 | 平文ファイル保存 |
 | **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成、WD14タグ集約 | ユーザー直接認証、マスターキー参照 |
-| **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ推論API | 検索DB操作、ACL判断 |
+| **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ・キャラクター推論API | 検索DB操作、ACL判断 |
 
 ### 3.2 通信ルール
 
@@ -109,7 +109,7 @@ flowchart TB
 
 ### 4.1 概念
 
-- **Asset**：ユーザーが扱う論理ファイル。所有者、ファイル名、タグ、ACLなどを持つ。同じ内容でもユーザーごとに独立する。
+- **Asset**：ユーザーが扱う論理ファイル。所有者、ファイル名、タグ、キャラクター、ACLなどを持つ。同じ内容でもユーザーごとに独立する。
 - **Blob**：バイト列そのものを表す不変のS3暗号化オブジェクト。同一平文バイナリは可能な限り一つのBlobにまとめる。
 - **Rendition**：既存Blobから変換された派生Blobと変換プロファイルの関係。
 - **Passage**：PDFのページ、OCR抽出結果、文字起こしの時間区間などのテキスト検索単位。
@@ -125,6 +125,7 @@ erDiagram
     BLOBS ||--o{ PASSAGES : extracted_to
     BLOBS ||--o{ FINGERPRINTS : hashed_as
     BLOBS ||--o{ EMBEDDINGS : embedded_as
+    ASSETS ||--o{ ASSET_CHARACTERS : depicts
     ASSETS ||--o{ GRANTS : authorized_by
 ```
 
@@ -134,7 +135,7 @@ erDiagram
 
 | Schema | 主なテーブル | 所有 |
 |---|---|---|
-| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events` | Catalog |
+| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results` | Catalog |
 | `storage` | `blobs`, `upload_objects` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings` | Search |
@@ -475,14 +476,16 @@ Blob削除は参照管理と分離して行い、参照がゼロになったBlob
 
 **HLSプレイリスト、HLSセグメント、ABRは実装しない。** MP4は`moov` atomを先頭に配置し、HTTP Rangeでシークする。Codecやコンテナがブラウザ非対応の場合は標準MP4派生ファイルを作る。
 
-### 8.3 WD14による一般タグの自動付与
+### 8.3 WD14による一般タグ・キャラクターの自動付与
 
 - メディア解析完了後、画像・動画・PDFに `tags.generate` Jobを作成する。音声は対象外とする。リース・期限・最大4回の再試行を既存Jobと共有する。
-- Runtimeは `SmilingWolf/wd-v1-4-convnext-tagger-v2`（リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）をCPUで実行し、category 0の一般タグだけを閾値0.35で返す。キャラクターとレーティングは除外する。
+- Runtimeは `SmilingWolf/wd-v1-4-convnext-tagger-v2`（リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）をCPUで実行し、category 0の一般タグを閾値0.35、category 4のキャラクターを閾値0.85で分けて返す。レーティングは除外する。
 - 画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定する。タグごとの最大スコアで集約し、上位256タグを採用する。
 - Workerが結果をCatalogへ送る際、CatalogはWorkerに実行中JobのBlob・リース・期限を照会して確認する。Catalogは `catalog.wd14_results` にBlob単位の推論結果とモデル情報を保存し、各Assetの `tags` へ一度だけ追加する。適用済みかどうかは `catalog.assets.wd14_tagged` で管理する。
 - タグの追加は既存タグを保持する原子的な更新とする。手動タグとの合計上限は512件で、上限を超える場合は既存タグを優先する。利用者は自動付与後のタグを編集・削除でき、Jobの再試行で削除済みタグを復活させない。後から作成した重複Assetには推論結果だけをコピーし、別Assetの手動タグをコピーしない。状態同期で追加漏れを補う。
 - 既存の一覧・検索・ACLを利用する。タグの内容・推論入力・元ファイル名はログやTraceに記録しない。
+
+キャラクターは `catalog.asset_characters(asset_id, name, position)` に保存し、タグの配列とは独立させる。主キーは `(asset_id, name)` とし、同じAsset内の重複を防ぐ。推論結果は別テーブル `catalog.wd14_character_results(blob_id, characters, model_id, model_revision, created_at)` に保持し、`catalog.assets.wd14_characters_tagged` で一度だけの適用を管理する。タグと同じく既存の手動入力を優先し、合計512件・1件256バイトまでとする。削除・編集はAsset単位に保持し、再試行・状態同期で復元しない。重複Assetへは推論結果だけを追加する。旧Runtimeのキャラクター欄省略と、判定結果が空配列である場合を区別する。マイグレーション006は完了済みタグJobを再実行し、既存ファイルへキャラクターを付与する。
 
 ### 8.4 派生Blobの再利用
 
@@ -548,6 +551,7 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `POST` | `/api/v1/uploads` | Upload Session作成 |
 | `PUT` | `/api/v1/uploads/{uploadId}/content` | 平文ストリーム送信 |
 | `GET` | `/api/v1/uploads/{uploadId}` | Upload状態 |
+| `GET` | `/api/v1/characters` | 閲覧可能なキャラクターの一覧・件数・共起 |
 | `GET` | `/api/v1/assets` | Asset一覧・フィルタ |
 | `GET` | `/api/v1/assets/{assetId}` | 詳細、処理状態 |
 | `GET` | `/api/v1/assets/{assetId}/content` | 元ファイルの復号配信（Range可） |
@@ -565,7 +569,7 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `GET` | `/api/v1/assets/{assetId}/renditions/{renditionId}/content` | 派生メディア配信（Range可） |
 | `GET` | `/api/v1/jobs/{jobId}` | 非同期ジョブ状態 |
 
-一覧APIは `limit`（1〜200、既定200）、`offset`（0以上、既定0）、`kind`（省略、`image`、`video`、`audio`、`document`）、`q`（ファイル名・タグ）を受け付ける。`document` は画像・動画・音声以外を含む。応答の `assets` は作成日時の降順、同時刻の場合はAsset IDの降順で並べ、`total` は同じ検索条件・種類・ACLで絞り込んだ総件数とする。未許可・削除済みAssetは件数にも含めない。不正なページ指定は400とする。offset方式のため、ページ移動中の追加・削除によって位置が変わる場合がある。
+一覧APIは `limit`（1〜200、既定200）、`offset`（0以上、既定0）、`kind`（省略、`image`、`video`、`audio`、`document`）、`q`（ファイル名・タグ・キャラクター）を受け付ける。`document` は画像・動画・音声以外を含む。応答の `assets` は作成日時の降順、同時刻の場合はAsset IDの降順で並べ、`total` は同じ検索条件・種類・ACLで絞り込んだ総件数とする。未許可・削除済みAssetは件数にも含めない。不正なページ指定は400とする。offset方式のため、ページ移動中の追加・削除によって位置が変わる場合がある。
 
 ```http
 GET /api/v1/assets?limit=24&offset=24&kind=image
@@ -574,6 +578,8 @@ GET /api/v1/assets?limit=24&offset=24&kind=image
 ```json
 {"assets":[],"total":24}
 ```
+
+キャラクター一覧API `GET /api/v1/characters?q=...` は `{characters: [{name, asset_count}], links: [{source, target, asset_count}], total}` を返す。検索・ACL・件数・共起・上限はタグ一覧と同じ規則で、キャラクターの関連テーブルだけを集計する。Asset応答には独立した `characters: ["character_name"]` を含める。`PATCH /api/v1/assets/{assetId}` の `characters` はそのAssetのキャラクター全件を置き換え、省略時は保持する。空配列で全件削除する。Asset一覧の `character` は完全一致条件で、`tag` と併用時は両方に一致するAssetだけを返す。
 
 タグ一覧API `GET /api/v1/tags` は `q` によるタグ名の大文字小文字を区別しない部分一致検索を受け付ける。Catalogが閲覧可能かつ未削除のAssetだけを集計し、同じAsset内の重複タグは1件として数える。空白だけのタグは除外し、その他のタグ名は保存値のまま区別する。被リンク数はタグが付いたAsset数とする。Blobを共有していても、AssetごとのタグとACLで計算する。
 
@@ -623,7 +629,7 @@ Content-Type: application/json
 
 ### 10.2 内部API（論理契約）
 
-WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
+WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], characters: [{name, score}], model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], characters: ["character_name"], model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
 
 | 呼び出し | 用途 |
 |---|---|
@@ -676,7 +682,8 @@ WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を
 
 ## 12. フロントエンド
 
-- 共通ヘッダーにOCMS、ライブラリ・タグの切り替え、画面の操作、ログアウトを一段で配置する。本文に切り替え行や同名の見出し行を重ねない。ページのh1は読み上げ用に維持する。ライブラリのアップロードはヘッダーから実行する。
+- 共通ヘッダーにOCMS、ライブラリ・タグ・キャラクターの切り替え、画面の操作、ログアウトを一段で配置する。本文に切り替え行や同名の見出し行を重ねない。ページのh1は読み上げ用に維持する。ライブラリのアップロードはヘッダーから実行する。
+- キャラクター画面はタグ画面と同じ一覧・検索・ワードクラウド・共起グラフを提供し、キャラクター専用APIから取得する。詳細ではタグと別の欄でキャラクターを追加・削除する。
 - タグ画面でタグ名の検索、件数付き一覧、ワードクラウド、共起グラフを切り替える。ワードクラウドの配置にd3-cloud、グラフの配置・描画にCytoscape.jsを使い、可視化は遅延読み込みする。クラウドの文字とグラフの円は被リンク数に応じて大きくし、グラフの線幅は共起件数に応じて変える。グラフはタグ選択による関連の強調、拡大・縮小・ドラッグ・タッチ操作に対応する。クラウドで配置できないタグは一覧へ誘導し、キーボード操作用のタグ選択とファイル表示を用意する。タグからライブラリの完全一致フィルターへ移動でき、解除・種類変更・ページ移動を利用できる。
 - グラフの配置はcytoscape-colaに任せ、ノードとラベルの境界を含めて重なりを避ける。被リンクが多いタグを大きく、少ないタグを小さく表示し、継続シミュレーションでドラッグに周囲が追従する。縮小時の小さなラベルは隠し、ホバー・選択時に表示する。タグ選択で関連を強調し、必要なら読みやすい倍率へ寄る。手動ズーム・パンは配置の更新で上書きしない。再配置、動きの停止・再開を提供し、画面外・アンマウント時はシミュレーションを停止する。動きを減らす設定では初期配置をアニメーションせず、その後も明示的に再開するまで静止する。
 - TypeScript + React SPAでログイン、アップロード、ファイル一覧/詳細、プレビュー、タグ編集、検索を提供する。
@@ -722,7 +729,7 @@ WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を
 | AC-16 | OTel | サービス横断Trace、主要Metric、相関ログを出力できる |
 | AC-17 | 障害復旧 | S3/DB障害、Job再実行、孤立オブジェクト回収が動作 |
 | AC-18 | 秘密情報の非出力 | ログ/Trace/API応答にKEK/DEK/トークンが出力されない |
-| AC-19 | 自動タグ | 画像・動画・PDFにWD14の一般タグだけを付与し、手動編集・重複再利用・ACL分離を保つ |
+| AC-19 | 自動タグ | 画像・動画・PDFにWD14の一般タグと独立したキャラクターメタデータを付与し、手動編集・重複再利用・ACL分離を保つ |
 
 ## 15. 実装順序
 

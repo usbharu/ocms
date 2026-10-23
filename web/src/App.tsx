@@ -40,7 +40,9 @@ function savedView(): View {
 }
 
 export function App() {
-  const [section, setSection] = useState<'library' | 'tags'>('library');
+  const [section, setSection] = useState<'library' | 'tags' | 'characters'>(
+    'library',
+  );
   const [me, setMe] = useState<Me | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dev, setDev] = useState(false);
@@ -106,7 +108,7 @@ export function App() {
         res = await request(
           `/api/v1/assets/${next.source.asset_id}/${next.mode === 'perceptual' ? 'similar' : 'duplicates'}`,
         );
-      } else if (next.query && !next.tag) {
+      } else if (next.query && !next.tag && !next.character) {
         res = await request('/api/v1/search', {
           method: 'POST',
           body: JSON.stringify({
@@ -118,6 +120,7 @@ export function App() {
       } else {
         const params = new URLSearchParams({
           ...(next.tag ? { tag: next.tag } : {}),
+          ...(next.character ? { character: next.character } : {}),
           limit: String(pageSize),
           offset: String((nextPage - 1) * pageSize),
           ...(nextKind !== 'all' ? { kind: nextKind } : {}),
@@ -272,7 +275,9 @@ export function App() {
   const visibleAssets = assets.filter(
     (a) => kind === 'all' || kindOf(a) === kind,
   );
-  const isResult = Boolean((context.query && !context.tag) || context.source);
+  const isResult = Boolean(
+    (context.query && !context.tag && !context.character) || context.source,
+  );
   const resultCount =
     !isResult && total !== null ? total : visibleAssets.length;
   const pageCount = Math.max(1, Math.ceil(resultCount / pageSize));
@@ -388,7 +393,11 @@ export function App() {
       method: 'PATCH',
       body: JSON.stringify(changes),
     });
-    const metadata = { filename: updated.filename, tags: updated.tags };
+    const metadata = {
+      filename: updated.filename,
+      tags: updated.tags,
+      characters: updated.characters,
+    };
     setSelected((current) =>
       current?.asset_id === assetId ? { ...current, ...metadata } : current,
     );
@@ -480,14 +489,28 @@ export function App() {
           </div>
         ) : !me ? (
           <LoginPanel development={dev} onDevLogin={devLogin} />
-        ) : section === 'tags' ? (
+        ) : section === 'tags' || section === 'characters' ? (
           <TagsPage
+            key={section}
+            kind={section}
             onOpen={(tag) => {
               setSection('library');
               setSelected(null);
               setQuery('');
               setMode('keyword');
-              run(() => refresh({ mode: 'keyword', query: '', tag }, 1, 'all'));
+              run(() =>
+                refresh(
+                  {
+                    mode: 'keyword',
+                    query: '',
+                    ...(section === 'characters'
+                      ? { character: tag }
+                      : { tag }),
+                  },
+                  1,
+                  'all',
+                ),
+              );
             }}
           />
         ) : (
@@ -516,20 +539,22 @@ export function App() {
                   <h2>
                     {context.source
                       ? `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}`
-                      : context.tag
-                        ? `タグ：${context.tag}`
-                        : context.query
-                          ? `「${context.query}」の検索結果`
-                          : kind === 'all'
-                            ? 'すべてのファイル'
-                            : kinds.find((k) => k.id === kind)?.label}
+                      : context.character
+                        ? `キャラクター：${context.character}`
+                        : context.tag
+                          ? `タグ：${context.tag}`
+                          : context.query
+                            ? `「${context.query}」の検索結果`
+                            : kind === 'all'
+                              ? 'すべてのファイル'
+                              : kinds.find((k) => k.id === kind)?.label}
                   </h2>
                   <span className="count">
                     {searching
                       ? '読み込み中…'
                       : `${resultCount} 件${kind !== 'all' && (isResult || total === null) ? ` / ${assets.length} 件` : ''}`}
                   </span>
-                  {(isResult || context.tag) && (
+                  {(isResult || context.tag || context.character) && (
                     <Button
                       variant="link"
                       type="button"

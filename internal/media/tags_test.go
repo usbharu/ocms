@@ -57,3 +57,24 @@ func TestTagSampling(t *testing.T) {
 		t.Fatal("audio must not be tagged")
 	}
 }
+
+func TestCharacterAggregationIsIndependent(t *testing.T) {
+	scores := map[string]float64{}
+	result := contracts.TagResult{Model: contracts.TagModel, Revision: contracts.TagRevision, Tags: []contracts.TagScore{{Name: "general", Score: .9}}, Characters: []contracts.TagScore{{Name: "character", Score: .85}}}
+	if err := mergeCharacters(scores, result); err != nil {
+		t.Fatal(err)
+	}
+	result.Characters[0].Score = .99
+	if err := mergeCharacters(scores, result); err != nil {
+		t.Fatal(err)
+	}
+	if len(scores) != 1 || scores["character"] != .99 {
+		t.Fatal("character scores mixed or lost")
+	}
+	for _, score := range []float64{.849, math.NaN(), math.Inf(1), 1.1} {
+		result.Characters[0].Score = score
+		if mergeCharacters(scores, result) == nil {
+			t.Fatal("invalid character confidence accepted")
+		}
+	}
+}

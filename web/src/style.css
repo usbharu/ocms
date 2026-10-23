@@ -1298,3 +1298,18 @@ summary .count {
     white-space: nowrap;
   }
 }
+
+@media (max-width: 400px) {
+  .app-header:has(.workspace-nav) {
+    padding-inline: 8px;
+    gap: 4px;
+  }
+  .app-header:has(.workspace-nav) .brand {
+    display: none;
+  }
+  .workspace-nav .ui-button,
+  .header-actions .ui-button {
+    padding-inline: 4px;
+    font-size: 12px;
+  }
+}

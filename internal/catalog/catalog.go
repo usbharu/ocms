@@ -18,12 +18,13 @@ type Service struct {
 	MaxSize int64
 }
 type Asset struct {
-	ID       string   `json:"asset_id"`
-	Filename string   `json:"filename"`
-	MIME     string   `json:"mime_type"`
-	Tags     []string `json:"tags"`
-	Status   string   `json:"status"`
-	BlobID   *string  `json:"blob_id,omitempty"`
+	ID         string   `json:"asset_id"`
+	Filename   string   `json:"filename"`
+	MIME       string   `json:"mime_type"`
+	Tags       []string `json:"tags"`
+	Characters []string `json:"characters"`
+	Status     string   `json:"status"`
+	BlobID     *string  `json:"blob_id,omitempty"`
 }
 type Upload struct {
 	ID      string  `json:"upload_id"`
@@ -48,6 +49,7 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("GET /api/v1/uploads/{id}", s.upload)
 	m.HandleFunc("POST /internal/uploads/{id}/complete", s.complete)
 	m.HandleFunc("GET /api/v1/tags", s.listTags)
+	m.HandleFunc("GET /api/v1/characters", s.listCharacters)
 	m.HandleFunc("GET /api/v1/assets", s.list)
 	m.HandleFunc("GET /api/v1/assets/{id}", s.detail)
 	m.HandleFunc("GET /api/v1/assets/{id}/duplicates", s.duplicates)
@@ -250,12 +252,12 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	platform.JSON(w, 200, map[string]string{"asset_id": assetID, "state": "completed"})
 }
 
-const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
+const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,ARRAY(SELECT c.name FROM catalog.asset_characters c WHERE c.asset_id=a.id ORDER BY c.position,c.name) FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
 const allowed = `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1))`
 
 func scanAsset(row pgx.Row) (Asset, error) {
 	var a Asset
-	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID)
+	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID, &a.Characters)
 	return a, err
 }
 func (s *Service) readable(ctx context.Context, id, principal string) (Asset, error) {
@@ -321,15 +323,15 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query().Get("q")
-	where := `WHERE ` + allowed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='document' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
-	where += ` AND ($4='' OR $4=ANY(a.tags))`
+	where := `WHERE ` + allowed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND strpos(lower(c.name),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='document' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
+	where += ` AND ($4='' OR $4=ANY(a.tags)) AND ($5='' OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND c.name=$5))`
 	var total int
-	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag")).Scan(&total)
+	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character")).Scan(&total)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $5 OFFSET $6`, user(r), q, options.kind, r.URL.Query().Get("tag"), options.limit, options.offset)
+	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $6 OFFSET $7`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.limit, options.offset)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -385,8 +387,9 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Filename *string   `json:"filename"`
-		Tags     *[]string `json:"tags"`
+		Filename   *string   `json:"filename"`
+		Tags       *[]string `json:"tags"`
+		Characters *[]string `json:"characters"`
 	}
 	if !platform.Decode(w, r, &in) {
 		return
@@ -395,18 +398,37 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
-	if in.Tags != nil && !validAssetTags(*in.Tags) {
+	if (in.Tags != nil && !validAssetTags(*in.Tags)) || (in.Characters != nil && !validCharacters(*in.Characters)) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
 
-	tag, err := s.DB.Exec(r.Context(), `UPDATE catalog.assets a SET filename=coalesce($3,filename),tags=coalesce($4,tags),updated_at=now() WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission IN ('write','admin')))`, user(r), r.PathValue("id"), in.Filename, in.Tags)
+	tx, err := s.DB.Begin(r.Context())
+	if err != nil {
+		platform.RespondError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	tag, err := tx.Exec(r.Context(), `UPDATE catalog.assets a SET filename=coalesce($3,filename),tags=coalesce($4,tags),updated_at=now() WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission IN ('write','admin')))`, user(r), r.PathValue("id"), in.Filename, in.Tags)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
 		platform.Error(w, 404, "NOT_FOUND")
+		return
+	}
+	if in.Characters != nil {
+		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_characters WHERE asset_id=$1`, r.PathValue("id"))
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_characters(asset_id,name,position) SELECT $1,name,n FROM unnest($2::text[]) WITH ORDINALITY AS c(name,n) ON CONFLICT DO NOTHING`, r.PathValue("id"), *in.Characters)
+		}
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		platform.RespondError(w, err)
 		return
 	}
 	platform.Audit(r.Context(), "asset.updated", user(r), r.PathValue("id"))

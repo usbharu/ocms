@@ -12,9 +12,11 @@ type Word = cloud.Word & { text: string; count: number };
 
 function WordCloud({
   tags,
+  label,
   onOpen,
 }: {
   tags: Tag[];
+  label: string;
   onOpen: (name: string) => void;
 }) {
   const container = useRef<HTMLElement>(null);
@@ -70,13 +72,13 @@ function WordCloud({
       <section
         className="tag-cloud"
         ref={container}
-        aria-label="タグのワードクラウド"
+        aria-label={`${label}のワードクラウド`}
         aria-busy={!complete}
       >
         <svg
           width={size.width}
           height={size.height}
-          aria-label="ファイル件数に応じたタグの配置"
+          aria-label={`ファイル件数に応じた${label}の配置`}
         >
           <g transform={`translate(${size.width / 2},${size.height / 2})`}>
             {words.map((word) => (
@@ -107,7 +109,9 @@ function WordCloud({
         </svg>
       </section>
       {complete && words.length < tags.length && (
-        <p className="tag-hint">配置できなかったタグは一覧から確認できます。</p>
+        <p className="tag-hint">
+          配置できなかった{label}は一覧から確認できます。
+        </p>
       )}
     </>
   );
@@ -115,10 +119,12 @@ function WordCloud({
 
 export default function TagVisualization({
   data,
+  label = 'タグ',
   view,
   onOpen,
 }: {
   data: TagData;
+  label?: string;
   view: 'cloud' | 'graph';
   onOpen: (name: string) => void;
 }) {
@@ -346,7 +352,7 @@ export default function TagVisualization({
     <>
       {view === 'graph' && (
         <div className="tag-graph-toolbar">
-          <span>線：同じファイルに付いたタグ</span>
+          <span>線：同じファイルに付いた{label}</span>
           <Button
             variant="ghost"
             onClick={() => rearrange.current?.()}
@@ -395,23 +401,23 @@ export default function TagVisualization({
         </div>
       )}
       {view === 'cloud' ? (
-        <WordCloud tags={data.tags} onOpen={onOpen} />
+        <WordCloud label={label} tags={data.tags} onOpen={onOpen} />
       ) : (
         <div
           ref={container}
           className="tag-graph"
           role="img"
           aria-busy={arranging}
-          aria-label={`タグの関係グラフ：${tags.length}タグ、${data.links.length}本の線`}
+          aria-label={`${label}の関係グラフ：${tags.length}${label}、${data.links.length}本の線`}
         />
       )}
       <div className="tag-selection">
         <NativeSelect
-          aria-label="タグを選択"
+          aria-label={`${label}を選択`}
           value={selected}
           onChange={(event) => setSelected(event.target.value)}
         >
-          <option value="">タグを選択</option>
+          <option value="">{label}を選択</option>
           {tags.map((tag) => (
             <option key={tag.name} value={tag.name}>
               {tag.name}：{tag.asset_count}件
@@ -421,7 +427,7 @@ export default function TagVisualization({
         {active && (
           <span aria-live="polite">
             {active.asset_count}件のファイル
-            {view === 'graph' ? ` · 関連タグ ${neighbors}件` : ''}
+            {view === 'graph' ? ` · 関連${label} ${neighbors}件` : ''}
           </span>
         )}
         <Button disabled={!active} onClick={() => onOpen(selected)}>
@@ -430,7 +436,8 @@ export default function TagVisualization({
       </div>
       {view === 'graph' && data.tags.length > 60 && (
         <p className="tag-hint">
-          グラフは被リンク数の上位60タグを表示しています。検索で絞り込めます。
+          グラフは被リンク数の上位60{label}
+          を表示しています。検索で絞り込めます。
         </p>
       )}
     </>

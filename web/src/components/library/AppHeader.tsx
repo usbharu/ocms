@@ -9,8 +9,8 @@ export function AppHeader({
   onSectionChange,
 }: {
   children?: ReactNode;
-  section?: 'library' | 'tags';
-  onSectionChange?: (section: 'library' | 'tags') => void;
+  section?: 'library' | 'tags' | 'characters';
+  onSectionChange?: (section: 'library' | 'tags' | 'characters') => void;
   authenticated: boolean;
   onLogout: () => void;
 }) {
@@ -35,6 +35,13 @@ export function AppHeader({
             onClick={() => onSectionChange?.('tags')}
           >
             タグ
+          </Button>
+          <Button
+            variant="ghost"
+            aria-current={section === 'characters' ? 'page' : undefined}
+            onClick={() => onSectionChange?.('characters')}
+          >
+            キャラクター
           </Button>
         </nav>
       )}

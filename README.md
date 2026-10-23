@@ -210,19 +210,34 @@ docker compose up -d --wait
 
 WorkerはFFprobe / FFmpeg、Poppler、Tesseract（`eng+jpn`）、Chromaprintを使います。ASRはfaster-whisperの多言語`tiny`モデルをCPU/int8で実行します。意味検索は `google/embeddinggemma-2` のリビジョン `914f7f89142e33e77833254d9c9b90c3cef7303b`、768次元です。CPU推論の既定値はfloat32・4スレッドで、`INFERENCE_DTYPE`（float32 / bfloat16）と `INFERENCE_THREADS`（1〜32）で指定します。glibcのarena数を制限し、推論後に不要なCPUメモリを返却して、ページの縦横比の違いによるメモリの蓄積を抑えます。検索側もRuntimeが返す同じモデルID・リビジョンだけを検索対象にします。モデルは名前付き`models`ボリュームへキャッシュします。
 
-画像・動画・PDFにはWD14 Tagger（`SmilingWolf/wd-v1-4-convnext-tagger-v2`、リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）による一般タグを自動追加します。キャラクター（category 4）とレーティング（category 9）は付与しません。閾値は0.35、最大256タグです。画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定し、各タグの最大スコアで集約します。動画の短時間だけ現れる内容をすべて拾う保証はありません。[モデル提供者の実装](https://huggingface.co/spaces/SmilingWolf/wd-tagger/blob/main/app.py)に合わせ、透過部分の白背景合成・正方形への余白追加・BGR変換を行います。推論はRuntime内のONNX Runtimeで実行し、モデルは既存の`models`ボリュームにキャッシュします。
+画像・動画・PDFにはWD14 Tagger（`SmilingWolf/wd-v1-4-convnext-tagger-v2`、リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）による一般タグを自動追加します。キャラクター（category 4）は一般タグとは独立したメタデータとして閾値0.85で保存します。レーティング（category 9）は除外します。一般タグの閾値は0.35で、それぞれ最大256件を採用します。画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定し、各タグの最大スコアで集約します。動画の短時間だけ現れる内容をすべて拾う保証はありません。[モデル提供者の実装](https://huggingface.co/spaces/SmilingWolf/wd-tagger/blob/main/app.py)に合わせ、透過部分の白背景合成・正方形への余白追加・BGR変換を行います。推論はRuntime内のONNX Runtimeで実行し、モデルは既存の`models`ボリュームにキャッシュします。
 
 `tags.generate` Jobはメディア解析後に作成し、失敗時は通常のJobと同じ再試行・リース管理を使います。推論結果はBlob単位で再利用し、各Assetのタグ欄へ一度だけ追加します。手動タグは保持し、追加後は自動タグも編集・削除できます。手動タグを含む合計は512件までとし、自動追加時に上限を超える場合は既存タグを優先します。削除したタグはJob再試行や状態同期で復活しません。重複アップロードにも推論結果だけをコピーし、別Assetの手動タグはコピーしません。タグは既存の一覧・全文検索で検索できます。音声はタグ付け対象外です。
 
-既存DBは005を一度適用し、Runtimeと各Goサービスを更新します。005は解析済みの画像・動画・PDFへタグ付けJobを追加するため、保存済みファイルも順次処理します。既存の失敗Jobは詳細画面から再試行してください。
+004まで適用済みのDBには005・006を一度適用し、Runtimeと各Goサービスを更新します。005適用済みの場合は、後述の006のみの反映手順を使ってください。005は解析済みの画像・動画・PDFへタグ付けJobを追加するため、保存済みファイルも順次処理します。既存の失敗Jobは詳細画面から再試行してください。
 
 ```sh
 docker compose stop worker
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
 BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
 docker compose up -d --wait
 # OIDC・OTLP検証構成を使っている場合は上のupを次で置き換える
 # docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
+```
+
+キャラクターはタグとは別の `catalog.asset_characters` テーブルに保存し、推論結果も `catalog.wd14_character_results` に分離します。詳細パネルから追加・削除でき、上限はタグとは独立して512件、1件256バイトです。ヘッダーの「キャラクター」で名前検索・一覧・ワードクラウド・共起グラフを表示し、選択するとそのキャラクターが付いたファイルへ移動します。件数と共起は閲覧可能なAssetだけから集計します。通常のキーワード検索でもキャラクター名が一致するAssetを取得できます。
+
+005適用済みの既存DBには006を一度適用します。完了済みのタグJobを再実行し、既存ファイルのキャラクターを判定します。一般タグの適用済み状態は保持し、編集済みのタグを復元しません。失敗済みJobは詳細画面から再試行してください。既存環境への反映手順：
+
+```sh
+docker compose stop worker
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
+BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
+docker compose up -d --wait
+# OIDC・OTLP検証構成では上のupを次で置き換える
+# docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
+python3 scripts/characters-integration.py
 ```
 
 モデルの初回取得には追加の通信・ディスク容量が必要です。タグ推論の失敗は`TAGGING_FAILED`としてJobへ記録し、画像・タグの内容はログに出しません。生成データでの検証手順：
@@ -249,7 +264,7 @@ Searchはファイル名・タグに加えて抽出本文をPGroongaで検索し
 
 ## 基盤版からの更新
 
-既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜005を一度適用します。
+既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜006を一度適用します。
 
 ```sh
 docker compose build
@@ -258,6 +273,7 @@ docker compose up -d --no-deps --wait postgres
 docker compose exec -T postgres sh -c 'psql -U ocms -d ocms -v ON_ERROR_STOP=1 -v app_password="$APP_DB_PASSWORD" -f /migrations/003_media_search.sql'
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/004_embedding_checkpoints.sql
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
 docker compose up -d --wait
 ```
 
@@ -319,6 +335,6 @@ docker compose exec transfer ocms reconcile
 
 Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォート、セミコロン、コンポーネント名はPascalCase、変数・関数名はcamelCaseとします。`npm run build` でTypeScriptのstrictチェックを行います。整形・lintはBiomeを使います。関数と関数の間には空行を1行入れます。Biomeにはこれを強制するルールがないため、空行は手動で入れ、レビューで確認します。
 
-マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜004を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
+マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜006を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
 
 停止は `docker compose down` です。名前付きボリュームは保持します。

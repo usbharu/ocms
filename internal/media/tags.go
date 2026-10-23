@@ -41,6 +41,19 @@ func mergeTags(scores map[string]float64, result contracts.TagResult) error {
 	return nil
 }
 
+func mergeCharacters(scores map[string]float64, result contracts.TagResult) error {
+	if result.Model != contracts.TagModel || result.Revision != contracts.TagRevision || len(result.Characters) > 256 {
+		return processingError("INVALID_TAG_RESULT")
+	}
+	for _, tag := range result.Characters {
+		if strings.TrimSpace(tag.Name) == "" || len(tag.Name) > 256 || math.IsNaN(tag.Score) || math.IsInf(tag.Score, 0) || tag.Score < 0.85 || tag.Score > 1 {
+			return processingError("INVALID_TAG_RESULT")
+		}
+		scores[tag.Name] = max(scores[tag.Name], tag.Score)
+	}
+	return nil
+}
+
 func sortedTags(scores map[string]float64) []string {
 	names := make([]string, 0, len(scores))
 	for name := range scores {
@@ -75,6 +88,7 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 		return err
 	}
 	scores := map[string]float64{}
+	characters := map[string]float64{}
 	infer := func(path string) error {
 		data, e := os.ReadFile(path)
 		if e != nil {
@@ -83,6 +97,12 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 		var result contracts.TagResult
 		if e = platform.Call(ctx, "POST", s.Runtime+"/tag", "", map[string]string{"kind": "image", "data": base64.StdEncoding.EncodeToString(data)}, &result); e != nil {
 			return processingError("TAGGING_FAILED")
+		}
+		if result.Characters == nil {
+			return processingError("INVALID_TAG_RESULT")
+		}
+		if e = mergeCharacters(characters, result); e != nil {
+			return e
 		}
 		return mergeTags(scores, result)
 	}
@@ -132,5 +152,5 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 			return err
 		}
 	}
-	return platform.Call(ctx, "POST", s.Catalog+"/internal/blobs/"+j.BlobID+"/tags", "", map[string]any{"tags": sortedTags(scores), "model_id": contracts.TagModel, "model_revision": contracts.TagRevision}, nil)
+	return platform.Call(ctx, "POST", s.Catalog+"/internal/blobs/"+j.BlobID+"/tags", "", map[string]any{"tags": sortedTags(scores), "characters": sortedTags(characters), "model_id": contracts.TagModel, "model_revision": contracts.TagRevision}, nil)
 }
