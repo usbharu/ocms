@@ -29,7 +29,11 @@ BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build
 
 S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式の起動手順](https://github.com/seaweedfs/seaweedfs/wiki/Quick-Start-with-weed-mini)）。アプリケーション側はMinIO Go SDKでS3 APIを利用し、特定ストレージ製品への依存はTransfer内に限定します。
 
+「ライブラリ」の隣の「タグ」で、タグ名の検索と一覧・ワードクラウド・グラフの切り替えを利用できます。被リンク数は閲覧できるファイルのうち、そのタグが付いた件数です。多いほどクラウドの文字とグラフの円が大きくなり、線は同じファイルに付いたタグ同士を結びます。タグを選ぶと対応するファイル一覧へ移動します（グラフでは選択後に「ファイルを表示」）。一覧・クラウドは上位200タグ、グラフは上位60タグを表示し、検索で絞り込めます。
+
 ## 検証
+
+タグ画面の実API・DB検証は `python3 scripts/tags-integration.py` で実行します。初期設定の開発スタックで、生成したDB行を使ってタグ件数・共起・ACL・完全一致フィルター・編集・削除・表示上限を確認し、生成行は終了時に削除します。タグAPI追加に伴うDBマイグレーションはありません。既存環境への反映は `docker compose build bff` の後、`docker compose up -d --no-deps --wait catalog bff` を実行します。OIDC検証環境では `docker compose -f compose.yaml -f compose.verify.yaml up -d --no-deps --wait catalog bff bff-oidc` を使います。
 
 起動後に実API・DB・S3を通して検証します。テストは生成データをDBとS3に残します。初期設定の開発用環境で実行してください。
 

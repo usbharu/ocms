@@ -30,7 +30,12 @@ export type Mode =
   | 'hybrid'
   | 'perceptual'
   | 'exact_duplicate';
-export type SearchContext = { mode: Mode; query: string; source?: Asset };
+export type SearchContext = {
+  mode: Mode;
+  query: string;
+  tag?: string;
+  source?: Asset;
+};
 export type View = 'list' | 'grid' | 'detailed-grid';
 export type Kind = 'all' | 'image' | 'video' | 'audio' | 'document';
 export const statuses: Record<string, string> = {

@@ -47,6 +47,7 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/uploads", s.create)
 	m.HandleFunc("GET /api/v1/uploads/{id}", s.upload)
 	m.HandleFunc("POST /internal/uploads/{id}/complete", s.complete)
+	m.HandleFunc("GET /api/v1/tags", s.listTags)
 	m.HandleFunc("GET /api/v1/assets", s.list)
 	m.HandleFunc("GET /api/v1/assets/{id}", s.detail)
 	m.HandleFunc("GET /api/v1/assets/{id}/duplicates", s.duplicates)
@@ -321,13 +322,14 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query().Get("q")
 	where := `WHERE ` + allowed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='document' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
+	where += ` AND ($4='' OR $4=ANY(a.tags))`
 	var total int
-	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind).Scan(&total)
+	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag")).Scan(&total)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $4 OFFSET $5`, user(r), q, options.kind, options.limit, options.offset)
+	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $5 OFFSET $6`, user(r), q, options.kind, r.URL.Query().Get("tag"), options.limit, options.offset)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

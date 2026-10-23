@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -75,4 +76,38 @@ func validAssetTags(tags []string) bool {
 		}
 	}
 	return true
+}
+
+// Aggregate only authorized, live Assets, deduplicating tags within each Asset.
+// Nodes and edges share a single database snapshot. Graph work is bounded to 60 tags.
+func (s *Service) listTags(w http.ResponseWriter, r *http.Request) {
+	if !guard(w, r) {
+		return
+	}
+	var result json.RawMessage
+	err := s.DB.QueryRow(r.Context(), `WITH visible AS MATERIALIZED (
+ SELECT DISTINCT a.id,t.name FROM catalog.assets a CROSS JOIN LATERAL unnest(a.tags) t(name)
+ WHERE `+allowed+` AND btrim(t.name)<>''
+ ), counts AS MATERIALIZED (
+ SELECT name,count(*) AS asset_count FROM visible WHERE strpos(lower(name),lower($2))>0 GROUP BY name
+ ), top_tags AS MATERIALIZED (
+ SELECT * FROM counts ORDER BY asset_count DESC,name COLLATE "C" LIMIT 200
+ ), graph_tags AS MATERIALIZED (
+ SELECT * FROM top_tags ORDER BY asset_count DESC,name COLLATE "C" LIMIT 60
+ ), graph_assets AS MATERIALIZED (
+ SELECT v.* FROM visible v JOIN graph_tags t USING(name)
+ ), links AS (
+ SELECT a.name AS source,b.name AS target,count(*) AS asset_count
+ FROM graph_assets a JOIN graph_assets b ON a.id=b.id AND a.name COLLATE "C" < b.name COLLATE "C"
+ GROUP BY a.name,b.name
+ ) SELECT json_build_object(
+ 'tags',COALESCE((SELECT json_agg(t ORDER BY asset_count DESC,name COLLATE "C") FROM top_tags t),'[]'::json),
+ 'total',(SELECT count(*) FROM counts),
+ 'links',COALESCE((SELECT json_agg(l ORDER BY source COLLATE "C",target COLLATE "C") FROM links l),'[]'::json)
+ )`, user(r), r.URL.Query().Get("q")).Scan(&result)
+	if err != nil {
+		platform.RespondError(w, err)
+		return
+	}
+	platform.JSON(w, 200, result)
 }
