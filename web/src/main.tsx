@@ -11,6 +11,7 @@ type Job = { job_id: string; job_type: string; status: string; attempts: number;
 type Me = { principal_id: string; csrf_token: string };
 type Mode = 'keyword' | 'semantic' | 'hybrid' | 'perceptual' | 'exact_duplicate';
 type SearchContext = { mode: Mode; query: string; source?: Asset };
+type View = 'list' | 'grid' | 'detailed-grid';
 type Kind = 'all' | 'image' | 'video' | 'audio' | 'document';
 const statuses: Record<string, string> = {
   pending: 'アップロード待ち', uploading: 'アップロード中', stored: '解析待ち', processing: '解析中', ready: '完了', failed: '失敗',
@@ -38,6 +39,16 @@ function renditionName(profile: string) {
   const page = profile.match(/^pdf\.page-(\d+)-v1$/);
   return page ? `${page[1]} ページ · PNG` : profile;
 }
+function Thumbnail({ asset }: { asset: Asset }) {
+  const [failed, setFailed] = useState(false);
+  const kind = kindOf(asset);
+  const hasPreview = kind === 'image' || kind === 'video' || asset.mime_type === 'application/pdf';
+  const url = `/api/v1/assets/${asset.asset_id}/preview${asset.page_number !== undefined ? `?page=${asset.page_number}` : ''}`;
+  return <span className="thumbnail" aria-hidden="true">
+    {hasPreview && !failed ? <img src={url} alt="" loading="lazy" onError={() => setFailed(true)} />
+      : <span className="thumbnail-placeholder">{kind === 'audio' ? '音声' : ['pending', 'stored', 'processing'].includes(asset.status) ? '準備中' : 'プレビューなし'}</span>}
+  </span>;
+}
 function Status({ value }: { value: string }) {
   return <span className={`status status-${value}`}><span aria-hidden="true" />{statuses[value] ?? value}</span>;
 }
@@ -54,6 +65,7 @@ function App() {
   const [mode, setMode] = useState<Mode>('keyword');
   const [context, setContext] = useState<SearchContext>(allFiles);
   const [kind, setKind] = useState<Kind>('all');
+  const [view, setView] = useState<View>('list');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [searching, setSearching] = useState(false);
@@ -193,7 +205,12 @@ function App() {
           <div className="filters" role="group" aria-label="ファイルの種類">{kinds.map(item =>
             <button key={item.id} aria-pressed={kind === item.id} onClick={() => setKind(item.id)}>{item.label}</button>
           )}</div>
-          <button className="quiet" disabled={searching} onClick={() => run(() => refresh())}>更新</button>
+          <div className="view-controls">
+            <button className="quiet" disabled={searching} onClick={() => run(() => refresh())}>更新</button>
+            <select aria-label="表示方法" value={view} onChange={e => setView(e.target.value as View)}>
+              <option value="list">リスト表示</option><option value="grid">グリッド表示</option><option value="detailed-grid">詳細グリッド表示</option>
+            </select>
+          </div>
         </div>
         <div className="result-heading" aria-live="polite">
           <h2>{context.source ? `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}` : context.query ? `「${context.query}」の検索結果` : kind === 'all' ? 'すべてのファイル' : kinds.find(k => k.id === kind)?.label}</h2>
@@ -201,20 +218,25 @@ function App() {
           {isResult && <button className="text-button" onClick={reset}>検索を解除</button>}
         </div>
         <div className={`library ${selected ? 'has-selection' : ''}`}>
-          <section ref={fileList} className="files" aria-label="ファイル一覧" aria-busy={searching}>
+          <section ref={fileList} className={`files files-${view}`} aria-label="ファイル一覧" aria-busy={searching}>
             {visibleAssets.length === 0 ? <div className="empty">
               <span className="empty-icon" aria-hidden="true">▤</span>
               <h3>{searching ? '読み込み中…' : isResult ? '検索結果がありません' : kind !== 'all' ? 'この種類のファイルはありません' : 'ファイルはまだありません'}</h3>
               {!searching && (isResult || kind !== 'all' ? <button onClick={reset}>すべてのファイル</button> : <button onClick={() => uploadInput.current?.click()} disabled={progress !== null}>ファイルをアップロード</button>)}
             </div> : <>
-              <div className="list-header" aria-hidden="true"><span>ファイル名</span><span>状態</span></div>
-              {visibleAssets.map(a => <button className={`file ${selected?.asset_id === a.asset_id ? 'active' : ''}`} aria-pressed={selected?.asset_id === a.asset_id} key={a.asset_id} disabled={searching} onClick={() => { setError(''); setSelected(a); }}>
-                <span className={`file-icon kind-${kindOf(a)}`} aria-hidden="true">{kindOf(a) === 'image' ? '▧' : kindOf(a) === 'video' ? '▷' : kindOf(a) === 'audio' ? '♫' : '▤'}</span>
-                <span className="file-info"><b>{a.filename}</b><span className="file-meta">{kinds.find(k => k.id === kindOf(a))?.label}{a.tags.length > 0 && <span className="file-tags">{a.tags.join(' · ')}</span>}</span>
-                  {a.snippet && <span className="snippet">{a.snippet}</span>}
-                  {locationOf(a) && <span className="match-location">{locationOf(a)}</span>}
-                </span><Status value={a.status} />
-              </button>)}
+              {view === 'list' && <div className="list-header" aria-hidden="true"><span>ファイル名</span><span>状態</span></div>}
+              <div className={`file-items view-${view}`}>
+                {visibleAssets.map(a => <button className={`file ${selected?.asset_id === a.asset_id ? 'active' : ''}`} aria-label={a.filename} title={a.filename} aria-pressed={selected?.asset_id === a.asset_id} key={a.asset_id} disabled={searching} onClick={() => { setError(''); setSelected(a); }}>
+                  <Thumbnail key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`} asset={a} />
+                  <span className={`file-info${view === 'grid' ? ' visually-hidden' : ''}`}><b>{a.filename}</b>
+                    {view === 'list' && <>
+                      <span className="file-meta">{kinds.find(k => k.id === kindOf(a))?.label}{a.tags.length > 0 && <span className="file-tags">{a.tags.join(' · ')}</span>}</span>
+                      {a.snippet && <span className="snippet">{a.snippet}</span>}
+                      {locationOf(a) && <span className="match-location">{locationOf(a)}</span>}
+                    </>}
+                  </span>{view === 'list' && <Status value={a.status} />}
+                </button>)}
+              </div>
             </>}
           </section>
           {selected && <section className="details" aria-label="ファイル詳細" key={selected.asset_id}>

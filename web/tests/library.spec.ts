@@ -180,3 +180,104 @@ test('narrow layout moves focus into details and returns it on close', async ({ 
   await page.getByRole('button', { name: '詳細を閉じる' }).click();
   await expect(file).toBeFocused();
 });
+
+test('view menu follows refresh and list rows use authenticated thumbnails', async ({ page }) => {
+  await expect(page.getByLabel('表示方法')).toHaveValue('list');
+  const refresh = (await page.getByRole('button', { name: '更新', exact: true }).boundingBox())!;
+  const menu = (await page.getByLabel('表示方法').boundingBox())!;
+  expect(menu.x).toBeGreaterThan(refresh.x + refresh.width);
+  await expect(page.getByLabel('表示方法').locator('option')).toHaveText(['リスト表示', 'グリッド表示', '詳細グリッド表示']);
+  const image = page.getByRole('button', { name: '山の風景.png', exact: true });
+  await expect(image.locator('.thumbnail img')).toHaveAttribute('src', '/api/v1/assets/image/preview');
+  await expect(image.locator('.thumbnail img')).toHaveJSProperty('naturalWidth', 640);
+  await expect(page.getByRole('button', { name: '散歩の記録.mp4', exact: true }).locator('.thumbnail img')).toHaveAttribute('src', '/api/v1/assets/video/preview');
+  await expect(page.getByRole('button', { name: '展示会ガイド.pdf', exact: true }).locator('.thumbnail img')).toHaveAttribute('src', '/api/v1/assets/pdf/preview');
+  await expect(page.getByRole('button', { name: 'インタビュー.ogg', exact: true }).locator('.thumbnail-placeholder')).toHaveText('音声');
+  await expect(page.locator('.file-icon')).toHaveCount(0);
+});
+
+test('square grids show only thumbnails or a contained thumbnail with title', async ({ page }) => {
+  // Portrait and landscape sources catch accidental image stretching.
+  await page.route('**/api/v1/assets/pdf/preview', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="600"><rect width="300" height="600" fill="#dbe3ed"/><rect x="30" y="50" width="240" height="10" fill="#6f849a"/></svg>' }));
+  await page.reload();
+  for (const view of ['grid', 'detailed-grid']) {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByLabel('表示方法').selectOption(view);
+    const image = page.getByRole('button', { name: '山の風景.png', exact: true });
+    expect(await image.locator('.file-info').evaluate(el => el.classList.contains('visually-hidden'))).toBe(view === 'grid');
+    await expect(page.locator('.file .status, .file .file-meta, .list-header')).toHaveCount(0);
+    await expect(image.locator('.thumbnail img')).toHaveCSS('object-fit', view === 'grid' ? 'cover' : 'contain');
+    for (const width of [1440, 1024, 800, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      for (const card of await page.locator('.file').all()) {
+        const box = (await card.boundingBox())!;
+        expect(Math.abs(box.width - box.height)).toBeLessThan(1);
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(page.getByRole('button', { name: '展示会ガイド.pdf', exact: true }).locator('.thumbnail img')).toHaveJSProperty('naturalHeight', 600);
+    if (process.env.UI_SCREENSHOTS) {
+      await page.screenshot({ path: `../docs/library-${view}.png`, fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: `../docs/library-${view}-mobile.png`, fullPage: true });
+    }
+  }
+});
+
+test('switching view preserves selection, filtering and comparison context', async ({ page }) => {
+  await page.getByRole('button', { name: '画像', exact: true }).click();
+  await page.getByRole('button', { name: '山の風景.png', exact: true }).click();
+  for (const view of ['grid', 'detailed-grid', 'list']) {
+    await page.getByLabel('表示方法').selectOption(view);
+    await expect(page.locator('.file')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '山の風景.png', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('region', { name: 'ファイル詳細' })).toBeVisible();
+  }
+  await page.getByRole('button', { name: '類似ファイル', exact: true }).click();
+  await page.getByLabel('表示方法').selectOption('grid');
+  await page.getByRole('button', { name: '更新', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '類似ファイル：山の風景.png' })).toBeVisible();
+  await page.getByRole('button', { name: '検索を解除' }).click();
+  await expect(page.getByLabel('表示方法')).toHaveValue('grid');
+  await expect(page.locator('.file')).toHaveCount(4);
+  await page.getByRole('button', { name: '展示会ガイド.pdf', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'ファイル詳細' }).getByRole('heading', { level: 2 })).toHaveText('展示会ガイド.pdf');
+  for (const view of ['grid', 'detailed-grid']) {
+    await page.getByLabel('表示方法').selectOption(view);
+    for (const width of [1440, 1024, 800, 390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const box = (await page.locator('.file').first().boundingBox())!;
+      expect(Math.abs(box.width - box.height)).toBeLessThan(1);
+    }
+  }
+});
+
+test('missing thumbnails fall back and retry when processing status changes', async ({ page }) => {
+  let ready = false;
+  let previews = 0;
+  await page.route('**/api/v1/assets', route => route.fulfill({ json: { assets: [{ ...fixtures[0], status: ready ? 'ready' : 'processing' }] } }));
+  await page.route('**/api/v1/assets/image/preview', route => {
+    previews++;
+    return route.fulfill(ready ? { contentType: 'image/svg+xml', body: preview } : { status: 404 });
+  });
+  await page.reload();
+  await expect(page.locator('.thumbnail-placeholder')).toHaveText('準備中');
+  await page.getByLabel('表示方法').selectOption('grid');
+  await expect(page.locator('.thumbnail-placeholder')).toHaveText('準備中');
+  ready = true;
+  await page.getByRole('button', { name: '更新', exact: true }).click();
+  await expect(page.locator('.thumbnail img')).toHaveJSProperty('naturalWidth', 640);
+  expect(previews).toBe(2);
+});
+
+test('PDF search thumbnails use the matched page in every view', async ({ page }) => {
+  await page.getByLabel('検索クエリ').fill('pdf');
+  await page.getByRole('button', { name: '検索', exact: true }).click();
+  await expect(page.locator('.file')).toHaveCount(1);
+  for (const view of ['list', 'grid', 'detailed-grid']) {
+    await page.getByLabel('表示方法').selectOption(view);
+    await expect(page.locator('.file .thumbnail img')).toHaveAttribute('src', '/api/v1/assets/pdf/preview?page=2');
+  }
+});

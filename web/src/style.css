@@ -62,15 +62,27 @@ main { max-width: 1560px; margin: 0 auto; padding: 36px 40px 64px; }
 .library { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
 .library.has-selection { grid-template-columns: minmax(0, 1fr) 360px; }
 .files { min-width: 0; border: 1px solid #dfe6e1; border-radius: 10px; background: white; overflow: hidden; }
-.list-header { display: flex; justify-content: space-between; padding: 12px 22px 12px 76px; border-bottom: 1px solid #e5ebe7; font-size: 11px; color: #65746c; background: #fafcfb; }
+.list-header { display: flex; justify-content: space-between; padding: 12px 22px 12px 84px; border-bottom: 1px solid #e5ebe7; font-size: 11px; color: #65746c; background: #fafcfb; }
 .file { display: flex; align-items: center; text-align: left; gap: 16px; width: 100%; padding: 20px; border: 0; border-bottom: 1px solid #e9eeeb; border-radius: 0; background: white; white-space: normal; }
 .file:last-child { border-bottom: 0; }
 .file.active { background: #eef5ef; box-shadow: inset 3px 0 #397653; }
 .file:focus-visible { outline-offset: -4px; }
-.file-icon { flex-shrink: 0; width: 38px; height: 44px; display: grid; place-items: center; border-radius: 6px; font-size: 24px; color: #4b7c66; background: #edf4ee; }
-.kind-video { color: #68699c; background: #f0f0f8; }
-.kind-audio { color: #a1703c; background: #faf3e9; }
-.kind-document { color: #5e7991; background: #edf2f7; }
+.thumbnail { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 5px; overflow: hidden; background: #edf2ef; }
+.thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.thumbnail-placeholder { padding: 6px; color: #65746c; font-size: 10px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
+.view-controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.view-controls select { font-size: 12px; padding: 8px 28px 8px 10px; }
+.files-grid, .files-detailed-grid { border: 0; background: transparent; overflow: visible; }
+.view-grid, .view-detailed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr)); gap: 14px; }
+.view-grid .file, .view-detailed-grid .file { aspect-ratio: 1; min-width: 0; overflow: hidden; border: 1px solid #dfe6e1; border-radius: 8px; }
+.view-grid .file { display: block; padding: 0; position: relative; }
+.view-grid .thumbnail { width: 100%; height: 100%; border-radius: 0; }
+.view-grid .file.active, .view-detailed-grid .file.active { border-color: #397653; box-shadow: 0 0 0 2px #397653; }
+.view-detailed-grid .file { display: flex; flex-direction: column; align-items: stretch; padding: 10px; gap: 10px; }
+.view-detailed-grid .thumbnail { flex: 1; min-height: 0; width: 100%; height: auto; }
+.view-detailed-grid .thumbnail img { object-fit: contain; }
+.view-detailed-grid .file-info { flex: 0 0 39px; }
+.view-detailed-grid .file b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 19px; }
 .file-info { flex: 1; min-width: 0; }
 .file b { display: block; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .file-meta { display: flex; gap: 12px; margin-top: 5px; color: #65746c; font-size: 11px; }
@@ -147,15 +159,17 @@ progress { flex: 1; max-width: 300px; height: 6px; accent-color: #397653; }
   .search { flex-wrap: wrap; gap: 8px; }
   .search-field { flex-basis: 100%; }
   .search select { flex: 1; max-width: none; }
-  .library-toolbar { align-items: flex-start; gap: 6px; }
+  .library-toolbar { flex-wrap: wrap; gap: 12px; }
+  .view-controls { margin-left: auto; }
+  .view-grid, .view-detailed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .filters { gap: 4px; }
   .filters button { padding: 7px 9px; font-size: 12px; }
-  .library-toolbar > button { padding-inline: 4px; font-size: 12px; }
+  .view-controls button { padding-inline: 8px; font-size: 12px; }
   .file { gap: 10px; padding: 14px 12px; }
-  .file-icon { width: 30px; height: 38px; font-size: 21px; }
+  .view-list .thumbnail { width: 40px; height: 40px; }
   .file > .status { max-width: 92px; white-space: normal; }
   .file > .status > span { flex-shrink: 0; }
-  .list-header { padding-left: 52px; padding-right: 16px; }
+  .list-header { padding-left: 62px; padding-right: 16px; }
   .result-heading h2 { width: 100%; font-size: 13px; }
   .details { padding: 16px; }
 }
