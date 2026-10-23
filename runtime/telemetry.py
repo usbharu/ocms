@@ -48,7 +48,7 @@ def instrument(app):
     async def telemetry(request, call_next):
         if request.url.path == '/healthz':
             return await call_next(request)
-        operation = 'embedding.encode' if request.url.path == '/encode' else 'media.transcribe'
+        operation = {'/encode': 'embedding.encode', '/transcribe': 'media.transcribe', '/tag': 'media.tag'}.get(request.url.path, 'inference.request')
         with tracer.start_as_current_span(operation, context=extract(dict(request.headers)), kind=trace.SpanKind.SERVER, record_exception=False, set_status_on_exception=False) as span:
             started = time.monotonic()
             try:

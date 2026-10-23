@@ -131,3 +131,28 @@ def transcribe(item: Input, x_service_token: str | None = Header(default=None)):
     except Exception as error:
         logging.warning('transcription_failed exception_type=%s', type(error).__name__)
         raise HTTPException(503, 'TRANSCRIPTION_FAILED') from None
+
+
+tagger = None
+
+
+@app.post('/tag')
+def tag(item: Input, x_service_token: str | None = Header(default=None)):
+    authorize(x_service_token)
+    if item.kind != 'image':
+        raise HTTPException(400, 'INVALID_MODALITY')
+    global tagger
+    try:
+        from PIL import Image
+        from tagger import Tagger, MODEL_ID as TAG_MODEL, REVISION as TAG_REVISION
+        with lock:
+            if tagger is None:
+                tagger = Tagger(INFERENCE_THREADS)
+            with Image.open(io.BytesIO(base64.b64decode(item.data, validate=True))) as image:
+                if image.width * image.height > 16_777_216:
+                    raise ValueError('image dimensions exceeded')
+                tags = tagger.predict(image)
+            return {'tags': tags, 'model_id': TAG_MODEL, 'model_revision': TAG_REVISION}
+    except Exception as error:
+        logging.warning('tagging_failed exception_type=%s', type(error).__name__)
+        raise HTTPException(503, 'TAGGING_FAILED') from None

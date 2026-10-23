@@ -185,7 +185,9 @@ export function AssetDetails({
               <span>
                 {j.job_type === 'media.process'
                   ? 'プレビュー・文字抽出'
-                  : '意味検索の索引'}
+                  : j.job_type === 'tags.generate'
+                    ? '自動タグ付け（WD14）'
+                    : '意味検索の索引'}
               </span>
               <Status value={j.status} />
             </div>

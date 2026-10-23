@@ -152,6 +152,30 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('shows WD14 tagging as a separate job', async ({ page }) => {
+  await page.route('**/api/v1/assets/image/jobs', (route) =>
+    route.fulfill({
+      json: {
+        jobs: [
+          {
+            job_id: 'tags-1',
+            job_type: 'tags.generate',
+            status: 'completed',
+            attempts: 1,
+          },
+        ],
+      },
+    }),
+  );
+  await page
+    .getByRole('button', { name: fixtures[0].filename, exact: true })
+    .click();
+  await page.getByText('処理状況', { exact: false }).click();
+  await expect(page.getByText('自動タグ付け（WD14）')).toBeVisible();
+  if (process.env.UI_SCREENSHOTS)
+    await page.screenshot({ path: '../docs/wd14-tagging.png', fullPage: true });
+});
+
 test('remembers each library view after reload and opening a new tab', async ({
   page,
   context,

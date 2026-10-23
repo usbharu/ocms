@@ -231,6 +231,8 @@ func (s *Service) tick(ctx context.Context) error {
 	slog.InfoContext(jobCtx, "media.job_started", "job_id", j.ID, "job_type", j.Type, "attempt", j.Attempts)
 	if j.Type == "media.process" {
 		err = s.process(jobCtx, j)
+	} else if j.Type == "tags.generate" {
+		err = s.tag(jobCtx, j)
 	} else {
 		err = s.embed(jobCtx, j)
 	}
@@ -269,6 +271,17 @@ func (s *Service) tick(ctx context.Context) error {
 		return errors.New("lease lost")
 	}
 	if j.Type == "media.process" {
+		var mime string
+		if err = tx.QueryRow(finishCtx, `SELECT mime_type FROM media.blob_metadata WHERE blob_id=$1`, j.BlobID).Scan(&mime); err != nil {
+			return err
+		}
+		// Queue lightweight tags before potentially long embedding inference.
+		if taggable(mime) {
+			_, err = tx.Exec(finishCtx, `INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type,traceparent) SELECT event_id,source_blob_id,'tags.generate',traceparent FROM media.processing_jobs WHERE id=$1 ON CONFLICT DO NOTHING`, j.ID)
+			if err != nil {
+				return err
+			}
+		}
 		_, err = tx.Exec(finishCtx, `INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type,traceparent) SELECT event_id,source_blob_id,'embedding.generate',traceparent FROM media.processing_jobs WHERE id=$1 ON CONFLICT DO NOTHING`, j.ID)
 		if err != nil {
 			return err

@@ -40,6 +40,7 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("POST /internal/events/{id}/ack", s.ackEvent)
 	m.HandleFunc("GET /internal/blobs/{id}/info", s.blobInfo)
 	m.HandleFunc("POST /internal/blobs/{id}/state", s.blobState)
+	m.HandleFunc("POST /internal/blobs/{id}/tags", s.blobTags)
 	m.HandleFunc("POST /internal/authorize-blobs", s.authorizeBlobs)
 
 	m.HandleFunc("POST /internal/principals", s.principal)
@@ -392,18 +393,11 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
-	if in.Tags != nil {
-		if len(*in.Tags) > 100 {
-			platform.Error(w, 400, "INVALID_REQUEST")
-			return
-		}
-		for _, t := range *in.Tags {
-			if len(t) > 256 {
-				platform.Error(w, 400, "INVALID_REQUEST")
-				return
-			}
-		}
+	if in.Tags != nil && !validAssetTags(*in.Tags) {
+		platform.Error(w, 400, "INVALID_REQUEST")
+		return
 	}
+
 	tag, err := s.DB.Exec(r.Context(), `UPDATE catalog.assets a SET filename=coalesce($3,filename),tags=coalesce($4,tags),updated_at=now() WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission IN ('write','admin')))`, user(r), r.PathValue("id"), in.Filename, in.Tags)
 	if err != nil {
 		platform.RespondError(w, err)

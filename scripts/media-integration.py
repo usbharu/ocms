@@ -50,7 +50,7 @@ def wait_jobs(upload, embedding=False):
         if state!=last:print(upload['asset_id'],state,flush=True);last=state
         failed=[j for j in selected if j['status']=='failed']
         assert not failed, failed
-        if selected and all(j['status']=='completed' for j in selected) and (not embedding or len(selected)==2):return jobs
+        if selected and all(j['status']=='completed' for j in selected) and (not embedding or {'media.process','embedding.generate'}.issubset({j['job_type'] for j in selected})):return jobs
         time.sleep(3)
     raise AssertionError('job deadline exceeded')
 

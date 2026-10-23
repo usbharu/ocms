@@ -200,6 +200,29 @@ docker compose up -d --wait
 
 WorkerはFFprobe / FFmpeg、Poppler、Tesseract（`eng+jpn`）、Chromaprintを使います。ASRはfaster-whisperの多言語`tiny`モデルをCPU/int8で実行します。意味検索は `google/embeddinggemma-2` のリビジョン `914f7f89142e33e77833254d9c9b90c3cef7303b`、768次元です。CPU推論の既定値はfloat32・4スレッドで、`INFERENCE_DTYPE`（float32 / bfloat16）と `INFERENCE_THREADS`（1〜32）で指定します。glibcのarena数を制限し、推論後に不要なCPUメモリを返却して、ページの縦横比の違いによるメモリの蓄積を抑えます。検索側もRuntimeが返す同じモデルID・リビジョンだけを検索対象にします。モデルは名前付き`models`ボリュームへキャッシュします。
 
+画像・動画・PDFにはWD14 Tagger（`SmilingWolf/wd-v1-4-convnext-tagger-v2`、リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）による一般タグを自動追加します。キャラクター（category 4）とレーティング（category 9）は付与しません。閾値は0.35、最大256タグです。画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定し、各タグの最大スコアで集約します。動画の短時間だけ現れる内容をすべて拾う保証はありません。[モデル提供者の実装](https://huggingface.co/spaces/SmilingWolf/wd-tagger/blob/main/app.py)に合わせ、透過部分の白背景合成・正方形への余白追加・BGR変換を行います。推論はRuntime内のONNX Runtimeで実行し、モデルは既存の`models`ボリュームにキャッシュします。
+
+`tags.generate` Jobはメディア解析後に作成し、失敗時は通常のJobと同じ再試行・リース管理を使います。推論結果はBlob単位で再利用し、各Assetのタグ欄へ一度だけ追加します。手動タグは保持し、追加後は自動タグも編集・削除できます。手動タグを含む合計は512件までとし、自動追加時に上限を超える場合は既存タグを優先します。削除したタグはJob再試行や状態同期で復活しません。重複アップロードにも推論結果だけをコピーし、別Assetの手動タグはコピーしません。タグは既存の一覧・全文検索で検索できます。音声はタグ付け対象外です。
+
+既存DBは005を一度適用し、Runtimeと各Goサービスを更新します。005は解析済みの画像・動画・PDFへタグ付けJobを追加するため、保存済みファイルも順次処理します。既存の失敗Jobは詳細画面から再試行してください。
+
+```sh
+docker compose stop worker
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
+BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
+docker compose up -d --wait
+# OIDC・OTLP検証構成を使っている場合は上のupを次で置き換える
+# docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
+```
+
+モデルの初回取得には追加の通信・ディスク容量が必要です。タグ推論の失敗は`TAGGING_FAILED`としてJobへ記録し、画像・タグの内容はログに出しません。生成データでの検証手順：
+
+```sh
+docker run --rm -i --entrypoint python ocms-runtime:local < runtime/test_tagger.py
+python3 scripts/media-integration.py
+python3 scripts/tagging-integration.py
+```
+
 Workerはマスターキー・S3資格情報を持ちません。Transferは実行中JobのID、対象Blob、リーストークン、期限をWorkerに照会してから復号データを渡します。平文作業領域はtmpfs内の0700一時ディレクトリで、処理後に削除します。Jobは既定2時間、PDFは既定500ページで、それぞれ `MEDIA_JOB_TIMEOUT_SECONDS` と `MEDIA_MAX_PDF_PAGES` で変更できます。入力/出力256 MiB、画像約1600万画素、動画10分、音声30分、Workerのメモリ768 MiB・tmpfs 768 MiBという上限も設けています。PDFのページ画像は保存・抽出後に順次削除し、ページ数に比例してtmpfsを消費しないようにしています。
 
 埋め込みは推論1回ごとにベクトルと入力のSHA-256をWorkerのDBへ保存します。再起動・再試行時は同じJob・モデル・リビジョン・推論型・入力に対する結果を再利用し、検索索引全体の保存とJob完了後にチェックポイントを削除します。長い本文は全文を1000文字ずつに分けて処理します。元の本文・画像はチェックポイントへ保存しません。GrafanaのWorkerログにはページ数・ページ完了・チェックポイント保存/再利用を出し、生のツール診断や文書内容は記録しません。期限超過・作業領域不足・メモリ不足・推論サービス停止を区別し、不正入力は無駄な自動再試行をしません。
@@ -216,13 +239,15 @@ Searchはファイル名・タグに加えて抽出本文をPGroongaで検索し
 
 ## 基盤版からの更新
 
-既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003と004を一度適用します。
+既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜005を一度適用します。
 
 ```sh
 docker compose build
+docker compose stop worker
 docker compose up -d --no-deps --wait postgres
 docker compose exec -T postgres sh -c 'psql -U ocms -d ocms -v ON_ERROR_STOP=1 -v app_password="$APP_DB_PASSWORD" -f /migrations/003_media_search.sql'
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/004_embedding_checkpoints.sql
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
 docker compose up -d --wait
 ```
 

@@ -80,7 +80,7 @@ flowchart TB
     CAT -. Outbox / Job .-> WORK[Media Worker]
     WORK --> XFER
     WORK --> SRCH
-    WORK --> INF[EmbeddingGemma 2 Runtime]
+    WORK --> INF[推論Runtime / Embedding・ASR・WD14]
     SRCH --> INF
 ```
 
@@ -92,8 +92,8 @@ flowchart TB
 | **Catalog Service** | 論理Asset、所有者・ACL、アップロード状態、AssetとBlobの参照、重複結果へのアクセス制御 | 暗号化・復号、モデル推論 |
 | **Transfer Service** | マスターキー読み込み、DEK生成/ラップ、AES-CTR暗号化・復号、S3 I/O、SHA-256計算、HTTP Range、Blob登録 | OCR、全文検索 |
 | **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、Catalog経由の一括認可 | 平文ファイル保存 |
-| **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成 | ユーザー直接認証、マスターキー参照 |
-| **Embedding Runtime** | マルチモーダルEmbedding推論API | 検索DB操作、ACL判断 |
+| **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成、WD14タグ集約 | ユーザー直接認証、マスターキー参照 |
+| **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ推論API | 検索DB操作、ACL判断 |
 
 ### 3.2 通信ルール
 
@@ -475,7 +475,16 @@ Blob削除は参照管理と分離して行い、参照がゼロになったBlob
 
 **HLSプレイリスト、HLSセグメント、ABRは実装しない。** MP4は`moov` atomを先頭に配置し、HTTP Rangeでシークする。Codecやコンテナがブラウザ非対応の場合は標準MP4派生ファイルを作る。
 
-### 8.3 派生Blobの再利用
+### 8.3 WD14による一般タグの自動付与
+
+- メディア解析完了後、画像・動画・PDFに `tags.generate` Jobを作成する。音声は対象外とする。リース・期限・最大4回の再試行を既存Jobと共有する。
+- Runtimeは `SmilingWolf/wd-v1-4-convnext-tagger-v2`（リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）をCPUで実行し、category 0の一般タグだけを閾値0.35で返す。キャラクターとレーティングは除外する。
+- 画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定する。タグごとの最大スコアで集約し、上位256タグを採用する。
+- Workerが結果をCatalogへ送る際、CatalogはWorkerに実行中JobのBlob・リース・期限を照会して確認する。Catalogは `catalog.wd14_results` にBlob単位の推論結果とモデル情報を保存し、各Assetの `tags` へ一度だけ追加する。適用済みかどうかは `catalog.assets.wd14_tagged` で管理する。
+- タグの追加は既存タグを保持する原子的な更新とする。手動タグとの合計上限は512件で、上限を超える場合は既存タグを優先する。利用者は自動付与後のタグを編集・削除でき、Jobの再試行で削除済みタグを復活させない。後から作成した重複Assetには推論結果だけをコピーし、別Assetの手動タグをコピーしない。状態同期で追加漏れを補う。
+- 既存の一覧・検索・ACLを利用する。タグの内容・推論入力・元ファイル名はログやTraceに記録しない。
+
+### 8.4 派生Blobの再利用
 
 同じ元Blobと`profile_id + profile_version + encoder_version`に対する変換は原則1回のみ実施する。生成物は独立したBlobとして暗号化してS3に保存し、`media.renditions`で元Blobに関連付ける。派生BlobもSHA-256重複排除の対象とする。
 
@@ -603,6 +612,8 @@ Content-Type: application/json
 
 ### 10.2 内部API（論理契約）
 
+WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
+
 | 呼び出し | 用途 |
 |---|---|
 | `Catalog.Authorize(assetId, principal, action)` | 単一Asset ACL |
@@ -697,6 +708,7 @@ Content-Type: application/json
 | AC-16 | OTel | サービス横断Trace、主要Metric、相関ログを出力できる |
 | AC-17 | 障害復旧 | S3/DB障害、Job再実行、孤立オブジェクト回収が動作 |
 | AC-18 | 秘密情報の非出力 | ログ/Trace/API応答にKEK/DEK/トークンが出力されない |
+| AC-19 | 自動タグ | 画像・動画・PDFにWD14の一般タグだけを付与し、手動編集・重複再利用・ACL分離を保つ |
 
 ## 15. 実装順序
 

@@ -72,6 +72,10 @@ func (s *Service) blobState(w http.ResponseWriter, r *http.Request) {
 		platform.RespondError(w, err)
 		return
 	}
+	if _, err = s.DB.Exec(r.Context(), applyWD14Tags, r.PathValue("id")); err != nil {
+		platform.RespondError(w, err)
+		return
+	}
 	w.WriteHeader(204)
 }
 func (s *Service) authorizeBlobs(w http.ResponseWriter, r *http.Request) {
