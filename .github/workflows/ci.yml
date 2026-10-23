@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go tests and vet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  web:
+    name: SPA and Storybook
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    env:
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm run build-storybook
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+      - run: npm run test:storybook
+
+  runtime:
+    name: Runtime unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: python3 -m venv .venv
+      - run: .venv/bin/pip install numpy==2.2.6 pillow==13.0.0
+      - run: .venv/bin/python -m unittest discover -s runtime -p 'test_*.py'
+
+  images:
+    name: Build ${{ matrix.image }}
+    # Release runs the build with push enabled after the checks above succeed.
+    if: github.event_name != 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ocms
+            dockerfile: Dockerfile
+          - image: ocms-runtime
+            dockerfile: runtime/Dockerfile
+          - image: ocms-postgres
+            dockerfile: infra/postgres/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

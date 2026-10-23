@@ -376,3 +376,20 @@ RuntimeはWD14のcategory 4を閾値0.85で抽出し、一般タグとは別に�
 生成した車・PDFには既知キャラクターが含まれないため、実モデルによるキャラクター識別の正答率は未評価。キャラクターが検出される場合の保存・表示は合成スコアと生成した推論結果で検証した。他のTaggerの接続、キャラクターの別名統合・個別プロフィール、巨大ライブラリの性能評価は今回の対象に含めていない。障害復旧・OIDC・OTLPの全体試験は再実行していない。
 
 ![生成データによるキャラクター共起グラフ](characters-graph.png)
+
+## CIとRelease時のGHCR公開（2026-10-23）
+
+`.github/workflows/ci.yml` にブランチpush・PRのCIを追加した。Goのraceテスト・vet、SPAのBiome・TypeScript・本番ビルド、Storybookビルド、Chromiumの画面回帰・Storyテスト、Runtimeの単体テスト、3種類のDockerイメージビルドを実行する。
+
+`.github/workflows/release.yml` はReleaseの `published` で共通CIのGo・SPA・Runtime検証を呼び出し、成功後にGoサービス共通・Runtime・PostgreSQLの3イメージを `linux/amd64` 向けにビルドしてGHCRへpushする。公開ジョブだけに `packages: write` を付け、`GITHUB_TOKEN` で認証する。Releaseタグを検証してイメージタグに使い、通常Releaseだけ `latest` を更新する。公開処理は同時実行しない。
+
+ローカルの検証結果：
+
+- actionlint 1.7.12による2ワークフローの構文・式・ジョブ依存関係の検査：成功。
+- `go test -race ./...` と `go vet ./...`：成功。
+- Node.js 24で `HUSKY=0 npm ci --cache ../.cache/npm`、`npm run check`、`npm run build`、`npm run build-storybook`：成功。既存のチャンクサイズ警告は残る。
+- `npm run test:ui`：53件成功。`npm run test:storybook`：68件成功。Chromiumはsandbox外で実行した。生成された画像の変更は今回のコミットに含めない。
+- 既存のPython 3.12 Runtimeイメージにテストソースを読み取り専用マウントして単体テスト：4件成功。ホストのPython 3.9ではCI用のNumPyを導入できず、コンテナで検証した。
+- 3種類のDockerfileのネイティブ（arm64）ビルド：成功（既存キャッシュを使用）。Mac上のamd64ビルドでは `go mod download` 中にGoランタイムが異常終了した。Runtime・PostgreSQLのamd64検証ビルドは中止し、GitHubのamd64ランナー上での実行は未検証。
+
+Gitリモートは未設定のため、GitHub Actionsの実行とGHCRへの実push・pullは未検証。リモートへの反映後、ActionsとPackage書き込み権限を有効にしてReleaseを公開する必要がある。実DB・S3・モデルを使う結合試験と仕様§14のAC全項目はCIの対象外で、今回も再実行していない。

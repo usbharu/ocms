@@ -35,6 +35,37 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 
 グラフは [cytoscape-cola](https://github.com/cytoscape/cytoscape.js-cola) の重なり回避と継続シミュレーションを使います。タグが付いたファイル数に応じてノードを大きくし、ラベルを含めた間隔を確保します。ドラッグすると周囲も追従し、選択したタグへ表示が寄ります。「再配置」で配置をやり直し、「動きを停止」「動きを再開」で動きを切り替えられます。画面外ではシミュレーションを停止します。OSの動きを減らす設定では静止状態から始めます。
 
+## CIとReleaseイメージ
+
+GitHub Actionsの `CI` は、ブランチへのpushとPull Requestで次を実行します。
+
+- Go：`go test -race ./...`、`go vet ./...`（Goのバージョンは `go.mod` に従う）。
+- SPA：Node.js 24で `npm ci`、`npm run check`、`npm run build`、`npm run build-storybook`、Chromiumで `npm run test:ui` と `npm run test:storybook`。OS依存のスクリーンショット検査（`UI_SCREENSHOTS`）は有効にしません。
+- Runtime：Python 3.12（Ubuntu 24.04標準）、NumPyとPillowで `python -m unittest discover -s runtime -p 'test_*.py'`。モデルのダウンロードは不要です。
+- Docker：次の3イメージを `linux/amd64` 向けにビルドします。通常のCIではpushしません。
+
+GitHub Releaseを公開すると（`release: published`）、`Release images` がReleaseのタグのコードでGo・SPA・Runtimeの検証を再実行し、すべて成功した後に3イメージをビルドしてGHCRへpushします。ドラフト保存やGitタグのpushだけでは公開しません。プレリリースも対象です。[GitHub公式の公開手順](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)に沿って、認証には自動発行される `GITHUB_TOKEN` を使い、公開ジョブだけに `packages: write` を付与しています。追加のPATやSecret登録は不要です。
+
+| Dockerfile | 公開先（`owner/repository` はGitHubリポジトリ名の小文字） | 内容 |
+|---|---|---|
+| `Dockerfile` | `ghcr.io/owner/repository` | SPAとGoの5サービス共通イメージ。`SERVICE` で役割を選択 |
+| `runtime/Dockerfile` | `ghcr.io/owner/repository-runtime` | Python推論Runtime。モデルは起動後に取得 |
+| `infra/postgres/Dockerfile` | `ghcr.io/owner/repository-postgres` | PGroonga・pgvector入りPostgreSQL |
+
+Releaseタグ（例：`v1.2.3`）をそのままイメージタグに使います。Dockerのタグとして有効な名前（英数字・`_` で始まり、英数字・`_`・`.`・`-` の128文字以内）を使ってください。通常のReleaseには `latest` も付け、プレリリースでは更新しません。`latest` は最後に公開処理が成功した通常Releaseを指し、過去バージョンの再実行でも更新されます。バージョンを固定する場合はReleaseタグまたはdigestを指定してください。
+
+GitHubリポジトリのActionsを有効にし、組織のポリシーでもPackage作成・書き込みを許可してください。同名Packageが既に存在する場合は、そのPackageのActionsアクセス設定でリポジトリに書き込みを許可する必要があります。Packageの公開範囲はGHCRの設定に従います。匿名pullが必要な場合はPackageをPublicに設定してください。
+
+```sh
+docker pull ghcr.io/owner/repository:v1.2.3
+docker pull ghcr.io/owner/repository-runtime:v1.2.3
+docker pull ghcr.io/owner/repository-postgres:v1.2.3
+```
+
+既存の `compose.yaml` はローカルビルド用です。公開イメージを使う環境では、各サービスの `image` に上記の同じReleaseタグを指定し、ローカル用の `pull_policy: never` を解除してください。DB初期化用の `scripts/init-db.sh` と `migrations/` のマウントは引き続き必要です。
+
+実DB・S3・モデルを使う結合試験、障害復旧、OIDC・OTLP検証はこのCIの対象外です。仕様§14の受け入れ基準すべてを保証するものではなく、必要な検証は以下の手順で別途実行します。
+
 ## 検証
 
 タグ画面の実API・DB検証は `python3 scripts/tags-integration.py` で実行します。初期設定の開発スタックで、生成したDB行を使ってタグ件数・共起・ACL・完全一致フィルター・編集・削除・表示上限を確認し、生成行は終了時に削除します。タグAPI追加に伴うDBマイグレーションはありません。既存環境への反映は `docker compose build bff` の後、`docker compose up -d --no-deps --wait catalog bff` を実行します。OIDC検証環境では `docker compose -f compose.yaml -f compose.verify.yaml up -d --no-deps --wait catalog bff bff-oidc` を使います。
