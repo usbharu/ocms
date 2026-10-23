@@ -33,6 +33,8 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 
 ワードクラウドの配置は [d3-cloud](https://github.com/jasondavies/d3-cloud)、グラフの配置・描画・ドラッグ・ズームは [Cytoscape.js](https://js.cytoscape.org/) を利用します。どちらもnpm依存に含め、タグの可視化を開くときに遅延読み込みします。クラウドで領域内に配置できないタグがある場合は、一覧から確認できる旨を表示します。
 
+グラフは [cytoscape-cola](https://github.com/cytoscape/cytoscape.js-cola) の重なり回避と継続シミュレーションを使います。タグが付いたファイル数に応じてノードを大きくし、ラベルを含めた間隔を確保します。ドラッグすると周囲も追従し、選択したタグへ表示が寄ります。「再配置」で配置をやり直し、「動きを停止」「動きを再開」で動きを切り替えられます。画面外ではシミュレーションを停止します。OSの動きを減らす設定では静止状態から始めます。
+
 ## 検証
 
 タグ画面の実API・DB検証は `python3 scripts/tags-integration.py` で実行します。初期設定の開発スタックで、生成したDB行を使ってタグ件数・共起・ACL・完全一致フィルター・編集・削除・表示上限を確認し、生成行は終了時に削除します。タグAPI追加に伴うDBマイグレーションはありません。既存環境への反映は `docker compose build bff` の後、`docker compose up -d --no-deps --wait catalog bff` を実行します。OIDC検証環境では `docker compose -f compose.yaml -f compose.verify.yaml up -d --no-deps --wait catalog bff bff-oidc` を使います。

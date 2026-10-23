@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import type { Core } from 'cytoscape';
 
 const tags = [
   { name: '旅行', asset_count: 20 },
@@ -84,6 +85,7 @@ test('library graph supports selection, zoom and keyboard navigation', async ({
     name: 'タグの関係グラフ：3タグ、1本の線',
   });
   await expect(graph.locator('canvas').first()).toBeVisible();
+  await expect(graph).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('combobox', { name: 'タグを選択' }).selectOption('旅行');
   await expect(page.getByText('20件のファイル · 関連タグ 1件')).toBeVisible();
   await page.getByRole('button', { name: '拡大', exact: true }).click();
@@ -230,4 +232,141 @@ test('navigation and upload share one header without stacked page headings', asy
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
   }
+});
+
+test('dense graph separates labels and relaxes after dragging without resetting zoom', async ({
+  page,
+}) => {
+  await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(3);
+  const dense = Array.from({ length: 60 }, (_, i) => ({
+    name: `関連する長めのタグ${i}`,
+    asset_count: 80 - i,
+  }));
+  const links = dense.flatMap((source, i) =>
+    dense.slice(i + 1).map((target) => ({
+      source: source.name,
+      target: target.name,
+      asset_count: 2,
+    })),
+  );
+  await page.route('**/api/v1/tags?*', (route) =>
+    route.fulfill({ json: { tags: dense, total: dense.length, links } }),
+  );
+  await page.getByRole('button', { name: '更新', exact: true }).click();
+  await expect(
+    page.getByRole('combobox', { name: 'タグを選択' }).locator('option'),
+  ).toHaveCount(61);
+  await page.getByRole('button', { name: 'グラフ', exact: true }).click();
+  const graph = page.getByRole('img', { name: /タグの関係グラフ/ });
+  await expect(graph).toHaveAttribute('aria-busy', 'false', { timeout: 15000 });
+  // Inspect the actual rendered graph through Cytoscape's container registry.
+  // Bounds include labels; counting DOM canvases would miss the reported overlap.
+  const inspect = () =>
+    graph.evaluate((element) => {
+      const cy = (element as HTMLElement & { _cyreg: { cy: Core } })._cyreg.cy;
+      const nodes = cy.nodes().toArray();
+      let overlaps = 0;
+      for (let i = 0; i < nodes.length; i++)
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i].boundingBox({
+            includeLabels: true,
+            includeOverlays: false,
+          });
+          const b = nodes[j].boundingBox({
+            includeLabels: true,
+            includeOverlays: false,
+          });
+          if (
+            Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1) > 1 &&
+            Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1) > 1
+          )
+            overlaps++;
+        }
+      return {
+        overlaps,
+        positions: nodes.map((node) => ({ id: node.id(), ...node.position() })),
+        zoom: cy.zoom(),
+        widths: nodes.map((node) => node.width()),
+      };
+    });
+  const initial = await inspect();
+  await expect.poll(async () => (await inspect()).overlaps).toBe(0);
+  expect(initial.widths[0]).toBeGreaterThan(initial.widths[59]);
+  await page.getByRole('button', { name: '再配置', exact: true }).click();
+  await expect(graph).toHaveAttribute('aria-busy', 'false', { timeout: 15000 });
+  await expect.poll(async () => (await inspect()).overlaps).toBe(0);
+  if (process.env.UI_SCREENSHOTS)
+    await page.screenshot({
+      path: '../docs/tags-graph-dense.png',
+      fullPage: true,
+    });
+  await page.getByRole('button', { name: '拡大', exact: true }).click();
+  const before = await inspect();
+  const center = await graph.evaluate((element) => {
+    const cy = (element as HTMLElement & { _cyreg: { cy: Core } })._cyreg.cy;
+    const node = cy.nodes().sort((a, b) => {
+      const p = a.renderedPosition();
+      const q = b.renderedPosition();
+      return (
+        Math.hypot(p.x - cy.width() / 2, p.y - cy.height() / 2) -
+        Math.hypot(q.x - cy.width() / 2, q.y - cy.height() / 2)
+      );
+    })[0];
+    return { id: node.id(), ...node.renderedPosition() };
+  });
+  const bounds = await graph.boundingBox();
+  if (!bounds) throw new Error('missing graph');
+  await page.mouse.move(bounds.x + center.x, bounds.y + center.y);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + center.x + 80, bounds.y + center.y + 60, {
+    steps: 10,
+  });
+  await page.mouse.up();
+  await expect(graph).toHaveAttribute('aria-busy', 'false', { timeout: 15000 });
+  await expect
+    .poll(async () =>
+      (await inspect()).positions.some(
+        (node, i) =>
+          node.id !== center.id &&
+          Math.hypot(
+            node.x - before.positions[i].x,
+            node.y - before.positions[i].y,
+          ) > 0.5,
+      ),
+    )
+    .toBe(true);
+  await expect.poll(async () => (await inspect()).overlaps).toBe(0);
+  const after = await inspect();
+  expect(after.zoom).toBeCloseTo(before.zoom, 4);
+  await page.getByRole('button', { name: '動きを停止', exact: true }).click();
+  const paused = await inspect();
+  await page.waitForTimeout(250);
+  expect((await inspect()).positions).toEqual(paused.positions);
+  await page.getByRole('button', { name: '動きを再開', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '動きを停止', exact: true }),
+  ).toBeVisible();
+
+  await page
+    .getByRole('navigation')
+    .getByRole('button', { name: 'ライブラリ' })
+    .click();
+  await expect(page.locator('.tag-graph')).toHaveCount(0);
+});
+
+test('reduced motion starts with a still graph and allows explicit simulation', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.getByRole('button', { name: 'グラフ', exact: true }).click();
+  const graph = page.getByRole('img', { name: /タグの関係グラフ/ });
+  await expect(graph).toHaveAttribute('aria-busy', 'false');
+  await expect(
+    page.getByRole('button', { name: '動きを再開', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '動きを再開', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '動きを停止', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '動きを停止', exact: true }).click();
 });

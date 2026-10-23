@@ -1254,8 +1254,8 @@ summary .count {
 }
 .tag-graph {
   position: relative;
-  height: 55vh;
-  min-height: 360px;
+  height: 65vh;
+  min-height: 420px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);

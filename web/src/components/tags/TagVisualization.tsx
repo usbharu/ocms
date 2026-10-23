@@ -1,9 +1,12 @@
-import cytoscape, { type Core } from 'cytoscape';
+import cytoscape, { type Core, type Layouts } from 'cytoscape';
+import cola from 'cytoscape-cola';
 import cloud from 'd3-cloud';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/button';
 import { NativeSelect } from '../ui/native-select';
 import type { Tag, TagData } from './TagsPage';
+
+cytoscape.use(cola);
 
 type Word = cloud.Word & { text: string; count: number };
 
@@ -122,6 +125,12 @@ export default function TagVisualization({
   const container = useRef<HTMLDivElement>(null);
   const graph = useRef<Core | null>(null);
   const fitZoom = useRef(1);
+  const rearrange = useRef<(() => void) | null>(null);
+  const [arranging, setArranging] = useState(false);
+  const toggleMotion = useRef<(() => void) | null>(null);
+  const [moving, setMoving] = useState(
+    () => !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
   const [zoom, setZoom] = useState(100);
   const [selected, setSelected] = useState('');
   const tags = view === 'graph' ? data.tags.slice(0, 60) : data.tags;
@@ -141,8 +150,8 @@ export default function TagVisualization({
           data: {
             id: ids.get(tag.name),
             name: tag.name,
-            label: `${tag.name.length > 24 ? `${tag.name.slice(0, 24)}…` : tag.name}\n${tag.asset_count}件`,
-            diameter: 32 + 48 * Math.sqrt(tag.asset_count / max),
+            label: `${Array.from(tag.name).length > 14 ? `${Array.from(tag.name).slice(0, 14).join('')}…` : tag.name}`,
+            diameter: 8 + 50 * Math.sqrt(tag.asset_count / max),
           },
         })),
         ...data.links
@@ -152,7 +161,7 @@ export default function TagVisualization({
               id: `edge-${i}`,
               source: ids.get(link.source),
               target: ids.get(link.target),
-              weight: Math.min(6, 1 + Math.sqrt(link.asset_count)),
+              weight: Math.min(2, 0.5 + Math.log2(1 + link.asset_count) / 4),
             },
           })),
       ],
@@ -167,10 +176,15 @@ export default function TagVisualization({
             'border-color': '#15803d',
             'border-width': 2,
             color: '#24312b',
-            'font-size': 13,
+            'font-size': 12,
+            'min-zoomed-font-size': 8,
             'text-wrap': 'wrap',
             'text-valign': 'bottom',
             'text-margin-y': 8,
+            'text-max-width': '120px',
+            'text-background-color': '#fff',
+            'text-background-opacity': 0.7,
+            'text-background-padding': '3px',
           },
         },
         {
@@ -179,23 +193,20 @@ export default function TagVisualization({
             width: 'data(weight)',
             'line-color': '#86b99b',
             'curve-style': 'bezier',
-            opacity: 0.6,
+            opacity: 0.16,
           },
         },
-        { selector: '.dimmed', style: { opacity: 0.15 } },
+        { selector: '.dimmed', style: { opacity: 0.08 } },
+        {
+          selector: 'node.highlighted',
+          style: { 'min-zoomed-font-size': 0, 'font-weight': 'bold' },
+        },
         {
           selector: ':selected',
           style: { 'background-color': '#15803d', 'border-width': 4 },
         },
       ],
-      layout: {
-        name: 'cose',
-        animate: false,
-        padding: 45,
-        nodeDimensionsIncludeLabels: true,
-        nodeRepulsion: () => 12000,
-        idealEdgeLength: () => 120,
-      },
+      layout: { name: 'circle', fit: false, spacingFactor: 1.8 },
       minZoom: 0.1,
       maxZoom: 4,
       wheelSensitivity: 0.3,
@@ -208,14 +219,92 @@ export default function TagVisualization({
       setZoom(100);
     };
     fitGraph();
+    let layout: Layouts | null = null;
+    let generation = 0;
+    let motion = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setMoving(motion);
+    let fitAfterLayout = true;
+    let fitting = false;
+    const preserveViewport = () => {
+      if (!fitting) fitAfterLayout = false;
+    };
+    cy.on('zoom pan', preserveViewport);
+    const runLayout = (fitWhenDone: boolean, live = false) => {
+      const version = ++generation;
+      layout?.stop();
+      fitAfterLayout = fitWhenDone;
+      setArranging(!live);
+      const options = {
+        name: 'cola',
+        animate:
+          live ||
+          !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        infinite: live,
+        centerGraph: !live,
+        refresh: 2,
+        maxSimulationTime: 2400,
+        fit: false,
+        randomize: fitWhenDone,
+        avoidOverlap: true,
+        handleDisconnected: true,
+        nodeDimensionsIncludeLabels: true,
+        nodeSpacing: () => 28,
+        edgeLength: 180,
+        convergenceThreshold: 0.01,
+        stop: () => {
+          if (version !== generation) return;
+          setArranging(false);
+          if (!live && fitAfterLayout) {
+            fitting = true;
+            fitGraph();
+            fitting = false;
+          }
+          if (!live && motion && !document.hidden) runLayout(false, true);
+        },
+      };
+      layout = cy.layout(options);
+      layout.run();
+    };
+    rearrange.current = () => runLayout(true);
+    runLayout(true);
+    toggleMotion.current = () => {
+      motion = !motion;
+      setMoving(motion);
+      if (motion) runLayout(false, true);
+      else {
+        ++generation;
+        layout?.stop();
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        ++generation;
+        layout?.stop();
+        setArranging(false);
+      } else if (motion) runLayout(false, true);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    cy.on('mouseover', 'node', (event) => event.target.addClass('highlighted'));
+    cy.on('mouseout', 'node', (event) => {
+      if (!event.target.selected()) event.target.removeClass('highlighted');
+    });
     cy.on('tap', 'node', (event) => setSelected(event.target.data('name')));
     cy.on('zoom', () =>
       setZoom(Math.round((cy.zoom() / fitZoom.current) * 100)),
     );
-    const observer = new ResizeObserver(fitGraph);
+    const observer = new ResizeObserver(() => {
+      fitting = true;
+      fitGraph();
+      fitting = false;
+    });
     observer.observe(container.current);
     return () => {
       observer.disconnect();
+      document.removeEventListener('visibilitychange', onVisibility);
+      toggleMotion.current = null;
+      ++generation;
+      layout?.stop();
+      rearrange.current = null;
       graph.current = null;
       cy.destroy();
     };
@@ -223,15 +312,27 @@ export default function TagVisualization({
   useEffect(() => {
     const cy = graph.current;
     if (!cy) return;
-    cy.elements().removeClass('dimmed');
+    cy.elements().removeClass('dimmed highlighted');
     cy.nodes().unselect();
     if (!selected) return;
     const node = cy.nodes().filter((item) => item.data('name') === selected);
-    node.select();
+    node.select().addClass('highlighted');
     cy.elements().difference(node.closedNeighborhood()).addClass('dimmed');
+    const viewport = {
+      center: { eles: node },
+      zoom: Math.max(cy.zoom(), 0.85),
+    };
+    cy.stop();
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      cy.center(node);
+      cy.zoom(viewport.zoom);
+    } else {
+      cy.animate(viewport, { duration: 250 });
+    }
   }, [selected]);
   function changeZoom(factor: number) {
     const cy = graph.current;
+    cy?.stop();
     if (cy)
       cy.zoom({
         level: Math.min(
@@ -246,6 +347,20 @@ export default function TagVisualization({
       {view === 'graph' && (
         <div className="tag-graph-toolbar">
           <span>線：同じファイルに付いたタグ</span>
+          <Button
+            variant="ghost"
+            onClick={() => rearrange.current?.()}
+            disabled={arranging}
+          >
+            再配置
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => toggleMotion.current?.()}
+            disabled={arranging}
+          >
+            {moving ? '動きを停止' : '動きを再開'}
+          </Button>
           <fieldset className="tag-controls" aria-label="グラフの拡大率">
             <Button
               variant="ghost"
@@ -259,6 +374,7 @@ export default function TagVisualization({
               onClick={() => {
                 const cy = graph.current;
                 if (cy) {
+                  cy.stop();
                   cy.fit(undefined, 45);
                   fitZoom.current = cy.zoom();
                   setZoom(100);
@@ -285,6 +401,7 @@ export default function TagVisualization({
           ref={container}
           className="tag-graph"
           role="img"
+          aria-busy={arranging}
           aria-label={`タグの関係グラフ：${tags.length}タグ、${data.links.length}本の線`}
         />
       )}
