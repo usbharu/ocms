@@ -193,7 +193,7 @@ func (s *Service) Handler(assets fs.FS) http.Handler {
 		w.Header().Set("Cache-Control", "private, no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' blob:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; font-src 'self' blob:; img-src 'self' blob:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'")
 		m.ServeHTTP(w, r)
 	})
 }

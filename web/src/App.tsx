@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppHeader } from './components/library/AppHeader';
 import { AssetDetails } from './components/library/AssetDetails';
 import { AssetList } from './components/library/AssetList';
+import { AssetViewer } from './components/library/AssetViewer';
 import { LibraryToolbar } from './components/library/LibraryToolbar';
 import { LoginPanel } from './components/library/LoginPanel';
 import { SearchForm } from './components/library/SearchForm';
@@ -31,6 +32,8 @@ export function App() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState<number | null>(null);
   const [selected, setSelected] = useState<Asset | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerMoving, setViewerMoving] = useState(false);
   const [renditions, setRenditions] = useState<Rendition[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [query, setQuery] = useState('');
@@ -67,7 +70,7 @@ export function App() {
     next: SearchContext = context,
     nextPage = page,
     nextKind: Kind = kind,
-  ) {
+  ): Promise<Asset[] | undefined> {
     const version = ++requestVersion.current;
     setError('');
     setSearching(true);
@@ -99,12 +102,11 @@ export function App() {
           nextPage > 1 &&
           res.total <= (nextPage - 1) * pageSize
         ) {
-          await refresh(
+          return await refresh(
             next,
             Math.max(1, Math.ceil(res.total / pageSize)),
             nextKind,
           );
-          return;
         }
       }
       if (version === requestVersion.current) {
@@ -113,6 +115,7 @@ export function App() {
         setPage(nextPage);
         setKind(nextKind);
         setContext(next);
+        return res.assets;
       }
     } finally {
       if (version === requestVersion.current) setSearching(false);
@@ -135,8 +138,9 @@ export function App() {
   }, [me]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Focus only when the selected asset changes, not on polling updates.
   useEffect(() => {
-    if (selected && window.innerWidth <= 800) detailTitle.current?.focus();
-  }, [selected?.asset_id]);
+    if (selected && !viewerOpen && window.innerWidth <= 800)
+      detailTitle.current?.focus();
+  }, [selected?.asset_id, viewerOpen]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Keep the polling lease tied to asset identity and authentication, not status updates.
   useEffect(() => {
     setRenditions([]);
@@ -219,7 +223,7 @@ export function App() {
     }
   }
 
-  const run = (action: () => Promise<void>) =>
+  const run = (action: () => Promise<unknown>) =>
     action().catch((e) => setError(e.message));
 
   const reset = () => {
@@ -254,6 +258,10 @@ export function App() {
           currentPage * pageSize,
         );
 
+  const selectedIndex = pageAssets.findIndex(
+    (asset) => asset.asset_id === selected?.asset_id,
+  );
+
   function changePage(nextPage: number) {
     if (!isResult && total !== null) {
       run(() => refresh(context, nextPage));
@@ -262,6 +270,43 @@ export function App() {
     }
     fileList.current?.scrollIntoView({ block: 'start' });
     fileList.current?.focus({ preventScroll: true });
+  }
+
+  function openViewer(asset: Asset) {
+    setError('');
+    setSelected(asset);
+    setViewerOpen(true);
+  }
+
+  async function moveViewer(direction: number) {
+    if (!selected || viewerMoving) return;
+    const index = selectedIndex;
+    const next = pageAssets[index + direction];
+    if (next) {
+      setSelected(next);
+      return;
+    }
+    const nextPage = currentPage + direction;
+    if (index < 0 || nextPage < 1 || nextPage > pageCount) return;
+    setViewerMoving(true);
+    try {
+      if (!isResult && total !== null) {
+        const items = await refresh(context, nextPage);
+        if (items?.length)
+          setSelected(direction > 0 ? items[0] : items[items.length - 1]);
+      } else {
+        const items = visibleAssets.slice(
+          (nextPage - 1) * pageSize,
+          nextPage * pageSize,
+        );
+        setPage(nextPage);
+        setSelected(direction > 0 ? items[0] : items[items.length - 1]);
+      }
+    } catch {
+      setError('次のファイルを読み込めません。再度お試しください。');
+    } finally {
+      setViewerMoving(false);
+    }
   }
 
   function logout() {
@@ -444,6 +489,7 @@ export function App() {
                   setError('');
                   setSelected(asset);
                 }}
+                onOpen={openViewer}
                 onReset={reset}
                 onUpload={() => uploadInput.current?.click()}
                 onPageChange={changePage}
@@ -458,6 +504,7 @@ export function App() {
                   notice={notice}
                   detailTitle={detailTitle}
                   onClose={closeDetail}
+                  onOpen={() => openViewer(selected)}
                   onSaveTags={saveTags}
                   onCompare={compare}
                   onReprocess={reprocess}
@@ -468,6 +515,26 @@ export function App() {
           </>
         )}
       </main>
+      {me && viewerOpen && selected && (
+        <AssetViewer
+          asset={selected}
+          navigationError={error}
+          hasPrevious={
+            !viewerMoving &&
+            selectedIndex >= 0 &&
+            (selectedIndex > 0 || currentPage > 1)
+          }
+          hasNext={
+            !viewerMoving &&
+            (selectedIndex < pageAssets.length - 1 ||
+              (selectedIndex >= 0 && currentPage < pageCount))
+          }
+          onNavigate={(direction) => {
+            void moveViewer(direction);
+          }}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
     </div>
   );
 }

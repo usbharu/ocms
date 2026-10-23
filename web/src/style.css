@@ -833,3 +833,220 @@ details[open] summary {
     padding: 16px;
   }
 }
+
+/* Full viewport cover. The native dialog keeps the library inert. */
+.preview {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  cursor: zoom-in;
+}
+.asset-viewer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #101311;
+  color: #f0f4f1;
+  overflow: hidden;
+}
+.asset-viewer[open] {
+  display: flex;
+  flex-direction: column;
+}
+.asset-viewer::backdrop {
+  background: #101311;
+}
+.asset-viewer .ui-button {
+  color: #f0f4f1;
+  background: transparent;
+  border-color: #536057;
+  min-width: 40px;
+  min-height: 40px;
+}
+.asset-viewer .ui-button:hover {
+  background: #ffffff1a;
+}
+.asset-viewer .ui-button:focus-visible,
+.asset-viewer a:focus-visible {
+  outline: 2px solid #9cddb2;
+  outline-offset: -2px;
+}
+.viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: max(12px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right)) 12px
+    max(16px, env(safe-area-inset-left));
+  background: #191e1b;
+}
+.viewer-header > div {
+  flex: 1;
+  min-width: 0;
+}
+.viewer-header h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+.viewer-header p {
+  margin-top: 3px;
+  color: #aab7af;
+  font-size: 11px;
+}
+.viewer-header .ui-button {
+  font-size: 26px;
+}
+.viewer-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  user-select: none;
+}
+.viewer-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* biome-ignore lint/style/noDescendingSpecificity: Viewer media is separate from library thumbnails. */
+.viewer-content > img,
+.viewer-content > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.viewer-zoomable {
+  cursor: grab;
+}
+.viewer-zoomable:active {
+  cursor: grabbing;
+}
+/* biome-ignore lint/style/noDescendingSpecificity: Viewer media is separate from library thumbnails. */
+.viewer-content > img,
+.pdf-page canvas {
+  pointer-events: none;
+}
+.viewer-audio {
+  width: min(640px, 90%);
+  text-align: center;
+}
+.viewer-audio > span {
+  display: block;
+  font-size: 100px;
+  color: #9cddb2;
+  margin-bottom: 40px;
+}
+.viewer-audio audio {
+  width: 100%;
+}
+.viewer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px max(8px, env(safe-area-inset-bottom));
+  background: #191e1b;
+  z-index: 1;
+}
+.viewer-navigation,
+.viewer-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.viewer-footer a {
+  color: #b4dec2;
+  font-size: 12px;
+  padding: 10px;
+}
+.viewer-hint {
+  width: 100%;
+  text-align: center;
+  color: #aab7af;
+  font-size: 11px;
+}
+.pdf-viewer {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pdf-page {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+}
+.pdf-message {
+  position: absolute;
+}
+.pdf-navigation {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #191e1b;
+  border-radius: 6px;
+  margin: 8px;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .viewer-header {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .viewer-footer {
+    justify-content: center;
+    gap: 2px 8px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  .viewer-footer .ui-button {
+    padding: 6px 10px;
+  }
+  .viewer-hint {
+    font-size: 10px;
+  }
+}
+.audio-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.audio-preview > span:first-child {
+  font-size: 40px;
+}
+.pdf-navigation {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.viewer-error {
+  width: 100%;
+  text-align: center;
+  color: #ffb9ad;
+  font-size: 13px;
+}

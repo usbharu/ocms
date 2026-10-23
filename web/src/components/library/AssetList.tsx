@@ -25,6 +25,7 @@ export function AssetList({
   resultCount,
   fileList,
   onSelect,
+  onOpen,
   onReset,
   onUpload,
   onPageChange,
@@ -41,6 +42,7 @@ export function AssetList({
   resultCount: number;
   fileList?: Ref<HTMLElement>;
   onSelect: (asset: Asset) => void;
+  onOpen?: (asset: Asset) => void;
   onReset: () => void;
   onUpload: () => void;
   onPageChange: (page: number) => void;
@@ -102,7 +104,11 @@ export function AssetList({
                 aria-pressed={selectedId === a.asset_id}
                 key={a.asset_id}
                 disabled={searching}
-                onClick={() => onSelect(a)}
+                onClick={() => {
+                  if (selectedId === a.asset_id && onOpen) onOpen(a);
+                  else onSelect(a);
+                }}
+                onDoubleClick={() => onOpen?.(a)}
               >
                 <Thumbnail
                   key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`}

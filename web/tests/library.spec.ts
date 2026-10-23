@@ -818,3 +818,406 @@ test('desktop details stay in the viewport and scroll independently', async ({
     ).toBe(true);
   }
 });
+
+// Generated two-page PDF, with real PDF parsing and rendering (no private media).
+function viewerPDF() {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 7 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>',
+    ...[1, 2].map((page) => {
+      const stream = `0.2 0.5 0.3 rg 40 40 520 600 re f BT /F1 32 Tf 40 700 Td (Page ${page}) Tj ET\n`;
+      return `<< /Length ${stream.length} >>\nstream\n${stream}endstream`;
+    }),
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = pdf.length;
+  pdf += `xref\n0 ${offsets.length}\n0000000000 65535 f \n`;
+  pdf += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
+    .join('');
+  return Buffer.from(
+    `${pdf}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`,
+  );
+}
+
+async function swipeViewer(page: Page, direction: number) {
+  const bounds = await page.locator('.viewer-stage').boundingBox();
+  if (!bounds) throw new Error('Viewer stage missing');
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + direction * 120, y, { steps: 8 });
+  await page.mouse.up();
+}
+
+test('viewer opens from preview, repeated selection and double click in all views', async ({
+  page,
+}) => {
+  const viewer = page.getByRole('dialog', { name: 'ファイル閲覧' });
+  const image = page.getByRole('button', {
+    name: fixtures[0].filename,
+    exact: true,
+  });
+  await image.click();
+  await expect(viewer).not.toBeVisible();
+  await page
+    .getByRole('button', { name: 'ファイルを閲覧', exact: true })
+    .click();
+  await expect(viewer).toBeVisible();
+  await expect(viewer.getByRole('img')).toHaveAttribute(
+    'src',
+    '/api/v1/assets/image/content',
+  );
+  expect(await viewer.boundingBox()).toEqual({
+    x: 0,
+    y: 0,
+    width: 1440,
+    height: 1000,
+  });
+  await page.keyboard.press('Escape');
+  await expect(
+    page.getByRole('button', { name: 'ファイルを閲覧', exact: true }),
+  ).toBeFocused();
+  await image.click();
+  await expect(viewer).toBeVisible();
+  await viewer.getByRole('button', { name: '閲覧を閉じる' }).click();
+  for (const view of ['grid', 'detailed-grid', 'list']) {
+    await page.getByLabel('表示方法').selectOption(view);
+    await page
+      .getByRole('button', { name: fixtures[1].filename, exact: true })
+      .dblclick();
+    await expect(
+      viewer.getByRole('heading', { name: fixtures[1].filename }),
+    ).toBeVisible();
+    await page.keyboard.press('Escape');
+    await image.click();
+  }
+});
+
+test('image zoom pans without changing files; reset restores swipe and focus stays in cover', async ({
+  page,
+}) => {
+  await page
+    .getByRole('button', { name: fixtures[0].filename, exact: true })
+    .dblclick();
+  const viewer = page.getByRole('dialog');
+  await expect(
+    viewer.getByRole('button', { name: '前のファイル' }),
+  ).toBeDisabled();
+  await viewer.getByRole('button', { name: '拡大', exact: true }).click();
+  await expect(
+    viewer.getByRole('button', { name: '画面に合わせる' }),
+  ).toHaveText('125%');
+  await swipeViewer(page, -1);
+  await expect(viewer.getByRole('heading')).toHaveText(fixtures[0].filename);
+  await expect(viewer.locator('.viewer-content')).toHaveAttribute(
+    'style',
+    /translate\(-120px/,
+  );
+  await viewer.getByRole('button', { name: '画面に合わせる' }).click();
+  await swipeViewer(page, -1);
+  await expect(viewer.getByRole('heading')).toHaveText(fixtures[1].filename);
+  await page.keyboard.press('ArrowLeft');
+  await expect(viewer.getByRole('heading')).toHaveText(fixtures[0].filename);
+  for (let i = 0; i < 12; i++) {
+    await page.keyboard.press('Tab');
+    expect(
+      await page.evaluate(() =>
+        Boolean(document.activeElement?.closest('.asset-viewer')),
+      ),
+    ).toBe(true);
+  }
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(
+      viewer.getByRole('button', { name: '閲覧を閉じる' }),
+    ).toBeInViewport();
+    await expect(
+      viewer.getByRole('button', { name: '拡大', exact: true }),
+    ).toBeInViewport();
+    expect((await viewer.boundingBox())?.width).toBe(width);
+  }
+  if (process.env.UI_SCREENSHOTS)
+    await page.screenshot({ path: '../docs/library-viewer-mobile.png' });
+});
+
+test('PDF renders real pages under the BFF CSP, zooms and navigates files', async ({
+  page,
+}) => {
+  await page.route('**/api/v1/assets/pdf/content', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: viewerPDF() }),
+  );
+  await page.route('http://127.0.0.1:4173/', async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      headers: {
+        ...response.headers(),
+        'Content-Security-Policy':
+          "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; font-src 'self' blob:; img-src 'self' blob:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'",
+      },
+    });
+  });
+  await page.reload();
+  await page.getByLabel('検索クエリ').fill('pdf');
+  await page.getByRole('button', { name: '検索', exact: true }).click();
+  await page
+    .getByRole('button', { name: fixtures[3].filename, exact: true })
+    .dblclick();
+  const viewer = page.getByRole('dialog');
+  await expect(
+    viewer.getByRole('img', { name: 'PDF 2ページ目' }),
+  ).toBeVisible();
+  await expect(
+    viewer.getByRole('navigation', { name: 'PDFページ操作' }),
+  ).toContainText('2 / 2 ページ');
+  await expect(
+    viewer.getByRole('button', { name: '次のPDFページ' }),
+  ).toBeDisabled();
+  await viewer.getByRole('button', { name: '前のPDFページ' }).click();
+  await expect(
+    viewer.getByRole('img', { name: 'PDF 1ページ目' }),
+  ).toBeVisible();
+  await viewer.getByRole('button', { name: '拡大', exact: true }).click();
+  await expect(viewer.getByRole('img')).toHaveAttribute(
+    'style',
+    /scale\(1.25\)/,
+  );
+  await expect(
+    viewer.getByRole('button', { name: '次のPDFページ' }),
+  ).toBeInViewport();
+  expect(
+    await viewer
+      .locator('canvas')
+      .evaluate(
+        (canvas: HTMLCanvasElement) =>
+          canvas.getContext('2d')?.getImageData(100, 100, 1, 1).data[3],
+      ),
+  ).toBe(255);
+  if (process.env.UI_SCREENSHOTS)
+    await page.screenshot({ path: '../docs/library-viewer-pdf.png' });
+  await page.keyboard.press('Escape');
+});
+
+test('viewer crosses API page boundaries and keeps the displayed page on return', async ({
+  page,
+}) => {
+  await mockPaginatedLibrary(page, 25);
+  let failNextPage = true;
+  await page.route('**/api/v1/assets?**', (route) => {
+    if (
+      new URL(route.request().url()).searchParams.get('offset') === '24' &&
+      failNextPage
+    ) {
+      failNextPage = false;
+      return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+    }
+    return route.fallback();
+  });
+  await page
+    .getByRole('button', { name: 'ファイル 24', exact: true })
+    .dblclick();
+  const viewer = page.getByRole('dialog');
+  await viewer.getByRole('button', { name: '次のファイル' }).click();
+  await expect(
+    viewer
+      .getByRole('alert')
+      .filter({ hasText: '次のファイルを読み込めません' }),
+  ).toBeVisible();
+  await expect(viewer.getByRole('heading')).toHaveText('ファイル 24');
+  await viewer.getByRole('button', { name: '次のファイル' }).click();
+  await expect(viewer.getByRole('heading')).toHaveText('ファイル 25');
+  await expect(
+    viewer.getByRole('button', { name: '次のファイル' }),
+  ).toBeDisabled();
+  await swipeViewer(page, 1);
+  await expect(viewer.getByRole('heading')).toHaveText('ファイル 24');
+  await page.keyboard.press('Escape');
+  await expect(
+    page.getByRole('navigation', { name: 'ページネーション' }),
+  ).toContainText('1–24 / 25 件');
+});
+
+test('unsupported and broken files retain navigation and original links', async ({
+  page,
+}) => {
+  await page.route('**/api/v1/assets/image/content', (route) =>
+    route.fulfill({ status: 403 }),
+  );
+  await page
+    .getByRole('button', { name: fixtures[0].filename, exact: true })
+    .dblclick();
+  const viewer = page.getByRole('dialog');
+  await expect(viewer.getByRole('alert')).toContainText('画像を表示できません');
+  await expect(
+    viewer.getByRole('link', { name: '元ファイル' }),
+  ).toHaveAttribute('href', '/api/v1/assets/image/content');
+  await swipeViewer(page, -1);
+  await expect(viewer.getByRole('heading')).toHaveText(fixtures[1].filename);
+  await page.keyboard.press('Escape');
+  const unsupported = {
+    ...fixtures[0],
+    asset_id: 'other',
+    filename: 'notes.txt',
+    mime_type: 'text/plain',
+  };
+  await page.route('**/api/v1/assets?**', (route) =>
+    route.fulfill({ json: { assets: [unsupported] } }),
+  );
+  await page.route('**/api/v1/assets/other', (route) =>
+    route.fulfill({ json: unsupported }),
+  );
+  await page.reload();
+  await page.getByRole('button', { name: 'notes.txt', exact: true }).dblclick();
+  await expect(viewer).toContainText('この形式はプレビューに対応していません');
+  await expect(
+    viewer.getByRole('link', { name: '元ファイル' }),
+  ).toHaveAttribute('href', '/api/v1/assets/other/content');
+});
+
+test('pinch zoom does not accidentally navigate, then a touch swipe changes files', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole('button', { name: fixtures[0].filename, exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'ファイルを閲覧', exact: true })
+    .click();
+  const viewer = page.getByRole('dialog');
+  const session = await page.context().newCDPSession(page);
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      { x: 150, y: 300, id: 1 },
+      { x: 250, y: 300, id: 2 },
+    ],
+  });
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [
+      { x: 100, y: 300, id: 1 },
+      { x: 300, y: 300, id: 2 },
+    ],
+  });
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await expect(
+    viewer.getByRole('button', { name: '画面に合わせる' }),
+  ).toHaveText('200%');
+  await expect(viewer.getByRole('heading')).toHaveText(fixtures[0].filename);
+  await viewer.getByRole('button', { name: '画面に合わせる' }).click();
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: 300, y: 300, id: 1 }],
+  });
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: 100, y: 300, id: 1 }],
+  });
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await expect(viewer.getByRole('heading')).toHaveText(fixtures[1].filename);
+  await session.detach();
+});
+
+test('video and audio play generated media and swiping unmounts the previous player', async ({
+  page,
+}) => {
+  const video = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 90;
+    const stream = canvas.captureStream(10);
+    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    const chunks: Blob[] = [];
+    const result = new Promise<number[]>((resolve) => {
+      recorder.ondataavailable = (event) => chunks.push(event.data);
+      recorder.onstop = async () =>
+        resolve(
+          Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer())),
+        );
+    });
+    recorder.start();
+    const draw = setInterval(() => {
+      const context = canvas.getContext('2d');
+      if (context) {
+        context.fillStyle = Date.now() % 2 ? '#527d67' : '#86a594';
+        context.fillRect(0, 0, 160, 90);
+      }
+    }, 40);
+    setTimeout(() => {
+      clearInterval(draw);
+      recorder.stop();
+      for (const track of stream.getTracks()) track.stop();
+    }, 1200);
+    return result;
+  });
+  await page.route('**/api/v1/assets/video/renditions/mp4/content', (route) =>
+    route.fulfill({ contentType: 'video/webm', body: Buffer.from(video) }),
+  );
+  const audio = Buffer.alloc(44 + 16000);
+  audio.write('RIFF');
+  audio.writeUInt32LE(audio.length - 8, 4);
+  audio.write('WAVEfmt ', 8);
+  audio.writeUInt32LE(16, 16);
+  audio.writeUInt16LE(1, 20);
+  audio.writeUInt16LE(1, 22);
+  audio.writeUInt32LE(8000, 24);
+  audio.writeUInt32LE(16000, 28);
+  audio.writeUInt16LE(2, 32);
+  audio.writeUInt16LE(16, 34);
+  audio.write('data', 36);
+  audio.writeUInt32LE(16000, 40);
+  await page.route('**/api/v1/assets/audio/content', (route) =>
+    route.fulfill({ contentType: 'audio/wav', body: audio }),
+  );
+  await page
+    .getByRole('button', { name: fixtures[1].filename, exact: true })
+    .dblclick();
+  const viewer = page.getByRole('dialog');
+  await expect(viewer.locator('video')).toHaveAttribute(
+    'src',
+    '/api/v1/assets/video/renditions/mp4/content',
+  );
+  await viewer.locator('video').evaluate(async (element: HTMLVideoElement) => {
+    await element.play();
+  });
+  await expect
+    .poll(() =>
+      viewer
+        .locator('video')
+        .evaluate((element: HTMLVideoElement) => element.currentTime),
+    )
+    .toBeGreaterThan(0);
+  await swipeViewer(page, -1);
+  await expect(viewer.locator('video')).toHaveCount(0);
+  await viewer.locator('audio').evaluate(async (element: HTMLAudioElement) => {
+    await element.play();
+  });
+  await expect
+    .poll(() =>
+      viewer
+        .locator('audio')
+        .evaluate((element: HTMLAudioElement) => element.currentTime),
+    )
+    .toBeGreaterThan(0);
+  await swipeViewer(page, -1);
+  await expect(viewer.getByRole('heading')).toHaveText(fixtures[3].filename);
+  await expect(viewer.locator('audio')).toHaveCount(0);
+});

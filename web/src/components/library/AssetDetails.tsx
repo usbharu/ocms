@@ -20,6 +20,7 @@ export function AssetDetails({
   notice,
   detailTitle,
   onClose,
+  onOpen,
   onSaveTags,
   onCompare,
   onReprocess,
@@ -32,6 +33,7 @@ export function AssetDetails({
   notice: string;
   detailTitle?: Ref<HTMLHeadingElement>;
   onClose: () => void;
+  onOpen?: () => void;
   onSaveTags: (tags: string[]) => void;
   onCompare: (mode: Mode) => void;
   onReprocess: () => void;
@@ -74,28 +76,29 @@ export function AssetDetails({
         <span>{selected.mime_type}</span>
         <Status value={selected.status} />
       </div>
-      <div className="preview">
+      <button
+        type="button"
+        className="preview"
+        aria-label="ファイルを閲覧"
+        onClick={onOpen}
+      >
         {selected.mime_type.startsWith('image/') ? (
           <img
             alt={selected.filename}
             src={`/api/v1/assets/${selected.asset_id}/${renditions.some((d) => d.profile_id === 'thumbnail-v1') ? 'preview' : 'content'}`}
           />
         ) : selected.mime_type.startsWith('video/') ? (
-          // biome-ignore lint/a11y/useMediaCaption: Uploaded media has no caption rendition contract.
           <video
             key={mediaURL(selected)}
-            controls
+            muted
             preload="metadata"
             src={mediaURL(selected)}
           />
         ) : selected.mime_type.startsWith('audio/') ? (
-          // biome-ignore lint/a11y/useMediaCaption: Uploaded media has no caption rendition contract.
-          <audio
-            key={mediaURL(selected)}
-            controls
-            preload="metadata"
-            src={mediaURL(selected)}
-          />
+          <span className="audio-preview">
+            <span aria-hidden="true">♫</span>
+            <span>音声を再生</span>
+          </span>
         ) : selected.mime_type === 'application/pdf' && pdfPreview ? (
           <img
             alt={`PDF ${selected.page_number ?? 1}ページ目`}
@@ -109,7 +112,7 @@ export function AssetDetails({
               : 'プレビューなし'}
           </span>
         )}
-      </div>
+      </button>
       {locationOf(selected) && (
         <p className="match-location">
           検索の一致箇所 · {locationOf(selected)}

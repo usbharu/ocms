@@ -53,3 +53,23 @@ func TestAuthAndCSRFBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestViewerContentSecurityPolicy(t *testing.T) {
+	t.Setenv("AUTH_MODE", "development")
+	t.Setenv("PUBLIC_URL", "http://localhost:8080")
+	service, err := New(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	service.Handler(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("test")}}).ServeHTTP(response, httptest.NewRequest("GET", "/", nil))
+	policy := response.Header().Get("Content-Security-Policy")
+	for _, directive := range []string{"default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "font-src 'self' blob:", "object-src 'none'", "frame-ancestors 'none'"} {
+		if !strings.Contains(policy, directive) {
+			t.Errorf("missing CSP directive %q", directive)
+		}
+	}
+	if strings.Contains(policy, "'unsafe-eval'") || strings.Contains(policy, "'unsafe-inline'") {
+		t.Fatal("viewer must not enable inline script or JavaScript eval")
+	}
+}
