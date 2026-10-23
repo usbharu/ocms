@@ -393,3 +393,11 @@ RuntimeはWD14のcategory 4を閾値0.85で抽出し、一般タグとは別に�
 - 3種類のDockerfileのネイティブ（arm64）ビルド：成功（既存キャッシュを使用）。Mac上のamd64ビルドでは `go mod download` 中にGoランタイムが異常終了した。Runtime・PostgreSQLのamd64検証ビルドは中止し、GitHubのamd64ランナー上での実行は未検証。
 
 Gitリモートは未設定のため、GitHub Actionsの実行とGHCRへの実push・pullは未検証。リモートへの反映後、ActionsとPackage書き込み権限を有効にしてReleaseを公開する必要がある。実DB・S3・モデルを使う結合試験と仕様§14のAC全項目はCIの対象外で、今回も再実行していない。
+
+### GitHub上で判明したCIの修正（2026-10-23）
+
+初回のGitHub ActionsではGo・Runtime単体テストと3種類のamd64イメージビルドが成功した。SPAはレイアウト座標の比較基準 `library-wireframe-linux.txt` が未登録で失敗し、Releaseの公開ジョブも実行されなかった。`UI_SCREENSHOTS` を指定しなくても座標比較は実行されるため、macOSでの成功だけではLinux CIを確認できていなかった。
+
+Playwright 1.62.1の公式Ubuntu 24.04コンテナでLinux用の基準値を生成し、既存のmacOS版と全75行が一致することを確認して追加した。基準値の更新を無効にした `CI=true npm run test:ui` が53件、`npm run test:storybook` が68件成功した。コンテナ内の `npm ci`、`npm run check`、`npm run build` と、actionlintによるワークフロー検査も成功した。検査の省略やCI内での基準値の自動更新は行わない。
+
+今後のブラウザテストの失敗に備えて、`web/test-results/` を7日間保持するArtifact出力も追加した。公開済みReleaseのタグは変更していない。古いタグのReleaseを再実行しても、そのタグの修正前のコードが使われるため、修正を含むReleaseで公開する必要がある。

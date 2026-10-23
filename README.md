@@ -40,7 +40,7 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 GitHub Actionsの `CI` は、ブランチへのpushとPull Requestで次を実行します。
 
 - Go：`go test -race ./...`、`go vet ./...`（Goのバージョンは `go.mod` に従う）。
-- SPA：Node.js 24で `npm ci`、`npm run check`、`npm run build`、`npm run build-storybook`、Chromiumで `npm run test:ui` と `npm run test:storybook`。OS依存のスクリーンショット検査（`UI_SCREENSHOTS`）は有効にしません。
+- SPA：Node.js 24で `npm ci`、`npm run check`、`npm run build`、`npm run build-storybook`、Chromiumで `npm run test:ui` と `npm run test:storybook`。レイアウトの座標検査はLinux用の基準値で実行します。任意のスクリーンショット出力（`UI_SCREENSHOTS`）は有効にしません。
 - Runtime：Python 3.12（Ubuntu 24.04標準）、NumPyとPillowで `python -m unittest discover -s runtime -p 'test_*.py'`。モデルのダウンロードは不要です。
 - Docker：次の3イメージを `linux/amd64` 向けにビルドします。通常のCIではpushしません。
 
@@ -63,6 +63,8 @@ docker pull ghcr.io/owner/repository-postgres:v1.2.3
 ```
 
 既存の `compose.yaml` はローカルビルド用です。公開イメージを使う環境では、各サービスの `image` に上記の同じReleaseタグを指定し、ローカル用の `pull_policy: never` を解除してください。DB初期化用の `scripts/init-db.sh` と `migrations/` のマウントは引き続き必要です。
+
+ブラウザテストの失敗時は、生成データによる `web/test-results/` をArtifactとして7日間保存します。レイアウトの基準値は `web/tests/library.spec.ts-snapshots/` のOS別ファイルで管理し、更新は対象OSで意図した変更を確認したうえで行います。CIでは自動更新しません。
 
 実DB・S3・モデルを使う結合試験、障害復旧、OIDC・OTLP検証はこのCIの対象外です。仕様§14の受け入れ基準すべてを保証するものではなく、必要な検証は以下の手順で別途実行します。
 

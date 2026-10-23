@@ -50,6 +50,14 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: npm run test:storybook
+      - name: Upload browser test failure details
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: browser-test-results
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   runtime:
     name: Runtime unit tests
