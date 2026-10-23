@@ -87,7 +87,8 @@ body {
   color: inherit;
   min-width: 0;
 }
-a {
+/* Button links use the text color supplied by their shadcn variant. */
+a:not(.ui-button) {
   color: var(--primary);
 }
 h1,

@@ -351,6 +351,16 @@ test('login offers only the configured authentication method', async ({
   await expect(
     page.getByRole('link', { name: 'SSOでログイン' }),
   ).toHaveAttribute('href', '/auth/login');
+  const ssoLogin = page.getByRole('link', { name: 'SSOでログイン' });
+  await expect(ssoLogin).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await expect(ssoLogin).toHaveCSS('background-color', 'rgb(21, 128, 61)');
+  await ssoLogin.hover();
+  await expect(ssoLogin).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await ssoLogin.focus();
+  await expect(ssoLogin).toBeFocused();
+  await expect(ssoLogin).toHaveCSS('color', 'rgb(255, 255, 255)');
+  if (process.env.UI_SCREENSHOTS)
+    await page.screenshot({ path: '../docs/login-sso.png', fullPage: true });
   await expect(
     page.getByRole('button', { name: 'alice でログイン' }),
   ).toHaveCount(0);

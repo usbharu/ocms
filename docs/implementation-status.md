@@ -135,6 +135,14 @@ Button・Input・Label・Native Select・Progressをshadcn/uiベースのロー�
 
 [PC画面（生成データ）](library-ia.png) / [モバイル画面（生成データ）](library-ia-mobile.png)
 
+## SSOログインボタンの文字色修正（2026-10-23）
+
+通常リンク用のCSSがshadcn/uiの文字色を上書きし、SSOログインボタンの背景と文字が同じ緑になっていた。通常リンクの色指定から `.ui-button` を除外し、ボタンのvariantに応じた文字色を使うよう修正した。配置と寸法は変更していない。
+
+既存の認証画面テストに、SSOボタンの緑背景・白文字、およびホバー・フォーカス時にも白文字を保つ検査を追加した。修正前に文字色の不一致を再現し、修正後は `npm ci --cache ../.cache/npm`、`npm run check`、`npm run build`、`UI_SCREENSHOTS=1 npm run test:ui`（17件）が成功した。実OIDCログインは再検証していない。
+
+[SSOログイン画面（生成データ）](login-sso.png)
+
 ## 残る実装・評価
 
 1. Pocket IDとの実接続、セッションの共有永続化、Grant管理の外部契約/UIと網羅テスト。
