@@ -352,7 +352,15 @@ export function App() {
 
   return (
     <div className="shell">
-      <AppHeader authenticated={Boolean(me)} onLogout={logout} />
+      <AppHeader authenticated={Boolean(me)} onLogout={logout}>
+        {me && (
+          <UploadControl
+            uploadInput={uploadInput}
+            busy={progress !== null}
+            onUpload={upload}
+          />
+        )}
+      </AppHeader>
       <main>
         {error && (
           <div className="error" role="alert">
@@ -376,11 +384,6 @@ export function App() {
           <LoginPanel development={dev} onDevLogin={devLogin} />
         ) : (
           <>
-            <UploadControl
-              uploadInput={uploadInput}
-              busy={progress !== null}
-              onUpload={upload}
-            />
             <SearchForm
               query={query}
               mode={mode}

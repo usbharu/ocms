@@ -1,9 +1,12 @@
+import type { ReactNode } from 'react';
 import { Button } from '../ui/button';
 
 export function AppHeader({
   authenticated,
   onLogout,
+  children,
 }: {
+  children?: ReactNode;
   authenticated: boolean;
   onLogout: () => void;
 }) {
@@ -14,14 +17,17 @@ export function AppHeader({
       </a>
       <span className="workspace-name">メディアライブラリ</span>
       {authenticated && (
-        <Button
-          variant="ghost"
-          type="button"
-          className="quiet"
-          onClick={onLogout}
-        >
-          ログアウト
-        </Button>
+        <div className="header-actions">
+          {children}
+          <Button
+            variant="ghost"
+            type="button"
+            className="quiet"
+            onClick={onLogout}
+          >
+            ログアウト
+          </Button>
+        </div>
       )}
     </header>
   );

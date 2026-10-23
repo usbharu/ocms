@@ -165,21 +165,19 @@ h3 {
   border-left: 1px solid var(--border);
   padding-left: 28px;
 }
-.app-header > button {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin-left: auto;
+}
+.header-actions > button {
   font-size: 12px;
 }
 main {
   max-width: 1560px;
   margin: 0 auto;
   padding: 36px 40px 64px;
-}
-.heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 26px;
 }
 .search {
   display: flex;
@@ -768,13 +766,11 @@ details[open] summary {
   h1 {
     font-size: 24px;
   }
-  .heading {
-    gap: 12px;
-    margin-bottom: 20px;
+  .header-actions {
+    gap: 4px;
   }
-  .heading button {
-    font-size: 12px;
-    padding-inline: 12px;
+  .header-actions > button {
+    padding-inline: 8px;
   }
   .search {
     flex-wrap: wrap;

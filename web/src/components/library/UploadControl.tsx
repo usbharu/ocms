@@ -15,8 +15,7 @@ export function UploadControl({
   const input = uploadInput ?? localInput;
 
   return (
-    <section className="heading">
-      <h1>ライブラリ</h1>
+    <>
       <Button
         variant="default"
         type="button"
@@ -39,6 +38,6 @@ export function UploadControl({
           e.target.value = '';
         }}
       />
-    </section>
+    </>
   );
 }

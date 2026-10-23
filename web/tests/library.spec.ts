@@ -310,6 +310,15 @@ test('desktop and narrow layouts fit without horizontal scrolling', async ({
 });
 
 test('upload resets filters and opens the uploaded file', async ({ page }) => {
+  await expect(
+    page.getByRole('heading', { name: 'ライブラリ', exact: true }),
+  ).toHaveCount(0);
+  const chooser = page.waitForEvent('filechooser');
+  await page
+    .getByRole('banner')
+    .getByRole('button', { name: '＋ アップロード', exact: true })
+    .click();
+  expect((await chooser).isMultiple()).toBe(false);
   await page.getByRole('button', { name: '音声', exact: true }).click();
   await expect(page.locator('.file')).toHaveCount(1);
   const content = page.waitForRequest(
@@ -580,7 +589,7 @@ test('PDF search thumbnails use the matched page in every view', async ({
   }
 });
 
-// Keep the existing wireframe fixed while changing component implementations/themes.
+// Track the library layout across views and responsive breakpoints.
 test('library wireframe retains its geometry across views and breakpoints', async ({
   page,
 }) => {
@@ -598,7 +607,6 @@ test('library wireframe retains its geometry across views and breakpoints', asyn
       await page.getByLabel('表示方法').selectOption(view);
       for (const selector of [
         '.app-header',
-        '.heading',
         '.search',
         '.library-toolbar',
         '.files',
