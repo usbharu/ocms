@@ -76,28 +76,24 @@ test('searches tags, switches list and handles empty results', async ({
   await expect(page.locator('.tag-list li')).toHaveCount(3);
 });
 
-test('graph shows weighted edges, selection, zoom and keyboard activation', async ({
+test('library graph supports selection, zoom and keyboard navigation', async ({
   page,
 }) => {
   await page.getByRole('button', { name: 'グラフ', exact: true }).click();
-  const graph = page.getByRole('region', { name: 'タグの関係グラフ' });
-  await expect(graph.getByRole('button')).toHaveCount(3);
-  await expect(graph.locator('line')).toHaveCount(1);
-  const big = await graph
-    .locator('.tag-node-circle')
-    .first()
-    .evaluate((el) => el.getBoundingClientRect().width);
-  const small = await graph
-    .locator('.tag-node-circle')
-    .last()
-    .evaluate((el) => el.getBoundingClientRect().width);
-  expect(big).toBeGreaterThan(small);
-  await graph.getByRole('button', { name: '旅行：20件' }).focus();
-  await page.keyboard.press('Enter');
+  const graph = page.getByRole('img', {
+    name: 'タグの関係グラフ：3タグ、1本の線',
+  });
+  await expect(graph.locator('canvas').first()).toBeVisible();
+  await page.getByRole('combobox', { name: 'タグを選択' }).selectOption('旅行');
   await expect(page.getByText('20件のファイル · 関連タグ 1件')).toBeVisible();
   await page.getByRole('button', { name: '拡大', exact: true }).click();
-  await expect(page.getByRole('button', { name: '150%' })).toBeVisible();
-  await page.getByRole('button', { name: '150%' }).click();
+  await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
+    '150%',
+  );
+  await page.getByRole('button', { name: '全体を表示' }).click();
+  await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
+    '100%',
+  );
   if (process.env.UI_SCREENSHOTS)
     await page.screenshot({ path: '../docs/tags-graph.png', fullPage: true });
   await page.getByRole('button', { name: 'ファイルを表示' }).click();
@@ -107,7 +103,7 @@ test('graph shows weighted edges, selection, zoom and keyboard activation', asyn
 test('recovers from load failure and ignores old search responses', async ({
   page,
 }) => {
-  await expect(page.locator('.tag-cloud button')).toHaveCount(3);
+  await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(3);
   let fail = true;
   await page.route('**/api/v1/tags?*', async (route) => {
     if (fail) return route.fulfill({ status: 503, json: {} });
@@ -125,17 +121,17 @@ test('recovers from load failure and ignores old search responses', async ({
   await expect(page.getByRole('alert')).toContainText('タグを読み込めません');
   fail = false;
   await page.getByRole('button', { name: '再試行' }).click();
-  await expect(page.locator('.tag-cloud button')).toHaveCount(3);
+  await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(3);
   await page.getByRole('searchbox').fill('古い');
   await page.waitForRequest('**/api/v1/tags?q=*');
   await page.getByRole('searchbox').fill('旅行');
-  await expect(page.locator('.tag-cloud button')).toHaveCount(3);
+  await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(3);
   await page.waitForTimeout(700);
-  await expect(page.locator('.tag-cloud button')).toHaveCount(3);
+  await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(3);
 });
 
 test('tag views fit narrow screens and retain navigation', async ({ page }) => {
-  await expect(page.locator('.tag-cloud button')).toHaveCount(3);
+  await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(3);
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     for (const view of ['ワードクラウド', '一覧', 'グラフ']) {
@@ -163,7 +159,7 @@ test('tag views fit narrow screens and retain navigation', async ({ page }) => {
 test('graph bounds large tag sets and long labels stay inside narrow layouts', async ({
   page,
 }) => {
-  await expect(page.locator('.tag-cloud button')).toHaveCount(3);
+  await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(3);
   const many = Array.from({ length: 70 }, (_, i) => ({
     name: i === 0 ? '長いタグ'.repeat(20) : `タグ${i}`,
     asset_count: 70 - i,
@@ -182,15 +178,21 @@ test('graph bounds large tag sets and long labels stay inside narrow layouts', a
     }),
   );
   await page.getByRole('button', { name: '更新', exact: true }).click();
-  await expect(page.locator('.tag-cloud button')).toHaveCount(70);
+  await expect(
+    page.getByRole('combobox', { name: 'タグを選択' }).locator('option'),
+  ).toHaveCount(71);
   await expect(
     page.getByText(
       '被リンク数の上位70タグを表示しています。検索で絞り込めます。',
     ),
   ).toBeVisible();
   await page.getByRole('button', { name: 'グラフ', exact: true }).click();
-  await expect(page.locator('.tag-node')).toHaveCount(60);
-  await expect(page.locator('.tag-graph-scroll line')).toHaveCount(59);
+  await expect(
+    page.getByRole('img', { name: 'タグの関係グラフ：60タグ、59本の線' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('combobox', { name: 'タグを選択' }).locator('option'),
+  ).toHaveCount(61);
   await expect(
     page.getByText(
       'グラフは被リンク数の上位60タグを表示しています。検索で絞り込めます。',
@@ -202,5 +204,30 @@ test('graph bounds large tag sets and long labels stay inside narrow layouts', a
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(320);
+  }
+});
+
+test('navigation and upload share one header without stacked page headings', async ({
+  page,
+}) => {
+  await expect(page.locator('header')).toHaveCount(1);
+  await expect(page.locator('header nav')).toHaveCount(1);
+  await expect(page.locator('.workspace-heading')).toHaveCount(0);
+  await page
+    .getByRole('navigation')
+    .getByRole('button', { name: 'ライブラリ' })
+    .click();
+  await expect(
+    page.locator('header').getByRole('button', { name: '＋ アップロード' }),
+  ).toBeVisible();
+  await expect(page.locator('main > nav')).toHaveCount(0);
+  await expect(page.locator('.workspace-heading')).toHaveCount(0);
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const header = await page.locator('header').boundingBox();
+    expect(header?.height).toBeLessThanOrEqual(68);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
   }
 });

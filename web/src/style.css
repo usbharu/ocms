@@ -159,12 +159,6 @@ h3 {
 .brand span {
   font-size: 28px;
 }
-.workspace-name {
-  font-size: 12px;
-  color: var(--muted-foreground);
-  border-left: 1px solid var(--border);
-  padding-left: 28px;
-}
 .header-actions {
   display: flex;
   align-items: center;
@@ -178,13 +172,6 @@ main {
   max-width: 1560px;
   margin: 0 auto;
   padding: 36px 40px 64px;
-}
-.workspace-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
 }
 .collection {
   min-width: 0;
@@ -878,9 +865,6 @@ summary .count {
     padding-inline: 16px;
     gap: 12px;
   }
-  .workspace-name {
-    display: none;
-  }
   h1 {
     font-size: 24px;
   }
@@ -948,14 +932,6 @@ summary .count {
   }
   .result-heading h2 {
     font-size: 13px;
-  }
-  .workspace-heading {
-    gap: 8px;
-    margin-bottom: 18px;
-  }
-  .workspace-heading .ui-button {
-    padding-inline: 10px;
-    font-size: 12px;
   }
   .collection .search {
     margin: 12px 12px 0;
@@ -1188,10 +1164,7 @@ summary .count {
 
 .workspace-nav {
   display: flex;
-  gap: 8px;
-  padding: 0 4px 16px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 24px;
+  gap: 4px;
 }
 .workspace-nav [aria-current="page"] {
   background: var(--secondary);
@@ -1222,33 +1195,22 @@ summary .count {
   margin: 12px 0;
 }
 .tag-cloud {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  align-content: center;
-  gap: 18px 24px;
-  min-height: 360px;
-  padding: 32px 16px;
+  height: 440px;
+  min-width: 0;
   background: var(--card);
   border-radius: 12px;
+  overflow: hidden;
 }
-.tag-cloud button {
-  border: 0;
-  background: none;
-  color: var(--primary);
+.tag-cloud svg {
+  display: block;
+}
+.tag-cloud text {
+  fill: var(--primary);
   cursor: pointer;
-  line-height: 1.4;
-  max-width: 100%;
-  overflow-wrap: anywhere;
 }
-.tag-cloud button:hover {
+.tag-cloud text:hover {
+  fill: var(--secondary-foreground);
   text-decoration: underline;
-}
-.tag-cloud small {
-  font-size: 12px;
-  margin-left: 6px;
-  color: var(--muted-foreground);
 }
 .tag-list {
   list-style: none;
@@ -1290,59 +1252,14 @@ summary .count {
   color: var(--muted-foreground);
   font-size: 13px;
 }
-.tag-graph-scroll {
-  overflow: auto;
-  max-height: 65vh;
+.tag-graph {
+  position: relative;
+  height: 55vh;
+  min-height: 360px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);
-}
-.tag-graph-scroll svg {
-  display: block;
-  min-width: 720px;
-}
-.tag-graph-scroll line {
-  stroke: var(--primary);
-  opacity: 0.25;
-}
-.tag-graph-scroll line.muted-link {
-  opacity: 0.04;
-}
-.tag-node {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  color: var(--foreground);
-}
-.tag-node-circle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 2px solid var(--primary);
-  background: var(--secondary);
-  font-size: 14px;
-}
-.tag-node.selected .tag-node-circle,
-.tag-node:hover .tag-node-circle {
-  background: var(--primary);
-  color: var(--primary-foreground);
-}
-.tag-node-label {
-  max-width: 136px;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 13px;
-  line-height: 24px;
-}
-.muted-node {
-  opacity: 0.35;
 }
 .tag-selection {
   margin-top: 16px;
@@ -1352,12 +1269,19 @@ summary .count {
   max-width: 100%;
 }
 @media (max-width: 600px) {
-  .tag-cloud {
-    padding: 24px 8px;
-    gap: 12px;
+  .tags-toolbar {
+    gap: 8px;
+  }
+  .tag-search {
+    flex-basis: 100%;
+    max-width: none;
   }
   .tags-toolbar .view-switch {
-    width: 100%;
+    width: auto;
+    margin-right: auto;
+  }
+  .tags-toolbar .view-switch .ui-button {
+    padding-inline: 6px;
   }
 }
 .tag-controls {
@@ -1365,4 +1289,35 @@ summary .count {
   padding: 0;
   margin: 0;
   min-width: 0;
+}
+
+.tag-selection select {
+  max-width: min(100%, 480px);
+  flex: 1 1 200px;
+}
+.tag-controls {
+  display: flex;
+}
+.brand .brand-name {
+  font-size: 20px;
+}
+@media (max-width: 600px) {
+  .app-header {
+    padding-inline: 12px;
+    gap: 8px;
+  }
+  .app-header:has(.workspace-nav) .brand-name {
+    display: none;
+  }
+  .workspace-nav .ui-button {
+    padding: 8px;
+    font-size: 12px;
+  }
+  .header-actions .upload-label {
+    display: none;
+  }
+  .header-actions .ui-button {
+    padding: 8px;
+    white-space: nowrap;
+  }
 }

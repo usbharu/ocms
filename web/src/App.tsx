@@ -442,29 +442,24 @@ export function App() {
 
   return (
     <div className="shell">
-      <AppHeader authenticated={Boolean(me)} onLogout={logout} />
-      <main>
-        {me && (
-          <nav className="workspace-nav" aria-label="ワークスペース">
-            <Button
-              variant="ghost"
-              aria-current={section === 'library' ? 'page' : undefined}
-              onClick={() => setSection('library')}
-            >
-              ライブラリ
-            </Button>
-            <Button
-              variant="ghost"
-              aria-current={section === 'tags' ? 'page' : undefined}
-              onClick={() => {
-                setSection('tags');
-                setViewerOpen(false);
-              }}
-            >
-              タグ
-            </Button>
-          </nav>
+      <AppHeader
+        authenticated={Boolean(me)}
+        onLogout={logout}
+        section={section}
+        onSectionChange={(next) => {
+          setSection(next);
+          setViewerOpen(false);
+        }}
+      >
+        {me && section === 'library' && (
+          <UploadControl
+            uploadInput={uploadInput}
+            busy={progress !== null}
+            onUpload={upload}
+          />
         )}
+      </AppHeader>
+      <main>
         {error && (
           <div className="error" role="alert">
             <span>{error}</span>
@@ -497,14 +492,7 @@ export function App() {
           />
         ) : (
           <>
-            <div className="workspace-heading">
-              <h1>ライブラリ</h1>
-              <UploadControl
-                uploadInput={uploadInput}
-                busy={progress !== null}
-                onUpload={upload}
-              />
-            </div>
+            <h1 className="visually-hidden">ライブラリ</h1>
             {progress !== null && <UploadProgress value={progress} />}
             <div className={`library ${selected ? 'has-selection' : ''}`}>
               <div className="collection">

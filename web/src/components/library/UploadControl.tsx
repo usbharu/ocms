@@ -17,12 +17,14 @@ export function UploadControl({
   return (
     <>
       <Button
+        aria-label="＋ アップロード"
         variant="default"
         type="button"
         disabled={busy}
         onClick={() => input.current?.click()}
       >
-        ＋ アップロード
+        <span aria-hidden="true">＋</span>
+        <span className="upload-label">アップロード</span>
       </Button>
       <Input
         ref={input}

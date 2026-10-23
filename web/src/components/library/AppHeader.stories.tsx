@@ -9,6 +9,7 @@ const meta = {
   args: {
     authenticated: true,
     onLogout: fn(),
+    onSectionChange: fn(),
     children: <UploadControl busy={false} onUpload={fn()} />,
   },
 } satisfies Meta<typeof AppHeader>;

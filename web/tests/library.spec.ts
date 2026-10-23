@@ -382,7 +382,7 @@ test('upload resets filters and opens the uploaded file', async ({ page }) => {
   ).toBeVisible();
   const chooser = page.waitForEvent('filechooser');
   await page
-    .locator('.workspace-heading')
+    .locator('.app-header')
     .getByRole('button', { name: '＋ アップロード', exact: true })
     .click();
   expect((await chooser).isMultiple()).toBe(false);
@@ -1499,7 +1499,7 @@ test('library prioritizes browsing and reveals secondary controls on demand', as
   ).toBeVisible();
   await expect(
     page
-      .locator('.workspace-heading')
+      .locator('.app-header')
       .getByRole('button', { name: '＋ アップロード' }),
   ).toBeVisible();
   await expect(page.locator('.collection').getByRole('search')).toBeVisible();
