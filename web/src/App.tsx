@@ -24,6 +24,19 @@ import {
   type View,
 } from './lib/assets';
 
+const viewStorageKey = 'ocms.library.view';
+
+function savedView(): View {
+  try {
+    const value = localStorage.getItem(viewStorageKey);
+    if (value === 'grid' || value === 'detailed-grid' || value === 'list')
+      return value;
+  } catch {
+    // Storage may be disabled in the browser; keep the default view usable.
+  }
+  return 'list';
+}
+
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -40,7 +53,7 @@ export function App() {
   const [mode, setMode] = useState<Mode>('keyword');
   const [context, setContext] = useState<SearchContext>(allFiles);
   const [kind, setKind] = useState<Kind>('all');
-  const [view, setView] = useState<View>('list');
+  const [view, setView] = useState<View>(savedView);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [searching, setSearching] = useState(false);
@@ -49,6 +62,14 @@ export function App() {
   const detailTitle = useRef<HTMLHeadingElement>(null);
   const fileList = useRef<HTMLElement>(null);
   const requestVersion = useRef(0);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(viewStorageKey, view);
+    } catch {
+      // View changes still work when storage is unavailable or full.
+    }
+  }, [view]);
 
   async function request(path: string, init: RequestInit = {}) {
     const res = await fetch(path, {

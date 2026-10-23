@@ -152,6 +152,50 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('remembers each library view after reload and opening a new tab', async ({
+  page,
+  context,
+}) => {
+  for (const view of ['grid', 'detailed-grid', 'list']) {
+    await page.getByLabel('表示方法').selectOption(view);
+    await page.reload();
+    await expect(page.getByLabel('表示方法')).toHaveValue(view);
+    await expect(page.locator(`.view-${view} .file`)).toHaveCount(4);
+    const nextPage = await context.newPage();
+    await mockAPI(nextPage);
+    await nextPage.goto('/');
+    await expect(nextPage.getByLabel('表示方法')).toHaveValue(view);
+    await nextPage.close();
+  }
+});
+
+test('uses the list view when the saved preference is invalid', async ({
+  page,
+}) => {
+  await page.evaluate(() =>
+    localStorage.setItem('ocms.library.view', 'unknown'),
+  );
+  await page.reload();
+  await expect(page.getByLabel('表示方法')).toHaveValue('list');
+  await expect(page.locator('.view-list .file')).toHaveCount(4);
+});
+
+test('allows view changes when browser storage is unavailable', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      get() {
+        throw new DOMException('Storage disabled', 'SecurityError');
+      },
+    });
+  });
+  await page.reload();
+  await expect(page.getByLabel('表示方法')).toHaveValue('list');
+  await page.getByLabel('表示方法').selectOption('grid');
+  await expect(page.locator('.view-grid .file')).toHaveCount(4);
+});
+
 test('filters the current list and closes details', async ({ page }) => {
   await expect(page.locator('.file')).toHaveCount(4);
   await page.getByRole('button', { name: '画像', exact: true }).click();
