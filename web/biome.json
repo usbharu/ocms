@@ -13,7 +13,9 @@
       "!!**/dist",
       "!!**/test-results",
       "!!**/playwright-report",
-      "!**/package-lock.json"
+      "!**/package-lock.json",
+      "!!**/storybook-static",
+      "!!**/.storybook/public"
     ]
   },
   "formatter": {

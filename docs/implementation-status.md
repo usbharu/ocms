@@ -194,3 +194,18 @@ Button・Input・Label・Native Select・Progressをshadcn/uiベースのロー�
 - [Hydra公式Quickstart](https://www.ory.com/docs/oel/hydra/quickstart)
 - [OpenTelemetry Go Exporters](https://opentelemetry.io/docs/languages/go/exporters/)
 - [Grafana Docker OpenTelemetry LGTM](https://grafana.com/docs/opentelemetry/docker-lgtm/)
+
+## コンポーネント分割とStorybook（2026-10-23）
+
+`main.tsx` を起動処理に絞り、認証・API通信・ポーリング・更新を `App.tsx` に分離した。ヘッダー、ログイン、アップロード操作と進捗、検索、種類・表示切り替え、一覧、詳細、サムネイル、状態表示を `web/src/components/library/` に配置し、propsとコールバックで接続する。型と表示用の関数は `web/src/lib/assets.ts` で共有する。サービス責務・API契約・仕様§3と§14のACには変更がない。
+
+Storybook 10.6.3に61のStoryを追加した。ライブラリの3表示、空一覧、検索中、選択・ページ操作、PDF一致ページ、処理失敗、進捗、ログイン2方式、既存のshadcn/ui部品を確認できる。Controls、Actions、Interactions、AccessibilityパネルとPC・モバイルのViewportを用意した。MSWが生成メディアを返し、それ以外の `/api/` 通信を遮断する。実APIやログインは不要で、動画・音声の実再生は検証対象に含めない。
+
+- Node.js 24.18.0で `npm ci --cache ../.cache/npm`、`npm run check`、`npm run build`、`npm run build-storybook`：成功。依存のauditは0件。静的ビルドは `web/storybook-static/` に出力。
+- `npm run test:ui`：既存の画面回帰テスト21件が成功。表示・余白、検索、比較、タグ編集、アップロード、削除確認、ページ操作、フォーカス移動を維持。
+- `npm run test:storybook`：Chromiumで61件が成功。描画に加え、検索・フィルター、選択・ページ操作、タグの整形と保存、比較、失敗処理の再試行、ファイル選択を操作してコールバックを検証。
+- Storybookをブラウザで開き、一覧表示・Controls・生成プレビュー画像3件の読み込みとページ例外がないことを確認。
+- アクセシビリティ検査は `test: 'todo'` とし、指摘をパネルへ表示する。既存ファイルボタンの可視テキストとアクセシブル名の不一致が残っており、適合確認済みとはしない。
+- UIの分割と検査環境の追加に限定したため、Go・実サービス・DB・S3・推論の結合試験は再実行していない。
+
+![コンポーネントとControlsを表示したStorybook](storybook-components.png)

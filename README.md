@@ -88,6 +88,31 @@ npm run build
 
 UI部品は [shadcn/ui](https://ui.shadcn.com/) を使い、ソースを `web/src/components/ui/` に配置しています。Button・Input・Label・Native Select・Progressを導入し、Radix UI、Tailwind CSS 4、CVAと `cn()` で構成しています。`web/components.json` は今後の部品追加用設定です。配色は `web/src/style.css` 冒頭のCSS変数で管理します。既存のワイヤーフレームを保つため、Tailwind Preflightは読み込まず、部品の寸法は既存CSSで調整しています。Native Selectは標準の矢印と単一のselect要素を使う形へ調整しています。部品の更新時は画面の配置・余白・表示切り替えを維持し、以下の回帰テストで確認してください。
 
+### Storybookでコンポーネントを確認する
+
+Node.js 24以降を使い、`web/` で実行します。開発スタックやログインは不要です。
+
+```sh
+npm ci
+npm run storybook
+```
+
+[Storybook](http://127.0.0.1:6006) の `Auth`、`Library`、`UI` から部品を選びます。Controlsでpropsを変更でき、Viewportで1440px・390px・320px幅を確認できます。一覧の3表示、選択、ページ操作、空一覧、検索中、PDF一致ページ、処理失敗、アップロード進捗など61のStoryを用意しています。検索フォーム・種類フィルター・一覧選択はStory内で状態を持ち、入力やクリックの結果を表示します。保存・比較・再処理などのコールバックはActionsで確認できます。
+
+```sh
+npm run build-storybook
+npx playwright install chromium
+npm run test:storybook
+```
+
+静的ビルドは `web/storybook-static/` に出力します。`test:storybook` はVitestのブラウザモードとChromiumで全Storyの描画と `play` の操作テストを実行します。Storybookサーバーの事前起動は不要です。Storyと設定も `npm run build` のTypeScript strictチェック対象です。Accessibilityパネルの指摘は確認用（`test: 'todo'`）で、自動テストを失敗させません。既存のファイルボタンでは、ファイル名だけのアクセシブル名と、種類・タグ・状態などを含む可視テキストの不一致が指摘されます。アクセシビリティ適合を検証済みとは扱いません。
+
+`web/src/App.tsx` が認証・API通信・ポーリング・更新を担当し、`web/src/components/library/` の部品へ表示データとコールバックを渡します。型と表示用の関数は `web/src/lib/assets.ts`、Storyは各部品の隣に配置しています。本番と同じ `style.css` とVite設定を使います。生成データとMSWの設定はStorybookだけで読み込み、メディア取得をモックし、それ以外の `/api/` 通信を遮断します。動画・音声Storyはプレイヤーの表示確認用で、実メディアの再生・Range・実APIや認証の検証には使いません。MSW更新時は `web/` で `npx msw init .storybook/public --save` を実行してworkerも更新します。
+
+![生成データを表示したStorybook](docs/storybook-components.png)
+
+### SPAの画面回帰テスト
+
 画面の回帰テストはPlaywrightとChromiumを使います。上記のビルド後、`web/` で実行します。
 
 ```sh

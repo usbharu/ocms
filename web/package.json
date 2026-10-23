@@ -12,7 +12,10 @@
     "check": "biome check --error-on-warnings .",
     "check:fix": "biome check --write .",
     "prepare": "cd .. && husky web/.husky",
-    "check:staged": "lint-staged --cwd ."
+    "check:staged": "lint-staged --cwd .",
+    "storybook": "storybook dev -p 6006 --host 127.0.0.1 --no-open --disable-telemetry",
+    "build-storybook": "storybook build --disable-telemetry",
+    "test:storybook": "vitest run --config vitest.storybook.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-label": "2.1.17",
@@ -27,16 +30,30 @@
   "devDependencies": {
     "@biomejs/biome": "2.6.2",
     "@playwright/test": "1.62.1",
+    "@storybook/addon-a11y": "10.6.3",
+    "@storybook/addon-docs": "10.6.3",
+    "@storybook/addon-vitest": "10.6.3",
+    "@storybook/react-vite": "10.6.3",
     "@tailwindcss/vite": "4.3.3",
     "@types/react": "19.1.16",
     "@types/react-dom": "19.1.9",
+    "@vitest/browser-playwright": "5.0.5",
     "husky": "9.1.7",
     "lint-staged": "17.6.0",
+    "msw": "3.0.3",
+    "msw-storybook-addon": "3.0.3",
+    "storybook": "10.6.3",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
-    "vite": "7.3.7"
+    "vite": "7.3.7",
+    "vitest": "5.0.5"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html}": "biome check --write --error-on-warnings --no-errors-on-unmatched"
+  },
+  "msw": {
+    "workerDirectory": [
+      ".storybook/public"
+    ]
   }
 }

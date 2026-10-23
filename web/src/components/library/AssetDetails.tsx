@@ -1,0 +1,239 @@
+import type { Ref } from 'react';
+import {
+  type Asset,
+  type Job,
+  locationOf,
+  type Mode,
+  type Rendition,
+  renditionName,
+} from '../../lib/assets';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Status } from './Status';
+
+export function AssetDetails({
+  selected,
+  renditions,
+  jobs,
+  searching,
+  notice,
+  detailTitle,
+  onClose,
+  onSaveTags,
+  onCompare,
+  onReprocess,
+  onDelete,
+}: {
+  selected: Asset;
+  renditions: Rendition[];
+  jobs: Job[];
+  searching: boolean;
+  notice: string;
+  detailTitle?: Ref<HTMLHeadingElement>;
+  onClose: () => void;
+  onSaveTags: (tags: string[]) => void;
+  onCompare: (mode: Mode) => void;
+  onReprocess: () => void;
+  onDelete: () => void;
+}) {
+  const mediaURL = (a: Asset) => {
+    const d = renditions.find(
+      (d) =>
+        d.profile_id ===
+        (a.mime_type.startsWith('video/') ? 'video.mp4-v1' : 'audio.opus-v1'),
+    );
+    const url = `/api/v1/assets/${a.asset_id}/${d ? `renditions/${d.rendition_id}/content` : 'content'}`;
+    return url + (a.start_ms !== undefined ? `#t=${a.start_ms / 1000}` : '');
+  };
+
+  const pdfPreview = renditions.find(
+    (d) => d.profile_id === `pdf.page-${selected?.page_number ?? 1}-v1`,
+  );
+  return (
+    <section
+      className="details"
+      aria-label="ファイル詳細"
+      key={selected.asset_id}
+    >
+      <div className="detail-heading">
+        <h2 ref={detailTitle} tabIndex={-1}>
+          {selected.filename}
+        </h2>
+        <Button
+          variant="ghost"
+          type="button"
+          className="quiet close-detail"
+          aria-label="詳細を閉じる"
+          onClick={onClose}
+        >
+          ×
+        </Button>
+      </div>
+      <div className="detail-meta">
+        <span>{selected.mime_type}</span>
+        <Status value={selected.status} />
+      </div>
+      <div className="preview">
+        {selected.mime_type.startsWith('image/') ? (
+          <img
+            alt={selected.filename}
+            src={`/api/v1/assets/${selected.asset_id}/${renditions.some((d) => d.profile_id === 'thumbnail-v1') ? 'preview' : 'content'}`}
+          />
+        ) : selected.mime_type.startsWith('video/') ? (
+          // biome-ignore lint/a11y/useMediaCaption: Uploaded media has no caption rendition contract.
+          <video
+            key={mediaURL(selected)}
+            controls
+            preload="metadata"
+            src={mediaURL(selected)}
+          />
+        ) : selected.mime_type.startsWith('audio/') ? (
+          // biome-ignore lint/a11y/useMediaCaption: Uploaded media has no caption rendition contract.
+          <audio
+            key={mediaURL(selected)}
+            controls
+            preload="metadata"
+            src={mediaURL(selected)}
+          />
+        ) : selected.mime_type === 'application/pdf' && pdfPreview ? (
+          <img
+            alt={`PDF ${selected.page_number ?? 1}ページ目`}
+            src={`/api/v1/assets/${selected.asset_id}/renditions/${pdfPreview.rendition_id}/content`}
+          />
+        ) : (
+          <span className="muted">
+            {selected.mime_type === 'application/pdf' &&
+            ['stored', 'processing'].includes(selected.status)
+              ? 'プレビューを生成中…'
+              : 'プレビューなし'}
+          </span>
+        )}
+      </div>
+      {locationOf(selected) && (
+        <p className="match-location">
+          検索の一致箇所 · {locationOf(selected)}
+        </p>
+      )}
+      <Button asChild variant="outline" className="open-original">
+        <a
+          href={`/api/v1/assets/${selected.asset_id}/content${selected.page_number ? `#page=${selected.page_number}` : ''}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          元ファイルを開く <span aria-hidden="true">↗</span>
+        </a>
+      </Button>
+      <form
+        className="tag-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const data = new FormData(e.currentTarget);
+          onSaveTags(
+            String(data.get('tags'))
+              .split(',')
+              .map((tag) => tag.trim())
+              .filter(Boolean),
+          );
+        }}
+      >
+        <Label htmlFor="asset-tags">タグ</Label>
+        <div className="tag-input">
+          <Input
+            id="asset-tags"
+            name="tags"
+            defaultValue={selected.tags.join(', ')}
+            placeholder="カンマ区切りで追加"
+          />
+          <Button variant="outline" type="submit">
+            保存
+          </Button>
+        </div>
+      </form>
+      <div className="detail-section">
+        <h3>このファイルから探す</h3>
+        <div className="comparison-actions">
+          <Button
+            variant="outline"
+            type="button"
+            disabled={searching}
+            onClick={() => onCompare('perceptual')}
+          >
+            類似ファイル
+          </Button>
+          <Button
+            variant="outline"
+            type="button"
+            disabled={searching}
+            onClick={() => onCompare('exact_duplicate')}
+          >
+            完全一致ファイル
+          </Button>
+        </div>
+      </div>
+      <details className="detail-section">
+        <summary>
+          処理状況 <Status value={selected.status} />
+        </summary>
+        {jobs.length === 0 && <p className="muted">処理情報なし</p>}
+        {jobs.map((j) => (
+          <div className="job" key={j.job_id}>
+            <div>
+              <span>
+                {j.job_type === 'media.process'
+                  ? 'プレビュー・文字抽出'
+                  : '意味検索の索引'}
+              </span>
+              <Status value={j.status} />
+            </div>
+            <small>
+              試行 {j.attempts}
+              {j.error_code ? ` · ${j.error_code}` : ''}
+            </small>
+          </div>
+        ))}
+        <Button variant="outline" type="button" onClick={onReprocess}>
+          {selected.status === 'failed' ? '再試行' : '再処理'}
+        </Button>
+      </details>
+      <details className="detail-section">
+        <summary>
+          変換ファイル <span className="count">{renditions.length}</span>
+        </summary>
+        {renditions.length === 0 ? (
+          <p className="muted">変換ファイルなし</p>
+        ) : (
+          <ul className="renditions">
+            {renditions.map((d) => (
+              <li key={d.rendition_id}>
+                <a
+                  href={`/api/v1/assets/${selected.asset_id}/renditions/${d.rendition_id}/content`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {renditionName(d.profile_id)}{' '}
+                  <span aria-hidden="true">↗</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
+      {notice && (
+        <p className="notice" role="status">
+          {notice}
+        </p>
+      )}
+      <div className="detail-footer">
+        <Button
+          variant="link"
+          type="button"
+          className="text-button danger"
+          onClick={onDelete}
+        >
+          ファイルを削除
+        </Button>
+      </div>
+    </section>
+  );
+}
