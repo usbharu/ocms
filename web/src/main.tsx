@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
+import { Label } from './components/ui/label';
+import { NativeSelect } from './components/ui/native-select';
+import { Progress } from './components/ui/progress';
 import './style.css';
 
 type Asset = {
@@ -324,7 +329,8 @@ function App() {
         </a>
         <span className="workspace-name">メディアライブラリ</span>
         {me && (
-          <button
+          <Button
+            variant="ghost"
             type="button"
             className="quiet"
             onClick={() =>
@@ -341,21 +347,22 @@ function App() {
             }
           >
             ログアウト
-          </button>
+          </Button>
         )}
       </header>
       <main>
         {error && (
           <div className="error" role="alert">
             <span>{error}</span>
-            <button
+            <Button
+              variant="ghost"
               type="button"
               className="quiet"
               aria-label="エラーを閉じる"
               onClick={() => setError('')}
             >
               ×
-            </button>
+            </Button>
           </div>
         )}
         {authLoading ? (
@@ -373,7 +380,8 @@ function App() {
                 <p className="muted">開発用アカウント</p>
                 <div className="login-actions">
                   {['alice', 'bob'].map((user) => (
-                    <button
+                    <Button
+                      variant="outline"
                       type="button"
                       key={user}
                       onClick={() =>
@@ -390,29 +398,29 @@ function App() {
                       }
                     >
                       {user} でログイン
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </>
             ) : (
-              <a className="button primary" href="/auth/login">
-                SSOでログイン
-              </a>
+              <Button asChild>
+                <a href="/auth/login">SSOでログイン</a>
+              </Button>
             )}
           </section>
         ) : (
           <>
             <section className="heading">
               <h1>ライブラリ</h1>
-              <button
+              <Button
+                variant="default"
                 type="button"
-                className="primary"
                 disabled={progress !== null}
                 onClick={() => uploadInput.current?.click()}
               >
                 ＋ アップロード
-              </button>
-              <input
+              </Button>
+              <Input
                 ref={uploadInput}
                 className="visually-hidden"
                 tabIndex={-1}
@@ -440,7 +448,7 @@ function App() {
             >
               <div className="search-field">
                 <span aria-hidden="true">⌕</span>
-                <input
+                <Input
                   type="search"
                   aria-label="検索クエリ"
                   placeholder="ファイルを検索"
@@ -448,7 +456,7 @@ function App() {
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
-              <select
+              <NativeSelect
                 aria-label="検索方法"
                 value={mode}
                 onChange={(e) => setMode(e.target.value as Mode)}
@@ -456,15 +464,19 @@ function App() {
                 <option value="keyword">キーワード</option>
                 <option value="semantic">意味</option>
                 <option value="hybrid">キーワード＋意味</option>
-              </select>
-              <button type="submit" disabled={searching}>
+              </NativeSelect>
+              <Button variant="outline" type="submit" disabled={searching}>
                 {searching ? '検索中…' : '検索'}
-              </button>
+              </Button>
             </form>
             {progress !== null && (
               <div className="upload-progress" role="status">
                 <span>アップロード中</span>
-                <progress max="100" value={progress} />
+                <Progress
+                  max={100}
+                  value={progress}
+                  aria-label="アップロード進捗"
+                />
                 <span>{progress}%</span>
               </div>
             )}
@@ -472,26 +484,28 @@ function App() {
               {/* biome-ignore lint/a11y/useSemanticElements: These toggle buttons form a labeled group without fieldset styling. */}
               <div className="filters" role="group" aria-label="ファイルの種類">
                 {kinds.map((item) => (
-                  <button
+                  <Button
+                    variant="outline"
                     type="button"
                     key={item.id}
                     aria-pressed={kind === item.id}
                     onClick={() => setKind(item.id)}
                   >
                     {item.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
               <div className="view-controls">
-                <button
+                <Button
+                  variant="ghost"
                   type="button"
                   className="quiet"
                   disabled={searching}
                   onClick={() => run(() => refresh())}
                 >
                   更新
-                </button>
-                <select
+                </Button>
+                <NativeSelect
                   aria-label="表示方法"
                   value={view}
                   onChange={(e) => setView(e.target.value as View)}
@@ -499,7 +513,7 @@ function App() {
                   <option value="list">リスト表示</option>
                   <option value="grid">グリッド表示</option>
                   <option value="detailed-grid">詳細グリッド表示</option>
-                </select>
+                </NativeSelect>
               </div>
             </div>
             <div className="result-heading" aria-live="polite">
@@ -518,9 +532,14 @@ function App() {
                   : `${visibleAssets.length} 件${kind !== 'all' ? ` / ${assets.length} 件` : ''}`}
               </span>
               {isResult && (
-                <button type="button" className="text-button" onClick={reset}>
+                <Button
+                  variant="link"
+                  type="button"
+                  className="text-button"
+                  onClick={reset}
+                >
                   検索を解除
-                </button>
+                </Button>
               )}
             </div>
             <div className={`library ${selected ? 'has-selection' : ''}`}>
@@ -546,17 +565,18 @@ function App() {
                     </h3>
                     {!searching &&
                       (isResult || kind !== 'all' ? (
-                        <button type="button" onClick={reset}>
+                        <Button variant="outline" type="button" onClick={reset}>
                           すべてのファイル
-                        </button>
+                        </Button>
                       ) : (
-                        <button
+                        <Button
+                          variant="outline"
                           type="button"
                           onClick={() => uploadInput.current?.click()}
                           disabled={progress !== null}
                         >
                           ファイルをアップロード
-                        </button>
+                        </Button>
                       ))}
                   </div>
                 ) : (
@@ -569,7 +589,8 @@ function App() {
                     )}
                     <div className={`file-items view-${view}`}>
                       {visibleAssets.map((a) => (
-                        <button
+                        <Button
+                          variant="outline"
                           type="button"
                           className={`file ${selected?.asset_id === a.asset_id ? 'active' : ''}`}
                           aria-label={a.filename}
@@ -612,7 +633,7 @@ function App() {
                             )}
                           </span>
                           {view === 'list' && <Status value={a.status} />}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   </>
@@ -628,7 +649,8 @@ function App() {
                     <h2 ref={detailTitle} tabIndex={-1}>
                       {selected.filename}
                     </h2>
-                    <button
+                    <Button
+                      variant="ghost"
                       type="button"
                       className="quiet close-detail"
                       aria-label="詳細を閉じる"
@@ -640,7 +662,7 @@ function App() {
                       }}
                     >
                       ×
-                    </button>
+                    </Button>
                   </div>
                   <div className="detail-meta">
                     <span>{selected.mime_type}</span>
@@ -688,14 +710,15 @@ function App() {
                       検索の一致箇所 · {locationOf(selected)}
                     </p>
                   )}
-                  <a
-                    className="button open-original"
-                    href={`/api/v1/assets/${selected.asset_id}/content${selected.page_number ? `#page=${selected.page_number}` : ''}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    元ファイルを開く <span aria-hidden="true">↗</span>
-                  </a>
+                  <Button asChild variant="outline" className="open-original">
+                    <a
+                      href={`/api/v1/assets/${selected.asset_id}/content${selected.page_number ? `#page=${selected.page_number}` : ''}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      元ファイルを開く <span aria-hidden="true">↗</span>
+                    </a>
+                  </Button>
                   <form
                     className="tag-form"
                     onSubmit={(e) => {
@@ -725,34 +748,38 @@ function App() {
                       });
                     }}
                   >
-                    <label htmlFor="asset-tags">タグ</label>
+                    <Label htmlFor="asset-tags">タグ</Label>
                     <div className="tag-input">
-                      <input
+                      <Input
                         id="asset-tags"
                         name="tags"
                         defaultValue={selected.tags.join(', ')}
                         placeholder="カンマ区切りで追加"
                       />
-                      <button type="submit">保存</button>
+                      <Button variant="outline" type="submit">
+                        保存
+                      </Button>
                     </div>
                   </form>
                   <div className="detail-section">
                     <h3>このファイルから探す</h3>
                     <div className="comparison-actions">
-                      <button
+                      <Button
+                        variant="outline"
                         type="button"
                         disabled={searching}
                         onClick={() => compare('perceptual')}
                       >
                         類似ファイル
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="outline"
                         type="button"
                         disabled={searching}
                         onClick={() => compare('exact_duplicate')}
                       >
                         完全一致ファイル
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   <details className="detail-section">
@@ -776,7 +803,8 @@ function App() {
                         </small>
                       </div>
                     ))}
-                    <button
+                    <Button
+                      variant="outline"
                       type="button"
                       onClick={() =>
                         run(async () => {
@@ -789,7 +817,7 @@ function App() {
                       }
                     >
                       {selected.status === 'failed' ? '再試行' : '再処理'}
-                    </button>
+                    </Button>
                   </details>
                   <details className="detail-section">
                     <summary>
@@ -821,7 +849,8 @@ function App() {
                     </p>
                   )}
                   <div className="detail-footer">
-                    <button
+                    <Button
+                      variant="link"
                       type="button"
                       className="text-button danger"
                       onClick={() => {
@@ -841,7 +870,7 @@ function App() {
                       }}
                     >
                       ファイルを削除
-                    </button>
+                    </Button>
                   </div>
                 </section>
               )}

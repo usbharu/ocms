@@ -123,6 +123,18 @@ PDF検索結果では一致ページのプレビューを表示する。タグ�
 
 `web/` の `npm ci --cache ../.cache/npm`、`npm run format:check`、`npm run lint`、`npm run check`、`npm run build` が成功した。`npm run test:ui` はサンドボックス内でChromiumのMachポート作成を拒否されたため、権限制限の外で再実行して既存15件が成功した。実サービスを使う結合試験は、今回の変更がフロントエンドの開発ツール導入とlint対応のため再実行していない。
 
+## shadcn/uiと緑系テーマへの移行（2026-10-23）
+
+Button・Input・Label・Native Select・Progressをshadcn/uiベースのローカル部品へ移行した。Radix UI、Tailwind CSS 4、CVA、`cn()` を導入し、`web/components.json` に部品追加用の設定を置いた。Native Selectは既存のflex配置を保つため、ラッパーを追加せずブラウザ標準の矢印を使う。進捗表示はRadixのProgressを使い、値・上限・読み上げ用の名前を設定した。
+
+背景・枠線・選択状態・主要操作・フォーカスを緑系のCSS変数に統一した。失敗と削除は赤、処理待ちは黄褐色で区別する。ヘッダー、検索、種類フィルター、表示切り替え、一覧と詳細の配置は維持した。Tailwind Preflightは読み込まず、既存の余白・幅・文字サイズを保っている。
+
+- `web/` の `npm ci --cache ../.cache/npm`、`npm run check`、`npm run build`：成功。
+- `UI_SCREENSHOTS=1 npm run test:ui`：Chromiumで17件が成功。既存15件に加え、移行前の主要6領域の座標・幅・高さとの一致（1440 / 1024 / 800 / 390 / 320px、3表示方法）と、アップロード進捗のアクセシビリティ・二重送信防止を検証した。寸法の基準はmacOSのChromiumで移行前に記録した。
+- 生成データのPC・モバイル画面6枚を更新した。実サービスの結合試験・実OIDC・実メディア再生は、UI部品とテーマの変更のため再実行していない。
+
+[PC画面（生成データ）](library-ia.png) / [モバイル画面（生成データ）](library-ia-mobile.png)
+
 ## 残る実装・評価
 
 1. Pocket IDとの実接続、セッションの共有永続化、Grant管理の外部契約/UIと網羅テスト。

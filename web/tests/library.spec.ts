@@ -569,3 +569,73 @@ test('PDF search thumbnails use the matched page in every view', async ({
     );
   }
 });
+
+// Keep the existing wireframe fixed while changing component implementations/themes.
+test('library wireframe retains its geometry across views and breakpoints', async ({
+  page,
+}) => {
+  const geometry: string[] = [];
+  for (const width of [1440, 1024, 800, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page
+      .getByRole('button', { name: '山の風景.png', exact: true })
+      .click();
+    await expect(page.locator('.preview img')).toHaveJSProperty(
+      'naturalWidth',
+      640,
+    );
+    for (const view of ['list', 'grid', 'detailed-grid']) {
+      await page.getByLabel('表示方法').selectOption(view);
+      for (const selector of [
+        '.app-header',
+        '.heading',
+        '.search',
+        '.library-toolbar',
+        '.files',
+        '.details',
+      ]) {
+        const box = await page.locator(selector).boundingBox();
+        if (!box) throw new Error(`${selector} must be visible`);
+        geometry.push(
+          `${width} ${view} ${selector}: ${[box.x, box.y, box.width, box.height].map(Math.round).join(',')}`,
+        );
+      }
+    }
+    await page.getByRole('button', { name: '詳細を閉じる' }).click();
+  }
+  expect(geometry.join('\n')).toMatchSnapshot('library-wireframe.txt');
+});
+
+test('upload progress exposes its value and disables duplicate uploads', async ({
+  page,
+}) => {
+  let finishUpload: () => void = () => {};
+  const pendingUpload = new Promise<void>((resolve) => {
+    finishUpload = resolve;
+  });
+  await page.route('**/api/v1/uploads/upload-1/content', async (route) => {
+    await pendingUpload;
+    await route.fallback();
+  });
+  try {
+    await page.getByLabel('アップロードするファイル').setInputFiles({
+      name: '追加画像.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('test image'),
+    });
+    const progress = page.getByRole('progressbar', {
+      name: 'アップロード進捗',
+    });
+    await expect(progress).toBeVisible();
+    await expect(progress).toHaveAttribute('aria-valuemax', '100');
+    await expect(progress).toHaveAttribute('aria-valuenow', /^(100|\d{1,2})$/);
+    await expect(progress).toHaveCSS('height', '6px');
+    await expect(
+      page.getByRole('button', { name: '＋ アップロード', exact: true }),
+    ).toBeDisabled();
+  } finally {
+    finishUpload();
+  }
+  await expect(page.getByRole('progressbar')).toHaveCount(0);
+  await expect(page.locator('.file')).toHaveCount(5);
+});

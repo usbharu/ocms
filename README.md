@@ -83,6 +83,8 @@ npm run build
 
 ソース、テスト、設定ファイルを対象とし、依存パッケージ・ビルド成果物・Playwrightの出力・自動生成の `package-lock.json` は除外します。npmキャッシュに書き込めない環境では `npm ci --cache ../.cache/npm` を使えます。
 
+UI部品は [shadcn/ui](https://ui.shadcn.com/) を使い、ソースを `web/src/components/ui/` に配置しています。Button・Input・Label・Native Select・Progressを導入し、Radix UI、Tailwind CSS 4、CVAと `cn()` で構成しています。`web/components.json` は今後の部品追加用設定です。配色は `web/src/style.css` 冒頭のCSS変数で管理します。既存のワイヤーフレームを保つため、Tailwind Preflightは読み込まず、部品の寸法は既存CSSで調整しています。Native Selectは標準の矢印と単一のselect要素を使う形へ調整しています。部品の更新時は画面の配置・余白・表示切り替えを維持し、以下の回帰テストで確認してください。
+
 画面の回帰テストはPlaywrightとChromiumを使います。上記のビルド後、`web/` で実行します。
 
 ```sh
