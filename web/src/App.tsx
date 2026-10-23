@@ -439,15 +439,7 @@ export function App() {
 
   return (
     <div className="shell">
-      <AppHeader authenticated={Boolean(me)} onLogout={logout}>
-        {me && (
-          <UploadControl
-            uploadInput={uploadInput}
-            busy={progress !== null}
-            onUpload={upload}
-          />
-        )}
-      </AppHeader>
+      <AppHeader authenticated={Boolean(me)} onLogout={logout} />
       <main>
         {error && (
           <div className="error" role="alert">
@@ -471,71 +463,81 @@ export function App() {
           <LoginPanel development={dev} onDevLogin={devLogin} />
         ) : (
           <>
-            <SearchForm
-              query={query}
-              mode={mode}
-              searching={searching}
-              onQueryChange={setQuery}
-              onModeChange={setMode}
-              onSearch={search}
-            />
-            {progress !== null && <UploadProgress value={progress} />}
-            <LibraryToolbar
-              kind={kind}
-              view={view}
-              searching={searching}
-              onKindChange={changeKind}
-              onViewChange={setView}
-              onRefresh={() => run(() => refresh())}
-            />
-            <div className="result-heading" aria-live="polite">
-              <h2>
-                {context.source
-                  ? `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}`
-                  : context.query
-                    ? `「${context.query}」の検索結果`
-                    : kind === 'all'
-                      ? 'すべてのファイル'
-                      : kinds.find((k) => k.id === kind)?.label}
-              </h2>
-              <span className="count">
-                {searching
-                  ? '読み込み中…'
-                  : `${resultCount} 件${kind !== 'all' && (isResult || total === null) ? ` / ${assets.length} 件` : ''}`}
-              </span>
-              {isResult && (
-                <Button
-                  variant="link"
-                  type="button"
-                  className="text-button"
-                  onClick={reset}
-                >
-                  検索を解除
-                </Button>
-              )}
-            </div>
-            <div className={`library ${selected ? 'has-selection' : ''}`}>
-              <AssetList
-                assets={pageAssets}
-                selectedId={selected?.asset_id}
-                view={view}
-                kind={kind}
-                searching={searching}
-                isResult={isResult}
-                uploading={progress !== null}
-                currentPage={currentPage}
-                pageCount={pageCount}
-                resultCount={resultCount}
-                fileList={fileList}
-                onSelect={(asset) => {
-                  setError('');
-                  setSelected(asset);
-                }}
-                onOpen={openViewer}
-                onReset={reset}
-                onUpload={() => uploadInput.current?.click()}
-                onPageChange={changePage}
+            <div className="workspace-heading">
+              <h1>ライブラリ</h1>
+              <UploadControl
+                uploadInput={uploadInput}
+                busy={progress !== null}
+                onUpload={upload}
               />
+            </div>
+            {progress !== null && <UploadProgress value={progress} />}
+            <div className={`library ${selected ? 'has-selection' : ''}`}>
+              <div className="collection">
+                <SearchForm
+                  query={query}
+                  mode={mode}
+                  searching={searching}
+                  onQueryChange={setQuery}
+                  onModeChange={setMode}
+                  onSearch={search}
+                />
+                <LibraryToolbar
+                  kind={kind}
+                  view={view}
+                  searching={searching}
+                  onKindChange={changeKind}
+                  onViewChange={setView}
+                  onRefresh={() => run(() => refresh())}
+                />
+                <div className="result-heading" aria-live="polite">
+                  <h2>
+                    {context.source
+                      ? `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}`
+                      : context.query
+                        ? `「${context.query}」の検索結果`
+                        : kind === 'all'
+                          ? 'すべてのファイル'
+                          : kinds.find((k) => k.id === kind)?.label}
+                  </h2>
+                  <span className="count">
+                    {searching
+                      ? '読み込み中…'
+                      : `${resultCount} 件${kind !== 'all' && (isResult || total === null) ? ` / ${assets.length} 件` : ''}`}
+                  </span>
+                  {isResult && (
+                    <Button
+                      variant="link"
+                      type="button"
+                      className="text-button"
+                      onClick={reset}
+                    >
+                      検索を解除
+                    </Button>
+                  )}
+                </div>
+                <AssetList
+                  assets={pageAssets}
+                  selectedId={selected?.asset_id}
+                  view={view}
+                  kind={kind}
+                  searching={searching}
+                  isResult={isResult}
+                  uploading={progress !== null}
+                  currentPage={currentPage}
+                  pageCount={pageCount}
+                  resultCount={resultCount}
+                  fileList={fileList}
+                  onSelect={(asset) => {
+                    setError('');
+                    setSelected(asset);
+                  }}
+                  onOpen={openViewer}
+                  onReset={reset}
+                  onUpload={() => uploadInput.current?.click()}
+                  onPageChange={changePage}
+                />
+              </div>
               {selected && (
                 <AssetDetails
                   key={selected.asset_id}

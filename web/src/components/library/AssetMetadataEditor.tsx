@@ -86,41 +86,45 @@ export function AssetMetadataEditor({
 
   return (
     <div className="metadata-editor" aria-busy={saving}>
-      <Label htmlFor="asset-filename">ファイル名</Label>
-      <Input
-        id="asset-filename"
-        value={filename}
-        disabled={saving}
-        onChange={(e) => {
-          setFilename(e.target.value);
-          clearFeedback();
-        }}
-        onBlur={saveFilename}
-        onCompositionStart={() => {
-          composing.current = true;
-        }}
-        onCompositionEnd={() => {
-          composing.current = false;
-        }}
-        onKeyDown={(e) => {
-          if (
-            e.nativeEvent.isComposing ||
-            composing.current ||
-            e.keyCode === 229
-          )
-            return;
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            saveFilename();
-          }
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            setFilename(savedFilename.current);
+      <details className="rename-field">
+        <summary>名前を変更</summary>
+        <Label htmlFor="asset-filename" className="visually-hidden">
+          ファイル名
+        </Label>
+        <Input
+          id="asset-filename"
+          value={filename}
+          disabled={saving}
+          onChange={(e) => {
+            setFilename(e.target.value);
             clearFeedback();
-          }
-        }}
-      />
-      <p className="metadata-hint">Enterまたはフォーカス移動で自動保存</p>
+          }}
+          onBlur={saveFilename}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+          }}
+          onKeyDown={(e) => {
+            if (
+              e.nativeEvent.isComposing ||
+              composing.current ||
+              e.keyCode === 229
+            )
+              return;
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              saveFilename();
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              setFilename(savedFilename.current);
+              clearFeedback();
+            }
+          }}
+        />
+      </details>
       <Label htmlFor="asset-tag-input">タグ</Label>
       {tags.length > 0 ? (
         <ul className="tag-chips" aria-label="登録済みタグ">
@@ -161,7 +165,7 @@ export function AssetMetadataEditor({
           }}
           value={tagInput}
           disabled={saving}
-          placeholder="タグを入力"
+          placeholder="タグを追加"
           onChange={(e) => {
             setTagInput(e.target.value);
             clearFeedback();
@@ -184,7 +188,6 @@ export function AssetMetadataEditor({
           追加
         </Button>
       </form>
-      <p className="metadata-hint">Enterまたは追加ボタンで自動保存</p>
       <div role={message ? 'status' : undefined} className="metadata-status">
         {message}
       </div>

@@ -21,6 +21,7 @@ type Story = StoryObj<typeof meta>;
 export const Edit: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByText('名前を変更'));
     const name = canvas.getByRole('textbox', { name: 'ファイル名' });
     await userEvent.clear(name);
     await userEvent.type(name, '変更.png{Enter}');
@@ -49,6 +50,7 @@ export const EmptyAndDuplicate: Story = {
 export const Composing: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByText('名前を変更'));
     const name = canvas.getByRole('textbox', { name: 'ファイル名' });
     await userEvent.clear(name);
     await userEvent.type(name, '変換中');
@@ -69,6 +71,7 @@ export const Saving: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByText('名前を変更'));
     await userEvent.type(
       canvas.getByRole('textbox', { name: 'タグ' }),
       '新規{Enter}',

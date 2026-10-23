@@ -169,7 +169,7 @@ test('shows WD14 tagging as a separate job', async ({ page }) => {
     .getByRole('button', { name: fixtures[0].filename, exact: true })
     .click();
   await page.getByText('処理状況', { exact: false }).click();
-  await expect(page.getByText('自動タグ付け（WD14）')).toBeVisible();
+  await expect(page.getByText('自動タグ付け', { exact: true })).toBeVisible();
   if (process.env.UI_SCREENSHOTS)
     await page.screenshot({ path: '../docs/wd14-tagging.png', fullPage: true });
 });
@@ -239,6 +239,7 @@ test('filters the current list and closes details', async ({ page }) => {
 test('search modes use text API; tag editing preserves the match time', async ({
   page,
 }) => {
+  await page.locator('.search-options summary').click();
   for (const mode of ['keyword', 'semantic', 'hybrid']) {
     await page.getByLabel('検索方法').selectOption(mode);
     await page.getByLabel('検索クエリ').fill('sample');
@@ -378,10 +379,10 @@ test('desktop and narrow layouts fit without horizontal scrolling', async ({
 test('upload resets filters and opens the uploaded file', async ({ page }) => {
   await expect(
     page.getByRole('heading', { name: 'ライブラリ', exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   const chooser = page.waitForEvent('filechooser');
   await page
-    .getByRole('banner')
+    .locator('.workspace-heading')
     .getByRole('button', { name: '＋ アップロード', exact: true })
     .click();
   expect((await chooser).isMultiple()).toBe(false);
@@ -1292,6 +1293,7 @@ test('metadata autosaves, validates and keeps tags as individual chips', async (
   page,
 }) => {
   await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  await page.getByText('名前を変更', { exact: true }).click();
   const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
   const tag = page.getByRole('textbox', { name: 'タグ', exact: true });
   const patches: unknown[] = [];
@@ -1352,6 +1354,7 @@ test('metadata failure retains input and retries, pending response stays with it
       json: { ...fixtures[0], filename: '保存する名前.png' },
     });
   });
+  await page.getByText('名前を変更', { exact: true }).click();
   const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
   await name.fill('保存する名前.png');
   await name.press('Enter');
@@ -1369,6 +1372,7 @@ test('metadata failure retains input and retries, pending response stays with it
   await expect(
     page.locator('.file').filter({ hasText: '保存する名前.png' }),
   ).toHaveCount(1);
+  await page.getByText('名前を変更', { exact: true }).click();
   await expect(name).toHaveValue('散歩の記録.mp4');
   await expect(page.locator('.metadata-status')).toBeEmpty();
   expect(attempts).toBe(2);
@@ -1382,6 +1386,7 @@ test('metadata byte limits and Japanese composition do not submit invalid drafts
   page.on('request', (r) => {
     if (r.method() === 'PATCH') patches++;
   });
+  await page.getByText('名前を変更', { exact: true }).click();
   const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
   await name.fill('あ'.repeat(342));
   await name.press('Enter');
@@ -1448,6 +1453,7 @@ test('blur saves filename, comparison heading updates and refresh failure is sep
   await expect(
     page.getByRole('heading', { name: '類似ファイル：山の風景.png' }),
   ).toBeVisible();
+  await page.getByText('名前を変更', { exact: true }).click();
   const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
   await name.fill('比較元の新しい名前.png');
   await name.blur();
@@ -1483,4 +1489,50 @@ test('metadata edits preserve the matching PDF page', async ({ page }) => {
   await expect(
     page.getByRole('link', { name: '元ファイルを開く' }),
   ).toHaveAttribute('href', /#page=2$/);
+});
+
+test('library prioritizes browsing and reveals secondary controls on demand', async ({
+  page,
+}) => {
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'ライブラリ' }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator('.workspace-heading')
+      .getByRole('button', { name: '＋ アップロード' }),
+  ).toBeVisible();
+  await expect(page.locator('.collection').getByRole('search')).toBeVisible();
+  await expect(page.getByLabel('検索方法')).toBeHidden();
+  const options = page.locator('.search-options summary');
+  await options.focus();
+  await options.press('Enter');
+  await page.getByLabel('検索方法').selectOption('semantic');
+  await options.press('Enter');
+  await expect(options).toHaveText('意味');
+  await expect(page.getByLabel('検索方法')).toBeHidden();
+  await page.getByRole('button', { name: '山の風景.png', exact: true }).click();
+  await expect(
+    page.getByRole('textbox', { name: 'ファイル名', exact: true }),
+  ).toBeHidden();
+  await expect(
+    page.getByRole('textbox', { name: 'タグ', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('プレビュー・文字抽出', { exact: true }),
+  ).toBeHidden();
+  await expect(page.getByText('Enterまたは', { exact: false })).toHaveCount(0);
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBe(width);
+    if (process.env.UI_SCREENSHOTS && width !== 320) {
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({
+        path: `../docs/library-ia-${width}.png`,
+        fullPage: true,
+      });
+    }
+  }
 });

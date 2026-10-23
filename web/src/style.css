@@ -2,7 +2,7 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
-/* Deliberately omit Preflight: the established wireframe uses browser defaults. */
+/* Keep browser defaults for semantic elements and native controls. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -23,14 +23,14 @@
 }
 
 :root {
-  --background: #f4faf6;
-  --foreground: #173c2c;
+  --background: #f5f6f5;
+  --foreground: #24312b;
   --card: #ffffff;
   --primary: #15803d;
   --primary-foreground: #ffffff;
   --secondary: #dcfce7;
   --secondary-foreground: #14532d;
-  --muted: #f0f7f2;
+  --muted: #f3f5f3;
   --muted-foreground: #526b5c;
   --accent: #e7f6ec;
   --accent-foreground: #14532d;
@@ -38,7 +38,7 @@
   --destructive-foreground: #ffffff;
   --destructive-muted: #fff1ef;
   --warning: #8a651d;
-  --border: #d6e7dc;
+  --border: #dfe5e0;
   --input: #b9d5c4;
   --ring: #16a34a;
 }
@@ -179,14 +179,41 @@ main {
   margin: 0 auto;
   padding: 36px 40px 64px;
 }
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.collection {
+  min-width: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
 .search {
   display: flex;
   align-items: stretch;
   gap: 10px;
-  padding: 12px;
+  margin: 16px 16px 0;
+  padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--card);
+}
+.search-options {
+  position: relative;
+  align-self: center;
+  flex-shrink: 0;
+}
+.search-options select {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  z-index: 2;
+  min-width: 180px;
+  box-shadow: 0 8px 24px #24312b18;
 }
 .search-field {
   display: flex;
@@ -220,7 +247,9 @@ main {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  margin: 24px 0 18px;
+  margin: 0;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
 }
 .filters {
   display: flex;
@@ -243,8 +272,9 @@ main {
   align-items: baseline;
   flex-wrap: wrap;
   gap: 10px 14px;
-  margin: 0 0 12px;
-  min-height: 26px;
+  margin: 0;
+  padding: 14px 20px;
+  min-height: 48px;
 }
 .result-heading h2 {
   overflow-wrap: anywhere;
@@ -284,7 +314,7 @@ main {
   text-align: left;
   gap: 16px;
   width: 100%;
-  padding: 20px;
+  padding: 14px 20px;
   border: 0;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
@@ -341,6 +371,14 @@ main {
   border: 0;
   background: transparent;
   overflow: visible;
+}
+.collection > .files {
+  border: 0;
+  border-radius: 0 0 12px 12px;
+}
+.collection > .files-grid,
+.collection > .files-detailed-grid {
+  padding: 0 16px 16px;
 }
 .view-grid,
 .view-detailed-grid {
@@ -575,7 +613,32 @@ main {
   font-size: 12px;
 }
 .metadata-editor {
-  margin: 22px 0;
+  margin: 20px 0 0;
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+}
+.rename-field {
+  margin-bottom: 18px;
+}
+summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.rename-field summary {
+  width: fit-content;
+  font-size: 12px;
+  color: var(--primary);
+  cursor: pointer;
+}
+.rename-field input {
+  margin-top: 10px;
+}
+.comparison-section {
+  margin-top: 10px;
+}
+.comparison-actions button {
+  flex: 1;
 }
 .metadata-editor label {
   line-height: inherit;
@@ -584,7 +647,7 @@ main {
   font-weight: 600;
   margin-bottom: 8px;
 }
-.metadata-editor > input {
+.rename-field input {
   width: 100%;
   min-width: 0;
 }
@@ -662,17 +725,22 @@ main {
   font-size: 12px;
   padding-inline: 8px;
 }
-summary {
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 13px;
-}
 summary .status,
 summary .count {
   float: right;
   font-weight: 400;
 }
-details[open] summary {
+.search-options summary {
+  padding: 9px 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  border-radius: 5px;
+}
+.search-options[open] summary {
+  background: var(--muted);
+}
+.detail-section[open] > summary {
   margin-bottom: 16px;
 }
 .job {
@@ -829,9 +897,12 @@ details[open] summary {
   .search-field {
     flex-basis: 100%;
   }
-  .search select {
-    flex: 1;
-    max-width: none;
+  .search-options {
+    margin-right: auto;
+  }
+  .search-options select {
+    right: auto;
+    left: 0;
   }
   .library-toolbar {
     flex-wrap: wrap;
@@ -876,8 +947,22 @@ details[open] summary {
     padding-right: 16px;
   }
   .result-heading h2 {
-    width: 100%;
     font-size: 13px;
+  }
+  .workspace-heading {
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .workspace-heading .ui-button {
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+  .collection .search {
+    margin: 12px 12px 0;
+  }
+  .library-toolbar,
+  .result-heading {
+    padding: 12px;
   }
   .details {
     padding: 16px;

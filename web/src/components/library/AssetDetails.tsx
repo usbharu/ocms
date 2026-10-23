@@ -73,7 +73,7 @@ export function AssetDetails({
         </Button>
       </div>
       <div className="detail-meta">
-        <span>{selected.mime_type}</span>
+        <span>{selected.mime_type.split('/')[1]?.toUpperCase()}</span>
         <Status value={selected.status} />
       </div>
       <button
@@ -127,13 +127,7 @@ export function AssetDetails({
           元ファイルを開く <span aria-hidden="true">↗</span>
         </a>
       </Button>
-      <AssetMetadataEditor
-        key={selected.asset_id}
-        asset={selected}
-        onSave={onSaveMetadata}
-      />
-      <div className="detail-section">
-        <h3>このファイルから探す</h3>
+      <div className="comparison-section">
         <div className="comparison-actions">
           <Button
             variant="outline"
@@ -153,10 +147,13 @@ export function AssetDetails({
           </Button>
         </div>
       </div>
+      <AssetMetadataEditor
+        key={selected.asset_id}
+        asset={selected}
+        onSave={onSaveMetadata}
+      />
       <details className="detail-section">
-        <summary>
-          処理状況 <Status value={selected.status} />
-        </summary>
+        <summary>処理状況</summary>
         {jobs.length === 0 && <p className="muted">処理情報なし</p>}
         {jobs.map((j) => (
           <div className="job" key={j.job_id}>
@@ -165,7 +162,7 @@ export function AssetDetails({
                 {j.job_type === 'media.process'
                   ? 'プレビュー・文字抽出'
                   : j.job_type === 'tags.generate'
-                    ? '自動タグ付け（WD14）'
+                    ? '自動タグ付け'
                     : '意味検索の索引'}
               </span>
               <Status value={j.status} />
