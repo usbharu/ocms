@@ -1,21 +1,27 @@
 {
- "name": "ocms-web",
- "version": "0.1.0",
- "private": true,
- "type": "module",
- "scripts": {
-  "build": "tsc --noEmit && vite build",
-  "test:ui": "playwright test"
- },
- "dependencies": {
-  "react": "19.1.1",
-  "react-dom": "19.1.1"
- },
- "devDependencies": {
-  "@playwright/test": "1.62.1",
-  "@types/react": "19.1.16",
-  "@types/react-dom": "19.1.9",
-  "typescript": "5.9.3",
-  "vite": "7.3.7"
- }
+  "name": "ocms-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "test:ui": "playwright test",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint --error-on-warnings .",
+    "check": "biome check --error-on-warnings .",
+    "check:fix": "biome check --write ."
+  },
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@playwright/test": "1.62.1",
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9",
+    "typescript": "5.9.3",
+    "vite": "7.3.7"
+  }
 }

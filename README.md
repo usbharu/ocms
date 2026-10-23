@@ -67,8 +67,21 @@ GOPATH="$PWD/.cache/go" GOMODCACHE="$PWD/.cache/go-mod" GOCACHE="$PWD/.cache/go-
 ```sh
 cd web
 npm ci
+npm run check
 npm run build
 ```
+
+整形・lintは `web/biome.json` のBiome設定を使います。`web/` で次を実行します。
+
+| コマンド | 用途 |
+|---|---|
+| `npm run format` | フォーマットを適用 |
+| `npm run format:check` | フォーマットを確認（書き込みなし） |
+| `npm run lint` | lintを実行（警告も失敗として扱う） |
+| `npm run check` | 整形・lint・import順を一括確認（警告も失敗として扱う） |
+| `npm run check:fix` | 整形・import順・安全なlint修正を適用 |
+
+ソース、テスト、設定ファイルを対象とし、依存パッケージ・ビルド成果物・Playwrightの出力・自動生成の `package-lock.json` は除外します。npmキャッシュに書き込めない環境では `npm ci --cache ../.cache/npm` を使えます。
 
 画面の回帰テストはPlaywrightとChromiumを使います。上記のビルド後、`web/` で実行します。
 
@@ -225,7 +238,7 @@ docker compose exec transfer ocms reconcile
 - `web/`：TypeScript + React SPA
 - `scripts/`：開発初期化・実環境結合テスト
 
-Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォート、セミコロン、コンポーネント名はPascalCase、変数・関数名はcamelCaseとします。`npm run build` でTypeScriptのstrictチェックを行います。フォーマッタは未導入です。
+Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォート、セミコロン、コンポーネント名はPascalCase、変数・関数名はcamelCaseとします。`npm run build` でTypeScriptのstrictチェックを行います。整形・lintはBiomeを使います。関数と関数の間には空行を1行入れます。Biomeにはこれを強制するルールがないため、空行は手動で入れ、レビューで確認します。
 
 マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜004を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
 

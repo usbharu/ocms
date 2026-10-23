@@ -54,7 +54,7 @@ docker compose up -d --wait
 | 変更・確認対象 | コマンド・前提 |
 |---|---|
 | Go | `go test -race ./...` と `go vet ./...` |
-| React SPA | `web/` で `npm ci`、続いて `npm run build`（TypeScript strictチェックを含む） |
+| React SPA | `web/` で `npm ci`、続いて `npm run check` と `npm run build`（TypeScript strictチェックを含む） |
 | 保存・配信・ACL・重複排除 | 開発スタック起動後に `python3 scripts/integration.py` |
 | メディア処理・検索（AC-09〜14） | `python3 scripts/media-integration.py`。実コーデック・OCR・ASR・モデルを使う |
 | Job認可・リース・再試行 | メディア検証後に `python3 scripts/job-recovery.py`。Searchを一時停止する |
@@ -100,7 +100,7 @@ WorkerとTransferは `MEDIA_MAX_PDF_PAGES`（既定500）を共有する。Worke
 ## コード・文書・ログの規約
 
 - Goは `gofmt` と慣用的な命名を使い、テストは `*_test.go` に置く。
-- TypeScriptは2スペース、シングルクォート、セミコロン。コンポーネントはPascalCase、変数・関数はcamelCase。フォーマッタは未導入。
+- TypeScriptは2スペース、シングルクォート、セミコロン。コンポーネントはPascalCase、変数・関数はcamelCase。整形・lintは `web/` のBiomeを使う。関数と関数の間は空行を1行入れる（Biomeによる強制はない）。
 - `asset_id`、`blob_id`、`/api/v1/assets` など既存の契約名に合わせる。APIやDBの変更では、関連する内部契約・DDL・API例・図も更新する。
 - 仕様書は日本語、番号付きの節、表、コードブロックを維持する。実行モジュールを追加したら、必要環境とビルド・起動・テストの正確なコマンドを同じ変更で文書化する。
 - 実装範囲や検証結果が変わったら `docs/implementation-status.md` も更新する。未検証の項目を検証済みにしない。

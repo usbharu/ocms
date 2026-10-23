@@ -115,6 +115,14 @@ PDF検索結果では一致ページのプレビューを表示する。タグ�
 
 [詳細グリッド表示（生成データ）](library-detailed-grid.png) / [モバイル](library-detailed-grid-mobile.png)
 
+## フロントエンドの整形・lint（2026-10-23）
+
+`web/` にBiome 2.6.2を固定バージョンで導入した。2スペース、シングルクォート、セミコロンの整形設定と推奨lintルール、import順の整理を有効にした。依存パッケージ、ビルド成果物、Playwright出力、`package-lock.json` は対象外とする。
+
+既存ファイルを整形し、ボタンのtype、暗黙のany、未使用import、非nullアサーションを修正した。既存のEffectの実行タイミング、検索フォーム・ボタングループの構造、字幕契約のないアップロードメディア、別コンテナの画像セレクターは理由付きの局所的な抑制コメントで扱う。関数間の空行は開発規約に追加したが、Biomeには強制するルールがないため手動・レビューで確認する。
+
+`web/` の `npm ci --cache ../.cache/npm`、`npm run format:check`、`npm run lint`、`npm run check`、`npm run build` が成功した。`npm run test:ui` はサンドボックス内でChromiumのMachポート作成を拒否されたため、権限制限の外で再実行して既存15件が成功した。実サービスを使う結合試験は、今回の変更がフロントエンドの開発ツール導入とlint対応のため再実行していない。
+
 ## 残る実装・評価
 
 1. Pocket IDとの実接続、セッションの共有永続化、Grant管理の外部契約/UIと網羅テスト。
