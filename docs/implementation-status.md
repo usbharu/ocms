@@ -123,6 +123,12 @@ PDF検索結果では一致ページのプレビューを表示する。タグ�
 
 `web/` の `npm ci --cache ../.cache/npm`、`npm run format:check`、`npm run lint`、`npm run check`、`npm run build` が成功した。`npm run test:ui` はサンドボックス内でChromiumのMachポート作成を拒否されたため、権限制限の外で再実行して既存15件が成功した。実サービスを使う結合試験は、今回の変更がフロントエンドの開発ツール導入とlint対応のため再実行していない。
 
+## コミット前のフロントエンド自動修正（2026-10-23）
+
+Husky 9.1.7とlint-staged 17.6.0を固定バージョンで導入した。`web/` の `npm ci`・`npm install` でコミット前フックを登録し、ステージ済みファイルに `biome check --write --error-on-warnings` を実行する。修正は再ステージし、未解決のエラー・警告があればコミットを止める。対象外のファイルと削除のみの変更は処理を省く。
+
+`npm ci --cache ../.cache/npm`、`npm run check`、`npm run build` が成功した。一時Gitリポジトリの実コミットで、空白を含むファイル名の自動修正・再ステージ、未ステージ部分の保持、lint警告によるコミット拒否と変更の復元、フロントエンド変更なし・削除のみのコミットを確認した。`.git` がない環境でも `prepare` が成功することを確認した。画面・サービスの実装変更はないため、画面回帰テストとサービス結合試験は再実行していない。
+
 ## shadcn/uiと緑系テーマへの移行（2026-10-23）
 
 Button・Input・Label・Native Select・Progressをshadcn/uiベースのローカル部品へ移行した。Radix UI、Tailwind CSS 4、CVA、`cn()` を導入し、`web/components.json` に部品追加用の設定を置いた。Native Selectは既存のflex配置を保つため、ラッパーを追加せずブラウザ標準の矢印を使う。進捗表示はRadixのProgressを使い、値・上限・読み上げ用の名前を設定した。

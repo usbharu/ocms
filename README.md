@@ -80,8 +80,11 @@ npm run build
 | `npm run lint` | lintを実行（警告も失敗として扱う） |
 | `npm run check` | 整形・lint・import順を一括確認（警告も失敗として扱う） |
 | `npm run check:fix` | 整形・import順・安全なlint修正を適用 |
+| `npm run check:staged` | ステージ済みのフロントエンドファイルを自動修正・再ステージ |
 
 ソース、テスト、設定ファイルを対象とし、依存パッケージ・ビルド成果物・Playwrightの出力・自動生成の `package-lock.json` は除外します。npmキャッシュに書き込めない環境では `npm ci --cache ../.cache/npm` を使えます。
+
+`web/` の `npm ci`（または `npm install`）でHuskyのコミット前フックを登録します。以後はリポジトリのルートやサブディレクトリからの `git commit` 時に、lint-stagedがステージ済みのフロントエンドファイルへ `biome check --write` を実行し、修正をコミット対象に反映します。自動修正できないエラー・警告が残る場合はコミットを止めます。同じファイルの未ステージ部分は退避・復元されます。フックの再登録は `web/` で `npm run prepare` を実行します。Git管理外のDockerビルドではフックを登録しません。
 
 UI部品は [shadcn/ui](https://ui.shadcn.com/) を使い、ソースを `web/src/components/ui/` に配置しています。Button・Input・Label・Native Select・Progressを導入し、Radix UI、Tailwind CSS 4、CVAと `cn()` で構成しています。`web/components.json` は今後の部品追加用設定です。配色は `web/src/style.css` 冒頭のCSS変数で管理します。既存のワイヤーフレームを保つため、Tailwind Preflightは読み込まず、部品の寸法は既存CSSで調整しています。Native Selectは標準の矢印と単一のselect要素を使う形へ調整しています。部品の更新時は画面の配置・余白・表示切り替えを維持し、以下の回帰テストで確認してください。
 
