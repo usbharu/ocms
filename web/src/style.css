@@ -494,7 +494,29 @@ main {
   font-weight: 500;
   margin-bottom: 18px;
 }
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+}
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
 .details {
+  position: sticky;
+  top: 16px;
+  /* Reserve the main bottom padding so the heading stays visible at page end. */
+  max-height: calc(100dvh - 96px);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   min-width: 0;
   padding: 20px;
   background: var(--card);
@@ -721,6 +743,9 @@ details[open] summary {
     grid-template-columns: minmax(0, 1fr);
   }
   .details {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
     grid-row: 1;
   }
   .preview img,

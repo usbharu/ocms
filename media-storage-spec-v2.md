@@ -555,6 +555,16 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `GET` | `/api/v1/assets/{assetId}/renditions/{renditionId}/content` | 派生メディア配信（Range可） |
 | `GET` | `/api/v1/jobs/{jobId}` | 非同期ジョブ状態 |
 
+一覧APIは `limit`（1〜200、既定200）、`offset`（0以上、既定0）、`kind`（省略、`image`、`video`、`audio`、`document`）、`q`（ファイル名・タグ）を受け付ける。`document` は画像・動画・音声以外を含む。応答の `assets` は作成日時の降順、同時刻の場合はAsset IDの降順で並べ、`total` は同じ検索条件・種類・ACLで絞り込んだ総件数とする。未許可・削除済みAssetは件数にも含めない。不正なページ指定は400とする。offset方式のため、ページ移動中の追加・削除によって位置が変わる場合がある。
+
+```http
+GET /api/v1/assets?limit=24&offset=24&kind=image
+```
+
+```json
+{"assets":[],"total":24}
+```
+
 ### 10.1 代表的なリクエスト
 
 ```http
@@ -645,6 +655,8 @@ Content-Type: application/json
 ## 12. フロントエンド
 
 - TypeScript + React SPAでログイン、アップロード、ファイル一覧/詳細、プレビュー、タグ編集、検索を提供する。
+- 一覧は1ページ24件とし、前後のページ移動と表示範囲・件数を表示する。通常一覧はAPIからページ単位で取得し、検索・比較は取得済み結果をページ分割する。検索・比較APIの既存の結果上限は維持する。検索・種類・比較元の変更時は先頭ページへ戻す。
+- 幅800pxを超える画面のファイル詳細はスクロールに追従し、長い内容は詳細内でスクロールする。幅800px以下では一覧の上に表示する。
 - 動画はブラウザ標準の`<video controls>`と認証済みURLを利用する。`preload="metadata"`を基本とし、MP4 + Rangeで再生・シークする。
 - 音声は`<audio>`、画像はプレビューURL、PDFはブラウザ表示またはページプレビューを使う。
 - 再エンコードJobは非同期の状態（待機/実行中/完了/失敗）を表示する。

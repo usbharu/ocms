@@ -59,6 +59,7 @@ const kinds: { id: Kind; label: string }[] = [
   { id: 'audio', label: '音声' },
   { id: 'document', label: 'PDF・その他' },
 ];
+const pageSize = 24;
 const allFiles: SearchContext = { mode: 'keyword', query: '' };
 
 function kindOf(asset: Asset): Kind {
@@ -123,6 +124,8 @@ function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [dev, setDev] = useState(false);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState<number | null>(null);
   const [selected, setSelected] = useState<Asset | null>(null);
   const [renditions, setRenditions] = useState<Rendition[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -156,12 +159,16 @@ function App() {
     return res.status === 204 ? null : res.json();
   }
 
-  async function refresh(next: SearchContext = context) {
+  async function refresh(
+    next: SearchContext = context,
+    nextPage = page,
+    nextKind: Kind = kind,
+  ) {
     const version = ++requestVersion.current;
     setError('');
     setSearching(true);
     try {
-      let res: { assets: Asset[] };
+      let res: { assets: Asset[]; total?: number };
       if (next.source) {
         res = await request(
           `/api/v1/assets/${next.source.asset_id}/${next.mode === 'perceptual' ? 'similar' : 'duplicates'}`,
@@ -176,10 +183,31 @@ function App() {
           }),
         });
       } else {
-        res = await request('/api/v1/assets');
+        const params = new URLSearchParams({
+          limit: String(pageSize),
+          offset: String((nextPage - 1) * pageSize),
+          ...(nextKind !== 'all' ? { kind: nextKind } : {}),
+        });
+        res = await request(`/api/v1/assets?${params}`);
+        if (
+          version === requestVersion.current &&
+          res.total !== undefined &&
+          nextPage > 1 &&
+          res.total <= (nextPage - 1) * pageSize
+        ) {
+          await refresh(
+            next,
+            Math.max(1, Math.ceil(res.total / pageSize)),
+            nextKind,
+          );
+          return;
+        }
       }
       if (version === requestVersion.current) {
         setAssets(res.assets);
+        setTotal(res.total ?? null);
+        setPage(nextPage);
+        setKind(nextKind);
         setContext(next);
       }
     } finally {
@@ -199,7 +227,7 @@ function App() {
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reload on authentication changes; refresh also captures the current search.
   useEffect(() => {
-    if (me) refresh(allFiles).catch((e) => setError(e.message));
+    if (me) refresh(allFiles, 1, 'all').catch((e) => setError(e.message));
   }, [me]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Focus only when the selected asset changes, not on polling updates.
   useEffect(() => {
@@ -279,7 +307,7 @@ function App() {
       setQuery('');
       setMode('keyword');
       setKind('all');
-      await refresh(allFiles);
+      await refresh(allFiles, 1, 'all');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -295,13 +323,15 @@ function App() {
     setMode('keyword');
     setKind('all');
     setSelected(null);
-    run(() => refresh(allFiles));
+    run(() => refresh(allFiles, 1, 'all'));
   };
 
   const compare = (comparison: Mode) => {
     if (!selected) return;
     setKind('all');
-    run(() => refresh({ mode: comparison, query: '', source: selected }));
+    run(() =>
+      refresh({ mode: comparison, query: '', source: selected }, 1, 'all'),
+    );
   };
 
   const mediaURL = (a: Asset) => {
@@ -317,10 +347,32 @@ function App() {
   const visibleAssets = assets.filter(
     (a) => kind === 'all' || kindOf(a) === kind,
   );
+  const isResult = Boolean(context.query || context.source);
+  const resultCount =
+    !isResult && total !== null ? total : visibleAssets.length;
+  const pageCount = Math.max(1, Math.ceil(resultCount / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageAssets =
+    !isResult && total !== null
+      ? visibleAssets
+      : visibleAssets.slice(
+          (currentPage - 1) * pageSize,
+          currentPage * pageSize,
+        );
+
+  function changePage(nextPage: number) {
+    if (!isResult && total !== null) {
+      run(() => refresh(context, nextPage));
+    } else {
+      setPage(nextPage);
+    }
+    fileList.current?.scrollIntoView({ block: 'start' });
+    fileList.current?.focus({ preventScroll: true });
+  }
+
   const pdfPreview = renditions.find(
     (d) => d.profile_id === `pdf.page-${selected?.page_number ?? 1}-v1`,
   );
-  const isResult = Boolean(context.query || context.source);
   return (
     <div className="shell">
       <header className="app-header">
@@ -443,7 +495,7 @@ function App() {
                 e.preventDefault();
                 setSelected(null);
                 setKind('all');
-                run(() => refresh({ mode, query: query.trim() }));
+                run(() => refresh({ mode, query: query.trim() }, 1, 'all'));
               }}
             >
               <div className="search-field">
@@ -489,7 +541,15 @@ function App() {
                     type="button"
                     key={item.id}
                     aria-pressed={kind === item.id}
-                    onClick={() => setKind(item.id)}
+                    onClick={() => {
+                      if (!isResult && total !== null) {
+                        run(() => refresh(context, 1, item.id));
+                      } else {
+                        setKind(item.id);
+                        setPage(1);
+                      }
+                    }}
+                    disabled={searching}
                   >
                     {item.label}
                   </Button>
@@ -529,7 +589,7 @@ function App() {
               <span className="count">
                 {searching
                   ? '読み込み中…'
-                  : `${visibleAssets.length} 件${kind !== 'all' ? ` / ${assets.length} 件` : ''}`}
+                  : `${resultCount} 件${kind !== 'all' && (isResult || total === null) ? ` / ${assets.length} 件` : ''}`}
               </span>
               {isResult && (
                 <Button
@@ -546,6 +606,7 @@ function App() {
               <section
                 ref={fileList}
                 className={`files files-${view}`}
+                tabIndex={-1}
                 aria-label="ファイル一覧"
                 aria-busy={searching}
               >
@@ -588,7 +649,7 @@ function App() {
                       </div>
                     )}
                     <div className={`file-items view-${view}`}>
-                      {visibleAssets.map((a) => (
+                      {pageAssets.map((a) => (
                         <Button
                           variant="outline"
                           type="button"
@@ -637,6 +698,36 @@ function App() {
                       ))}
                     </div>
                   </>
+                )}
+                {pageCount > 1 && (
+                  <nav className="pagination" aria-label="ページネーション">
+                    <span className="count" aria-live="polite">
+                      {(currentPage - 1) * pageSize + 1}–
+                      {Math.min(currentPage * pageSize, resultCount)} /{' '}
+                      {resultCount} 件
+                    </span>
+                    <div className="pagination-controls">
+                      <Button
+                        variant="outline"
+                        type="button"
+                        disabled={searching || currentPage === 1}
+                        onClick={() => changePage(currentPage - 1)}
+                      >
+                        前へ
+                      </Button>
+                      <span aria-current="page">
+                        {currentPage} / {pageCount} ページ
+                      </span>
+                      <Button
+                        variant="outline"
+                        type="button"
+                        disabled={searching || currentPage === pageCount}
+                        onClick={() => changePage(currentPage + 1)}
+                      >
+                        次へ
+                      </Button>
+                    </div>
+                  </nav>
                 )}
               </section>
               {selected && (

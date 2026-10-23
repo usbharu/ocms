@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -279,12 +280,53 @@ func (s *Service) detail(w http.ResponseWriter, r *http.Request) {
 	}
 	platform.JSON(w, 200, a)
 }
+
+type listOptions struct {
+	limit  int
+	offset int
+	kind   string
+}
+
+func parseListOptions(r *http.Request) (listOptions, error) {
+	options := listOptions{limit: 200, kind: r.URL.Query().Get("kind")}
+	for key, target := range map[string]*int{"limit": &options.limit, "offset": &options.offset} {
+		if values, ok := r.URL.Query()[key]; ok {
+			if len(values) != 1 {
+				return options, errors.New("duplicate pagination parameter")
+			}
+			value, err := strconv.Atoi(values[0])
+			if err != nil || value < 0 || (key == "limit" && (value == 0 || value > 200)) {
+				return options, errors.New("invalid pagination parameter")
+			}
+			*target = value
+		}
+	}
+	switch options.kind {
+	case "", "image", "video", "audio", "document":
+		return options, nil
+	default:
+		return options, errors.New("invalid asset kind")
+	}
+}
+
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	if !guard(w, r) {
 		return
 	}
+	options, err := parseListOptions(r)
+	if err != nil {
+		platform.Error(w, 400, "INVALID_PAGINATION")
+		return
+	}
 	q := r.URL.Query().Get("q")
-	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0)) ORDER BY a.created_at DESC LIMIT 200`, user(r), q)
+	where := `WHERE ` + allowed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='document' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
+	var total int
+	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind).Scan(&total)
+	if err != nil {
+		platform.RespondError(w, err)
+		return
+	}
+	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $4 OFFSET $5`, user(r), q, options.kind, options.limit, options.offset)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -303,7 +345,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		platform.RespondError(w, rows.Err())
 		return
 	}
-	platform.JSON(w, 200, map[string]any{"assets": items})
+	platform.JSON(w, 200, map[string]any{"assets": items, "total": total})
 }
 func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 	if !guard(w, r) {

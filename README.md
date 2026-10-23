@@ -97,6 +97,16 @@ npm run test:ui
 
 テストがローカルのプレビューサーバー（`127.0.0.1:4173`）を起動し、生成データのAPI応答で検索・比較・タグ編集・アップロード・削除確認・認証方式の表示・レスポンシブ表示を検証します。DBやS3には接続しません。実サービスとの接続やRangeは上記の結合試験で、動画の再生・シークは実サービスに接続したブラウザで別途確認します。`UI_SCREENSHOTS=1 npm run test:ui` で生成データのPC・モバイル画面を `docs/library-ia.png` と `docs/library-ia-mobile.png` に保存できます。グリッド2種類も `docs/library-grid.png`、`docs/library-detailed-grid.png` と、それぞれの `-mobile.png` に保存します。
 
+通常一覧は1ページ24件で取得します。`GET /api/v1/assets` は `limit`（1〜200、既定200）、`offset`（0以上）、`kind`（`image` / `video` / `audio` / `document`）に対応し、ACLとフィルター適用後の `total` を返します。検索・比較は既存APIが返した結果を24件ずつ表示し、APIの結果上限は維持します。右側の詳細は画面に追従し、長い内容はパネル内でスクロールできます。幅800px以下では一覧の上に表示します。
+
+一覧APIの結合検証は、開発スタックを更新・起動した後に実行します。
+
+```sh
+python3 scripts/pagination-integration.py
+```
+
+217件の生成データで200件を超えるページ移動、同時刻の並び順、種類フィルター、ACLを適用した件数、不正なパラメーターを確認します。実メディアやS3は使わず、試験用のDB行は終了時に削除します。`UI_SCREENSHOTS=1 npm run test:ui` はスクロール中の詳細とページ操作を `docs/library-pagination.png` に保存します。
+
 ## Hydra OIDC・OTLPの実接続検証
 
 人がブラウザからOIDCログイン・アップロード・検索を操作し、同じ操作のTrace / Metric / LogをGrafanaで確認するための構成です。事前の自動試験やメディア生成は不要です。

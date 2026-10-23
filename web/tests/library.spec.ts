@@ -539,7 +539,7 @@ test('missing thumbnails fall back and retry when processing status changes', as
 }) => {
   let ready = false;
   let previews = 0;
-  await page.route('**/api/v1/assets', (route) =>
+  await page.route('**/api/v1/assets?**', (route) =>
     route.fulfill({
       json: {
         assets: [{ ...fixtures[0], status: ready ? 'ready' : 'processing' }],
@@ -648,4 +648,165 @@ test('upload progress exposes its value and disables duplicate uploads', async (
   }
   await expect(page.getByRole('progressbar')).toHaveCount(0);
   await expect(page.locator('.file')).toHaveCount(5);
+});
+
+async function mockPaginatedLibrary(page: Page, count = 217) {
+  let assets = Array.from({ length: count }, (_, i) => ({
+    ...fixtures[i % 4],
+    asset_id: `item-${i}`,
+    filename: `ファイル ${i + 1}`,
+  }));
+  await page.route('**/api/v1/assets?**', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const kind = params.get('kind');
+    const filtered = assets.filter(
+      (a) =>
+        !kind ||
+        (kind === 'document'
+          ? !/^(image|video|audio)\//.test(a.mime_type)
+          : a.mime_type.startsWith(`${kind}/`)),
+    );
+    const offset = Number(params.get('offset'));
+    const limit = Number(params.get('limit'));
+    return route.fulfill({
+      json: {
+        assets: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+      },
+    });
+  });
+  await page.route('**/api/v1/assets/item-*', (route) => {
+    const id = new URL(route.request().url()).pathname.split('/').at(-1);
+    if (route.request().method() === 'DELETE') {
+      assets = assets.filter((a) => a.asset_id !== id);
+      return route.fulfill({ status: 204 });
+    }
+    return route.fulfill({ json: assets.find((a) => a.asset_id === id) });
+  });
+  await page.goto('/');
+}
+
+test('paginates beyond 200 files, preserves selection and resets filters', async ({
+  page,
+}) => {
+  await mockPaginatedLibrary(page);
+  const nav = page.getByRole('navigation', { name: 'ページネーション' });
+  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(nav).toContainText('1–24 / 217 件');
+  await expect(nav.getByRole('button', { name: '前へ' })).toBeDisabled();
+  await page.getByRole('button', { name: 'ファイル 1', exact: true }).click();
+  await nav.getByRole('button', { name: '次へ' }).click();
+  await expect(nav).toContainText('25–48 / 217 件');
+  await expect(
+    page.getByRole('region', { name: 'ファイル詳細' }),
+  ).toContainText('ファイル 1');
+  await page.getByLabel('表示方法').selectOption('detailed-grid');
+  for (let i = 2; i < 10; i++) {
+    await nav.getByRole('button', { name: '次へ' }).click();
+    await expect(nav).toContainText(`${i + 1} / 10 ページ`);
+  }
+  await expect(page.locator('.file')).toHaveCount(1);
+  await expect(
+    page.getByRole('button', { name: 'ファイル 217', exact: true }),
+  ).toBeVisible();
+  await expect(nav.getByRole('button', { name: '次へ' })).toBeDisabled();
+  await page.getByRole('button', { name: '画像', exact: true }).click();
+  await expect(nav).toContainText('1–24 / 55 件');
+});
+
+test('deleting the last file on the last page returns to an existing page', async ({
+  page,
+}) => {
+  await mockPaginatedLibrary(page, 25);
+  const nav = page.getByRole('navigation', { name: 'ページネーション' });
+  await nav.getByRole('button', { name: '次へ' }).click();
+  await page.getByRole('button', { name: 'ファイル 25', exact: true }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'ファイルを削除' }).click();
+  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(nav).toBeHidden();
+  await expect(
+    page.getByRole('button', { name: 'ファイル 1', exact: true }),
+  ).toBeVisible();
+});
+
+test('search and comparison results paginate and filters reset the page', async ({
+  page,
+}) => {
+  const results = Array.from({ length: 49 }, (_, i) => ({
+    ...fixtures[i % 4],
+    asset_id: `result-${i}`,
+    filename: `結果 ${i + 1}`,
+    page_number: 2,
+  }));
+  await page.route('**/api/v1/search', (route) =>
+    route.fulfill({ json: { assets: results } }),
+  );
+  await page.route('**/api/v1/assets/*/duplicates', (route) =>
+    route.fulfill({ json: { assets: results } }),
+  );
+  await page.getByRole('searchbox').fill('pdf');
+  await page.getByRole('button', { name: '検索', exact: true }).click();
+  const nav = page.getByRole('navigation', { name: 'ページネーション' });
+  await expect(nav).toContainText('1–24 / 49 件');
+  await nav.getByRole('button', { name: '次へ' }).click();
+  await expect(
+    page.getByRole('button', { name: '結果 25', exact: true }),
+  ).toBeVisible();
+  await nav.getByRole('button', { name: '前へ' }).click();
+  await expect(nav).toContainText('1–24 / 49 件');
+  await nav.getByRole('button', { name: '次へ' }).click();
+  await page.getByRole('button', { name: '画像', exact: true }).click();
+  await expect(page.locator('.file')).toHaveCount(13);
+  await page.getByRole('button', { name: '結果 1', exact: true }).click();
+  await page
+    .getByRole('button', { name: '完全一致ファイル', exact: true })
+    .click();
+  await expect(nav).toContainText('1–24 / 49 件');
+  await nav.getByRole('button', { name: '次へ' }).click();
+  await expect(nav).toContainText('25–48 / 49 件');
+});
+
+test('desktop details stay in the viewport and scroll independently', async ({
+  page,
+}) => {
+  await mockPaginatedLibrary(page, 49);
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await page.getByRole('button', { name: 'ファイル 1', exact: true }).click();
+  const details = page.getByRole('region', { name: 'ファイル詳細' });
+  await details.locator('summary').first().click();
+  await page.evaluate(() => window.scrollTo(0, 1000));
+  await expect.poll(async () => (await details.boundingBox())?.y).toBe(16);
+  const box = await details.boundingBox();
+  expect(box && box.y + box.height).toBeLessThanOrEqual(684);
+  await details.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await expect(
+    details.getByRole('button', { name: 'ファイルを削除' }),
+  ).toBeVisible();
+  expect(await details.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  if (process.env.UI_SCREENSHOTS) {
+    await details.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await page
+      .getByRole('navigation', { name: 'ページネーション' })
+      .scrollIntoViewIfNeeded();
+    await expect.poll(async () => (await details.boundingBox())?.y).toBe(16);
+    await page.screenshot({ path: '../docs/library-pagination.png' });
+  }
+  await page.evaluate(() =>
+    window.scrollTo(0, document.documentElement.scrollHeight),
+  );
+  await expect.poll(async () => (await details.boundingBox())?.y).toBe(16);
+  for (const width of [800, 390, 320]) {
+    await page.setViewportSize({ width, height: 700 });
+    await expect(details).toHaveCSS('position', 'static');
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  }
 });
