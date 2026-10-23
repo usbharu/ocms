@@ -38,24 +38,16 @@ export function SearchForm({
           onChange={(e) => onQueryChange(e.target.value)}
         />
       </div>
-      <details className="search-options">
-        <summary>
-          {mode === 'semantic'
-            ? '意味'
-            : mode === 'hybrid'
-              ? 'キーワード＋意味'
-              : 'キーワード'}
-        </summary>
-        <NativeSelect
-          aria-label="検索方法"
-          value={mode}
-          onChange={(e) => onModeChange(e.target.value as Mode)}
-        >
-          <option value="keyword">キーワード</option>
-          <option value="semantic">意味</option>
-          <option value="hybrid">キーワード＋意味</option>
-        </NativeSelect>
-      </details>
+      <NativeSelect
+        className="search-options"
+        aria-label="検索方法"
+        value={mode}
+        onChange={(e) => onModeChange(e.target.value as Mode)}
+      >
+        <option value="keyword">キーワード</option>
+        <option value="semantic">意味</option>
+        <option value="hybrid">キーワード＋意味</option>
+      </NativeSelect>
       <Button variant="outline" type="submit" disabled={searching}>
         {searching ? '検索中…' : '検索'}
       </Button>

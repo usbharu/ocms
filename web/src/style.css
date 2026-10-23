@@ -190,17 +190,8 @@ main {
   background: var(--card);
 }
 .search-options {
-  position: relative;
   align-self: center;
   flex-shrink: 0;
-}
-.search-options select {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 10px);
-  z-index: 2;
-  min-width: 180px;
-  box-shadow: 0 8px 24px #24312b18;
 }
 .search-field {
   display: flex;
@@ -717,16 +708,6 @@ summary .count {
   float: right;
   font-weight: 400;
 }
-.search-options summary {
-  padding: 9px 10px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-  cursor: pointer;
-  border-radius: 5px;
-}
-.search-options[open] summary {
-  background: var(--muted);
-}
 .detail-section[open] > summary {
   margin-bottom: 16px;
 }
@@ -883,10 +864,6 @@ summary .count {
   }
   .search-options {
     margin-right: auto;
-  }
-  .search-options select {
-    right: auto;
-    left: 0;
   }
   .library-toolbar {
     flex-wrap: wrap;

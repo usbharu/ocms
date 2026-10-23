@@ -45,9 +45,9 @@ export const Keyword: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     await userEvent.type(canvas.getByRole('searchbox'), '風景');
-    await userEvent.click(
-      canvas.getByText('キーワード', { selector: 'summary' }),
-    );
+    await expect(
+      canvas.getByRole('combobox', { name: '検索方法' }),
+    ).toBeVisible();
     await userEvent.selectOptions(
       canvas.getByRole('combobox', { name: '検索方法' }),
       'hybrid',

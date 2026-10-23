@@ -239,7 +239,6 @@ test('filters the current list and closes details', async ({ page }) => {
 test('search modes use text API; tag editing preserves the match time', async ({
   page,
 }) => {
-  await page.locator('.search-options summary').click();
   for (const mode of ['keyword', 'semantic', 'hybrid']) {
     await page.getByLabel('検索方法').selectOption(mode);
     await page.getByLabel('検索クエリ').fill('sample');
@@ -1491,7 +1490,7 @@ test('metadata edits preserve the matching PDF page', async ({ page }) => {
   ).toHaveAttribute('href', /#page=2$/);
 });
 
-test('library prioritizes browsing and reveals secondary controls on demand', async ({
+test('library exposes search modes directly and keeps secondary controls on demand', async ({
   page,
 }) => {
   await expect(
@@ -1503,14 +1502,19 @@ test('library prioritizes browsing and reveals secondary controls on demand', as
       .getByRole('button', { name: '＋ アップロード' }),
   ).toBeVisible();
   await expect(page.locator('.collection').getByRole('search')).toBeVisible();
-  await expect(page.getByLabel('検索方法')).toBeHidden();
-  const options = page.locator('.search-options summary');
-  await options.focus();
-  await options.press('Enter');
-  await page.getByLabel('検索方法').selectOption('semantic');
-  await options.press('Enter');
-  await expect(options).toHaveText('意味');
-  await expect(page.getByLabel('検索方法')).toBeHidden();
+  const mode = page.getByRole('combobox', { name: '検索方法' });
+  await expect(mode).toBeVisible();
+  await expect(mode).toHaveValue('keyword');
+  await page.getByRole('searchbox').focus();
+  await page.keyboard.press('Tab');
+  await expect(mode).toBeFocused();
+  await mode.selectOption('semantic');
+  await expect(mode).toHaveValue('semantic');
+  await expect(mode.locator('option:checked')).toHaveText('意味');
+  await page.keyboard.press('Tab');
+  await expect(
+    page.getByRole('button', { name: '検索', exact: true }),
+  ).toBeFocused();
   await page.getByRole('button', { name: '山の風景.png', exact: true }).click();
   await expect(
     page.getByRole('textbox', { name: 'ファイル名', exact: true }),
@@ -1527,10 +1531,11 @@ test('library prioritizes browsing and reveals secondary controls on demand', as
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBe(width);
+    await expect(mode).toBeVisible();
     if (process.env.UI_SCREENSHOTS && width !== 320) {
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({
-        path: `../docs/library-ia-${width}.png`,
+        path: `../docs/library-search-mode-${width}.png`,
         fullPage: true,
       });
     }

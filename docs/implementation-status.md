@@ -341,3 +341,14 @@ Cytoscape.jsの配置をcytoscape-cola 2.5.1へ変更した。Colaの重なり�
 全タグの同時表示や巨大グラフの性能を保証するものではない。表示上限は従来どおり60タグで、検索・ズーム・パンで対象を探索する。
 
 ![60タグ・1,770本の共起線を持つ動的グラフ（生成データ）](tags-graph-dense.png)
+
+## 検索方法メニューの階層削減（2026-10-23）
+
+検索方法のNative Selectを包んでいた折りたたみを削除し、検索欄から「キーワード」「意味」「キーワード＋意味」を直接選べるようにした。選択中の方式と「検索方法」のアクセシブルな名前を維持し、不要になったポップアップ用CSSを削除した。
+
+- `npm ci --cache ../.cache/npm`、`npm run check`、`npm run build`：成功。`npm ci` 内のHusky設定はサンドボックスのGit設定書き込み制限で警告が出たが、依存インストールは完了した。
+- `npm run test:ui`：50件成功。3方式の検索API要求、検索欄から検索方法・検索ボタンへのTab移動、1440 / 390 / 320pxでの検索方法の表示を確認した。
+- `npm run test:storybook -- src/components/library/SearchForm.stories.tsx`：5件成功。ChromiumのMachポート制限のため、ブラウザテストは制限外で実行した。
+- Dockerイメージを再ビルドし、開発用BFF・OIDC用BFFへ反映。検索処理の変更はないため、実推論・サービス結合試験・実OIDCログインは再検証していない。
+
+[PC画面（生成データ）](library-search-mode-1440.png) / [モバイル画面（生成データ）](library-search-mode-390.png)
