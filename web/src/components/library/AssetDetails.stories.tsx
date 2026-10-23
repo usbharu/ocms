@@ -13,7 +13,7 @@ const meta = {
     searching: false,
     notice: '',
     onClose: fn(),
-    onSaveTags: fn(),
+    onSaveMetadata: fn(async (changes) => ({ ...assets[0], ...changes })),
     onCompare: fn(),
     onReprocess: fn(),
     onDelete: fn(),
@@ -25,10 +25,14 @@ export const Image: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     const tags = canvas.getByRole('textbox', { name: 'タグ' });
-    await userEvent.clear(tags);
-    await userEvent.type(tags, '  風景, 旅行, , ');
-    await userEvent.click(canvas.getByRole('button', { name: '保存' }));
-    await expect(args.onSaveTags).toHaveBeenCalledWith(['風景', '旅行']);
+    await userEvent.type(tags, '  新しいタグ  ');
+    await userEvent.click(canvas.getByRole('button', { name: '追加' }));
+    await expect(args.onSaveMetadata).toHaveBeenCalledWith({
+      tags: ['旅行', '風景', '新しいタグ'],
+    });
+    await expect(
+      canvas.getByRole('button', { name: 'タグ「新しいタグ」を削除' }),
+    ).toBeEnabled();
     await userEvent.click(canvas.getByRole('button', { name: '類似ファイル' }));
     await expect(args.onCompare).toHaveBeenCalledWith('perceptual');
     await userEvent.click(
@@ -83,5 +87,5 @@ export const Failed: Story = {
     await expect(args.onReprocess).toHaveBeenCalledOnce();
   },
 };
-export const Saved: Story = { args: { notice: 'タグを保存しました' } };
+export const Saved: Story = { args: { notice: '処理をリクエストしました' } };
 export const Mobile: Story = { globals: { viewport: { value: 'mobile' } } };

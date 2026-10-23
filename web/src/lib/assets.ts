@@ -9,6 +9,8 @@ export type Asset = {
   start_ms?: number;
   end_ms?: number;
 };
+export type AssetChanges = { filename?: string; tags?: string[] };
+
 export type Rendition = {
   rendition_id: string;
   profile_id: string;

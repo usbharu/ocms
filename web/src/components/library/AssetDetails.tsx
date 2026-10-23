@@ -1,6 +1,7 @@
 import type { Ref } from 'react';
 import {
   type Asset,
+  type AssetChanges,
   type Job,
   locationOf,
   type Mode,
@@ -8,8 +9,7 @@ import {
   renditionName,
 } from '../../lib/assets';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
+import { AssetMetadataEditor } from './AssetMetadataEditor';
 import { Status } from './Status';
 
 export function AssetDetails({
@@ -21,7 +21,7 @@ export function AssetDetails({
   detailTitle,
   onClose,
   onOpen,
-  onSaveTags,
+  onSaveMetadata,
   onCompare,
   onReprocess,
   onDelete,
@@ -34,7 +34,7 @@ export function AssetDetails({
   detailTitle?: Ref<HTMLHeadingElement>;
   onClose: () => void;
   onOpen?: () => void;
-  onSaveTags: (tags: string[]) => void;
+  onSaveMetadata: (changes: AssetChanges) => Promise<Asset>;
   onCompare: (mode: Mode) => void;
   onReprocess: () => void;
   onDelete: () => void;
@@ -127,32 +127,11 @@ export function AssetDetails({
           元ファイルを開く <span aria-hidden="true">↗</span>
         </a>
       </Button>
-      <form
-        className="tag-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const data = new FormData(e.currentTarget);
-          onSaveTags(
-            String(data.get('tags'))
-              .split(',')
-              .map((tag) => tag.trim())
-              .filter(Boolean),
-          );
-        }}
-      >
-        <Label htmlFor="asset-tags">タグ</Label>
-        <div className="tag-input">
-          <Input
-            id="asset-tags"
-            name="tags"
-            defaultValue={selected.tags.join(', ')}
-            placeholder="カンマ区切りで追加"
-          />
-          <Button variant="outline" type="submit">
-            保存
-          </Button>
-        </div>
-      </form>
+      <AssetMetadataEditor
+        key={selected.asset_id}
+        asset={selected}
+        onSave={onSaveMetadata}
+      />
       <div className="detail-section">
         <h3>このファイルから探す</h3>
         <div className="comparison-actions">

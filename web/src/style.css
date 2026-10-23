@@ -574,21 +574,71 @@ main {
   justify-content: space-between;
   font-size: 12px;
 }
-.tag-form {
+.metadata-editor {
   margin: 22px 0;
 }
-.tag-form label {
+.metadata-editor label {
   line-height: inherit;
   display: block;
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 8px;
 }
+.metadata-editor > input {
+  width: 100%;
+  min-width: 0;
+}
+.metadata-hint {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin: 8px 0 16px;
+}
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  margin: 0 0 12px;
+  list-style: none;
+}
+.tag-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border-radius: 14px;
+  background: var(--muted);
+  padding: 2px 4px 2px 10px;
+  font-size: 12px;
+}
+.tag-chip > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tag-chip button {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  min-height: 28px;
+  height: auto;
+}
+.metadata-status {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.metadata-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--destructive);
+}
 .tag-input {
   display: flex;
   gap: 7px;
 }
 .tag-input input {
+  min-width: 0;
   width: 100%;
   font-size: 12px;
 }

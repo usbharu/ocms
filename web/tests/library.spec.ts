@@ -134,9 +134,7 @@ async function mockAPI(page: Page) {
     const id = path.split('/').at(-1);
     if (method === 'PATCH') {
       assets = assets.map((a) =>
-        a.asset_id === id
-          ? { ...a, tags: route.request().postDataJSON().tags }
-          : a,
+        a.asset_id === id ? { ...a, ...route.request().postDataJSON() } : a,
       );
     }
     if (method === 'DELETE') {
@@ -258,11 +256,11 @@ test('search modes use text API; tag editing preserves the match time', async ({
     'src',
     '/api/v1/assets/video/renditions/mp4/content#t=65',
   );
-  await page.getByLabel('タグ', { exact: true }).fill('新しいタグ, 旅行');
+  await page.getByLabel('タグ', { exact: true }).fill('新しいタグ');
   const save = page.waitForRequest((r) => r.method() === 'PATCH');
-  await page.getByRole('button', { name: '保存', exact: true }).click();
-  expect((await save).postDataJSON()).toEqual({ tags: ['新しいタグ', '旅行'] });
-  await expect(page.getByRole('status')).toContainText('タグを保存しました');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  expect((await save).postDataJSON()).toEqual({ tags: ['旅行', '新しいタグ'] });
+  await expect(page.getByRole('status')).toContainText('保存しました');
   await expect(page.locator('video')).toHaveAttribute('src', /#t=65$/);
   await page.getByRole('button', { name: '検索を解除' }).click();
   await expect(page.locator('.file')).toHaveCount(4);
@@ -1288,4 +1286,201 @@ test('video and audio play generated media and swiping unmounts the previous pla
   await swipeViewer(page, -1);
   await expect(viewer.getByRole('heading')).toHaveText(fixtures[3].filename);
   await expect(viewer.locator('audio')).toHaveCount(0);
+});
+
+test('metadata autosaves, validates and keeps tags as individual chips', async ({
+  page,
+}) => {
+  await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
+  const tag = page.getByRole('textbox', { name: 'タグ', exact: true });
+  const patches: unknown[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'PATCH') patches.push(r.postDataJSON());
+  });
+  await name.fill('新しい名前.png');
+  await name.press('Enter');
+  await expect(name).toBeEnabled();
+  await expect(page.locator('.detail-heading')).toContainText('新しい名前.png');
+  await tag.focus();
+  expect(patches).toEqual([{ filename: '新しい名前.png' }]);
+  await name.fill('取り消す.png');
+  await name.press('Escape');
+  await expect(name).toHaveValue('新しい名前.png');
+  await name.fill('   ');
+  await name.press('Enter');
+  await expect(page.locator('.metadata-error')).toContainText('1024バイト');
+  await name.press('Escape');
+  await tag.fill('旅行');
+  await tag.press('Enter');
+  await expect(page.locator('.metadata-error')).toContainText('追加済み');
+  await tag.fill('  カンマ,も一つのタグ  ');
+  await tag.press('Enter');
+  await expect(
+    page.getByRole('button', { name: 'タグ「カンマ,も一つのタグ」を削除' }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: 'タグ「旅行」を削除' }).click();
+  await expect(
+    page.getByRole('button', { name: 'タグ「旅行」を削除' }),
+  ).toHaveCount(0);
+  expect(patches).toEqual([
+    { filename: '新しい名前.png' },
+    { tags: ['旅行', '風景', 'カンマ,も一つのタグ'] },
+    { tags: ['風景', 'カンマ,も一つのタグ'] },
+  ]);
+  await tag.fill('未確定');
+  await tag.blur();
+  expect(patches).toHaveLength(3);
+});
+
+test('metadata failure retains input and retries, pending response stays with its asset', async ({
+  page,
+}) => {
+  await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  let attempts = 0;
+  let release: () => void = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/v1/assets/image', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    attempts++;
+    if (attempts === 1)
+      return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+    await pending;
+    return route.fulfill({
+      json: { ...fixtures[0], filename: '保存する名前.png' },
+    });
+  });
+  const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
+  await name.fill('保存する名前.png');
+  await name.press('Enter');
+  await expect(
+    page.getByRole('button', { name: '保存を再試行' }),
+  ).toBeVisible();
+  await expect(name).toHaveValue('保存する名前.png');
+  await page.getByRole('button', { name: '保存を再試行' }).click();
+  await expect(name).toBeDisabled();
+  await expect(
+    page.getByRole('textbox', { name: 'タグ', exact: true }),
+  ).toBeDisabled();
+  await page.locator('.file').filter({ hasText: '散歩の記録.mp4' }).click();
+  release();
+  await expect(
+    page.locator('.file').filter({ hasText: '保存する名前.png' }),
+  ).toHaveCount(1);
+  await expect(name).toHaveValue('散歩の記録.mp4');
+  await expect(page.locator('.metadata-status')).toBeEmpty();
+  expect(attempts).toBe(2);
+});
+
+test('metadata byte limits and Japanese composition do not submit invalid drafts', async ({
+  page,
+}) => {
+  await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  let patches = 0;
+  page.on('request', (r) => {
+    if (r.method() === 'PATCH') patches++;
+  });
+  const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
+  await name.fill('あ'.repeat(342));
+  await name.press('Enter');
+  await expect(page.locator('.metadata-error')).toContainText('1024バイト');
+  await name.press('Escape');
+  await name.fill('変換中.png');
+  await name.dispatchEvent('compositionstart');
+  await name.press('Enter');
+  expect(patches).toBe(0);
+  await name.dispatchEvent('compositionend');
+  await name.press('Escape');
+  const tag = page.getByRole('textbox', { name: 'タグ', exact: true });
+  await tag.fill('あ'.repeat(86));
+  await tag.press('Enter');
+  await expect(page.locator('.metadata-error')).toContainText('256バイト');
+  await tag.fill('変換中');
+  await tag.dispatchEvent('keydown', {
+    key: 'Enter',
+    isComposing: true,
+    bubbles: true,
+  });
+  expect(patches).toBe(0);
+});
+
+for (const width of [1440, 390, 320]) {
+  test(`metadata chips wrap at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const asset = {
+      ...fixtures[0],
+      filename: `${'長い名前'.repeat(35)}.png`,
+      tags: Array.from(
+        { length: 30 },
+        (_, i) => `${i}-${'長いタグ'.repeat(15)}`,
+      ),
+    };
+    await page.route('**/api/v1/assets*', (route) =>
+      route.fulfill({ json: { assets: [asset] } }),
+    );
+    await page.reload();
+    await page.locator('.file').click();
+    await expect(page.locator('.tag-chip')).toHaveCount(30);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await page
+        .locator('.metadata-editor')
+        .evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    if (process.env.UI_SCREENSHOTS) {
+      await page.locator('.metadata-editor').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `../docs/library-metadata-${width}.png` });
+    }
+  });
+}
+
+test('blur saves filename, comparison heading updates and refresh failure is separate', async ({
+  page,
+}) => {
+  await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  await page.getByRole('button', { name: '類似ファイル', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: '類似ファイル：山の風景.png' }),
+  ).toBeVisible();
+  const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
+  await name.fill('比較元の新しい名前.png');
+  await name.blur();
+  await expect(
+    page.getByRole('heading', { name: '類似ファイル：比較元の新しい名前.png' }),
+  ).toBeVisible();
+  await expect(page.locator('.metadata-status')).toHaveText('保存しました');
+  await page.route('**/api/v1/assets/image/similar', (route) =>
+    route.fulfill({ status: 503, json: { error: 'unavailable' } }),
+  );
+  await name.fill('保存は成功.png');
+  await name.press('Enter');
+  await expect(page.locator('.metadata-status')).toHaveText('保存しました');
+  await expect(page.locator('.error')).toContainText(
+    '変更は保存しましたが、一覧を更新できませんでした',
+  );
+  await expect(page.getByRole('button', { name: '保存を再試行' })).toHaveCount(
+    0,
+  );
+});
+
+test('metadata edits preserve the matching PDF page', async ({ page }) => {
+  await page.getByLabel('検索クエリ').fill('pdf');
+  await page.getByRole('button', { name: '検索', exact: true }).click();
+  await expect(page.locator('.file')).toHaveCount(1);
+  await page.locator('.file').click();
+  await page
+    .getByRole('textbox', { name: 'タグ', exact: true })
+    .fill('ページ付き');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  await expect(page.locator('.metadata-status')).toHaveText('保存しました');
+  await expect(page.getByRole('img', { name: 'PDF 2ページ目' })).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: '元ファイルを開く' }),
+  ).toHaveAttribute('href', /#page=2$/);
 });

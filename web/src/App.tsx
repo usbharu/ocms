@@ -11,6 +11,7 @@ import { UploadProgress } from './components/library/UploadProgress';
 import { Button } from './components/ui/button';
 import {
   type Asset,
+  type AssetChanges,
   allFiles,
   type Job,
   type Kind,
@@ -62,6 +63,8 @@ export function App() {
   const detailTitle = useRef<HTMLHeadingElement>(null);
   const fileList = useRef<HTMLElement>(null);
   const requestVersion = useRef(0);
+  const selectedId = useRef(selected?.asset_id);
+  selectedId.current = selected?.asset_id;
 
   useEffect(() => {
     try {
@@ -374,22 +377,40 @@ export function App() {
     setSelected(null);
   }
 
-  function saveTags(tags: string[]) {
-    if (!selected) return;
+  async function saveMetadata(changes: AssetChanges): Promise<Asset> {
+    if (!selected) throw new Error('ファイルを選択してください');
     const assetId = selected.asset_id;
-    run(async () => {
-      const updated = await request(`/api/v1/assets/${assetId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ tags }),
-      });
-      setSelected((current) =>
-        current?.asset_id === assetId
-          ? { ...current, tags: updated.tags }
-          : current,
-      );
-      setNotice('タグを保存しました');
-      await refresh();
+    const version = requestVersion.current;
+    const updated: Asset = await request(`/api/v1/assets/${assetId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(changes),
     });
+    const metadata = { filename: updated.filename, tags: updated.tags };
+    setSelected((current) =>
+      current?.asset_id === assetId ? { ...current, ...metadata } : current,
+    );
+    setAssets((current) =>
+      current.map((a) => (a.asset_id === assetId ? { ...a, ...metadata } : a)),
+    );
+    setContext((current) =>
+      current.source?.asset_id === assetId
+        ? { ...current, source: { ...current.source, ...metadata } }
+        : current,
+    );
+    if (selectedId.current === assetId && requestVersion.current === version) {
+      const next =
+        context.source?.asset_id === assetId
+          ? { ...context, source: { ...context.source, ...metadata } }
+          : context;
+      void refresh(next).catch(() => {
+        if (selectedId.current === assetId) {
+          setError(
+            '変更は保存しましたが、一覧を更新できませんでした。更新ボタンで再取得してください。',
+          );
+        }
+      });
+    }
+    return updated;
   }
 
   function reprocess() {
@@ -526,7 +547,7 @@ export function App() {
                   detailTitle={detailTitle}
                   onClose={closeDetail}
                   onOpen={() => openViewer(selected)}
-                  onSaveTags={saveTags}
+                  onSaveMetadata={saveMetadata}
                   onCompare={compare}
                   onReprocess={reprocess}
                   onDelete={deleteAsset}
