@@ -6,14 +6,17 @@ import {
   kinds,
   locationOf,
   pageSize,
+  type Recommendation,
   type View,
 } from '../../lib/assets';
 import { Button } from '../ui/button';
+import { RecommendationSummary } from './RecommendationSummary';
 import { Status } from './Status';
 import { Thumbnail } from './Thumbnail';
 
 export function AssetList({
   assets,
+  recommendations,
   selectedId,
   view,
   kind,
@@ -31,6 +34,7 @@ export function AssetList({
   onPageChange,
 }: {
   assets: Asset[];
+  recommendations?: Recommendation[];
   selectedId?: string;
   view: View;
   kind: Kind;
@@ -50,7 +54,7 @@ export function AssetList({
   return (
     <section
       ref={fileList}
-      className={`files files-${view}`}
+      className={`files files-${view}${recommendations ? ' files-recommendations' : ''}`}
       tabIndex={-1}
       aria-label="ファイル一覧"
       aria-busy={searching}
@@ -94,52 +98,65 @@ export function AssetList({
             </div>
           )}
           <div className={`file-items view-${view}`}>
-            {assets.map((a) => (
-              <Button
-                variant="outline"
-                type="button"
-                className={`file ${selectedId === a.asset_id ? 'active' : ''}`}
-                aria-label={a.filename}
-                title={a.filename}
-                aria-pressed={selectedId === a.asset_id}
-                key={a.asset_id}
-                disabled={searching}
-                onClick={() => {
-                  if (selectedId === a.asset_id && onOpen) onOpen(a);
-                  else onSelect(a);
-                }}
-                onDoubleClick={() => onOpen?.(a)}
-              >
-                <Thumbnail
-                  key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`}
-                  asset={a}
-                />
-                <span
-                  className={`file-info${view === 'grid' ? ' visually-hidden' : ''}`}
+            {assets.map((a) => {
+              const recommendation = recommendations?.find(
+                (item) => item.asset_id === a.asset_id,
+              );
+              return (
+                <Button
+                  variant="outline"
+                  type="button"
+                  className={`file ${selectedId === a.asset_id ? 'active' : ''}`}
+                  aria-label={a.filename}
+                  aria-describedby={
+                    recommendation ? `recommendation-${a.asset_id}` : undefined
+                  }
+                  title={a.filename}
+                  aria-pressed={selectedId === a.asset_id}
+                  key={a.asset_id}
+                  disabled={searching}
+                  onClick={() => {
+                    if (selectedId === a.asset_id && onOpen) onOpen(a);
+                    else onSelect(a);
+                  }}
+                  onDoubleClick={() => onOpen?.(a)}
                 >
-                  <b>{a.filename}</b>
-                  {view === 'list' && (
-                    <>
-                      <span className="file-meta">
-                        {kinds.find((k) => k.id === kindOf(a))?.label}
-                        {a.tags.length > 0 && (
-                          <span className="file-tags">
-                            {a.tags.join(' · ')}
+                  <Thumbnail
+                    key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`}
+                    asset={a}
+                  />
+                  <span
+                    className={`file-info${view === 'grid' ? ' visually-hidden' : ''}`}
+                  >
+                    <b>{a.filename}</b>
+                    {recommendation && (
+                      <RecommendationSummary item={recommendation} />
+                    )}
+                    {view === 'list' && (
+                      <>
+                        <span className="file-meta">
+                          {kinds.find((k) => k.id === kindOf(a))?.label}
+                          {a.tags.length > 0 && (
+                            <span className="file-tags">
+                              {a.tags.join(' · ')}
+                            </span>
+                          )}
+                        </span>
+                        {a.snippet && (
+                          <span className="snippet">{a.snippet}</span>
+                        )}
+                        {locationOf(a) && (
+                          <span className="match-location">
+                            {locationOf(a)}
                           </span>
                         )}
-                      </span>
-                      {a.snippet && (
-                        <span className="snippet">{a.snippet}</span>
-                      )}
-                      {locationOf(a) && (
-                        <span className="match-location">{locationOf(a)}</span>
-                      )}
-                    </>
-                  )}
-                </span>
-                {view === 'list' && <Status value={a.status} />}
-              </Button>
-            ))}
+                      </>
+                    )}
+                  </span>
+                  {view === 'list' && <Status value={a.status} />}
+                </Button>
+              );
+            })}
           </div>
         </>
       )}
