@@ -271,6 +271,25 @@ docker compose up -d --wait
 
 アプリ側は `OTEL_EXPORTER_OTLP_ENDPOINT` が設定されていればOTLP/HTTPでTrace / Metric / Logを送信します。GoはOTel SDKとslogブリッジ、RuntimeはPython SDKを使います。URL・クエリ・Cookie・リクエスト本文・生の例外メッセージを属性へ渡さず、HTTP計測は許可した属性だけを出力します。既定では外部Exporterを使わず、構造化ログを標準出力へ書きます。
 
+## お気に入り
+
+ヘッダーの「お気に入り」から、自分が登録したファイルを確認できます。一覧の各行・カードの星、詳細パネル、閲覧画面から登録・解除できます。同じBlobを参照する別Assetや、共有相手のお気に入りには影響しません。閲覧権限のある共有ファイルも登録できます。
+
+お気に入り一覧は登録が新しい順です。キーワード・意味・ハイブリッド検索、種類フィルター、表示切り替え、ページ送りを利用でき、検索結果は関連度順になります。検索解除・更新・類似比較・完全一致比較でもお気に入りの範囲を維持します。削除済み・閲覧権限を失ったファイルは件数と結果に含めません。権限が戻ると、保存済みのお気に入りが再表示されます。
+
+006まで適用済みの既存DBには007を一度適用してからGoサービスとSPAを更新します。初回起動の空DBには001〜007が番号順に適用されます。
+
+```sh
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_favorites.sql
+BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build bff
+docker compose up -d --wait
+# OIDC・OTLP検証構成では上のupを次で置き換える
+# docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
+python3 scripts/favorites-integration.py
+```
+
+登録は `PUT /api/v1/assets/{assetId}/favorite`、解除は同じURLへの `DELETE`（いずれも204）です。`GET /api/v1/assets?favorites=true` で自分のお気に入りに限定し、検索では `POST /api/v1/search` のJSONへ `"favorites": true` を追加します。Asset応答の `is_favorite` は要求ユーザー自身の状態を返します。
+
 ## メディア処理と検索
 
 保存後は `stored → processing → ready` と進みます。失敗したJobは最大4回まで再試行し、最終失敗時は `failed` を表示します。詳細画面の「変換を要求・失敗処理を再試行」から再実行できます。変換済みファイルは同じ元Blob・プロファイルで共有します。派生BlobもTransferで暗号化・重複排除します。
@@ -350,7 +369,7 @@ Searchはファイル名・タグに加えて抽出本文をPGroongaで検索し
 
 ## 基盤版からの更新
 
-既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜006を一度適用します。
+既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜007を一度適用します。
 
 ```sh
 docker compose build
@@ -360,6 +379,7 @@ docker compose exec -T postgres sh -c 'psql -U ocms -d ocms -v ON_ERROR_STOP=1 -
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/004_embedding_checkpoints.sql
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_favorites.sql
 docker compose up -d --wait
 ```
 
@@ -421,6 +441,6 @@ docker compose exec transfer ocms reconcile
 
 Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォート、セミコロン、コンポーネント名はPascalCase、変数・関数名はcamelCaseとします。`npm run build` でTypeScriptのstrictチェックを行います。整形・lintはBiomeを使います。関数と関数の間には空行を1行入れます。Biomeにはこれを強制するルールがないため、空行は手動で入れ、レビューで確認します。
 
-マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜006を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
+マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜007を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
 
 停止は `docker compose down` です。名前付きボリュームは保持します。

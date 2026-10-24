@@ -18,6 +18,7 @@ type Service struct {
 	MaxSize int64
 }
 type Asset struct {
+	IsFavorite bool     `json:"is_favorite"`
 	ID         string   `json:"asset_id"`
 	Filename   string   `json:"filename"`
 	MIME       string   `json:"mime_type"`
@@ -50,6 +51,8 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("POST /internal/uploads/{id}/complete", s.complete)
 	m.HandleFunc("GET /api/v1/tags", s.listTags)
 	m.HandleFunc("GET /api/v1/characters", s.listCharacters)
+	m.HandleFunc("PUT /api/v1/assets/{id}/favorite", s.favorite)
+	m.HandleFunc("DELETE /api/v1/assets/{id}/favorite", s.favorite)
 	m.HandleFunc("GET /api/v1/assets", s.list)
 	m.HandleFunc("GET /api/v1/assets/{id}", s.detail)
 	m.HandleFunc("GET /api/v1/assets/{id}/duplicates", s.duplicates)
@@ -252,12 +255,12 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	platform.JSON(w, 200, map[string]string{"asset_id": assetID, "state": "completed"})
 }
 
-const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,ARRAY(SELECT c.name FROM catalog.asset_characters c WHERE c.asset_id=a.id ORDER BY c.position,c.name) FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
+const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,ARRAY(SELECT c.name FROM catalog.asset_characters c WHERE c.asset_id=a.id ORDER BY c.position,c.name),EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.asset_id=a.id AND f.principal_id=$1) FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
 const allowed = `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1))`
 
 func scanAsset(row pgx.Row) (Asset, error) {
 	var a Asset
-	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID, &a.Characters)
+	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID, &a.Characters, &a.IsFavorite)
 	return a, err
 }
 func (s *Service) readable(ctx context.Context, id, principal string) (Asset, error) {
@@ -325,13 +328,23 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	where := `WHERE ` + allowed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND strpos(lower(c.name),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='document' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
 	where += ` AND ($4='' OR $4=ANY(a.tags)) AND ($5='' OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND c.name=$5))`
+	favorites, err := favoriteFilter(r)
+	if err != nil {
+		platform.Error(w, 400, "INVALID_FAVORITES")
+		return
+	}
+	order := ` ORDER BY a.created_at DESC,a.id DESC`
+	if favorites {
+		where += ` AND ` + favoriteCondition
+		order = ` ORDER BY (SELECT f.created_at FROM catalog.asset_favorites f WHERE f.asset_id=a.id AND f.principal_id=$1) DESC,a.id DESC`
+	}
 	var total int
 	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character")).Scan(&total)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $6 OFFSET $7`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.limit, options.offset)
+	rows, err := s.DB.Query(r.Context(), selectAsset+where+order+` LIMIT $6 OFFSET $7`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.limit, options.offset)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -360,9 +373,18 @@ func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 	if assetError(w, err) {
 		return
 	}
+	favorites, err := favoriteFilter(r)
+	if err != nil {
+		platform.Error(w, 400, "INVALID_FAVORITES")
+		return
+	}
+	filter := ""
+	if favorites {
+		filter = ` AND ` + favoriteCondition
+	}
 	items := []Asset{}
 	if a.BlobID != nil {
-		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND o.blob_id=$2 AND a.id<>$3 ORDER BY a.created_at LIMIT 200`, user(r), *a.BlobID, a.ID)
+		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND o.blob_id=$2 AND a.id<>$3`+filter+` ORDER BY a.created_at LIMIT 200`, user(r), *a.BlobID, a.ID)
 		if err != nil {
 			platform.RespondError(w, err)
 			return

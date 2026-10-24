@@ -17,6 +17,7 @@ const meta = {
     currentPage: 1,
     pageCount: 1,
     resultCount: assets.length,
+    onFavorite: fn(),
     onSelect: fn(),
     onReset: fn(),
     onUpload: fn(),
@@ -99,4 +100,29 @@ export const LongFilename: Story = {
       { ...assets[0], filename: `${'とても長いファイル名'.repeat(12)}.png` },
     ],
   },
+};
+
+export const Favorites: Story = {
+  args: {
+    assets: assets.map((asset, index) => ({
+      ...asset,
+      is_favorite: index === 0,
+    })),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    const button = canvas.getByRole('button', {
+      name: `${assets[0].filename}：お気に入りを解除`,
+    });
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(button);
+    await expect(args.onFavorite).toHaveBeenCalledWith(args.assets[0]);
+    await expect(args.onSelect).not.toHaveBeenCalled();
+  },
+};
+export const EmptyFavorites: Story = {
+  args: { assets: [], favorites: true, resultCount: 0 },
+};
+export const FavoriteSaving: Story = {
+  args: { favoriteBusy: new Set([assets[0].asset_id]) },
 };

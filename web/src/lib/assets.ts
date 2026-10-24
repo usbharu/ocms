@@ -1,4 +1,5 @@
 export type Asset = {
+  is_favorite?: boolean;
   asset_id: string;
   filename: string;
   mime_type: string;
@@ -36,6 +37,7 @@ export type Mode =
   | 'perceptual'
   | 'exact_duplicate';
 export type SearchContext = {
+  favorites?: boolean;
   mode: Mode;
   query: string;
   tag?: string;

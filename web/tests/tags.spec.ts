@@ -227,7 +227,11 @@ test('navigation and upload share one header without stacked page headings', asy
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     const header = await page.locator('header').boundingBox();
-    expect(header?.height).toBeLessThanOrEqual(68);
+    expect(header?.height).toBeLessThanOrEqual(width < 900 ? 144 : 68);
+    const nav = await page.locator('header nav').boundingBox();
+    expect(
+      nav && header && nav.y + nav.height <= header.y + header.height,
+    ).toBe(true);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
