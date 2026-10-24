@@ -23,6 +23,8 @@ export function AssetDetails({
   onOpen,
   onSaveMetadata,
   onCompare,
+  onRecommend,
+  showComparisons = true,
   onReprocess,
   onDelete,
 }: {
@@ -36,6 +38,8 @@ export function AssetDetails({
   onOpen?: () => void;
   onSaveMetadata: (changes: AssetChanges) => Promise<Asset>;
   onCompare: (mode: Mode) => void;
+  onRecommend?: () => void;
+  showComparisons?: boolean;
   onReprocess: () => void;
   onDelete: () => void;
 }) {
@@ -129,22 +133,35 @@ export function AssetDetails({
       </Button>
       <div className="comparison-section">
         <div className="comparison-actions">
-          <Button
-            variant="outline"
-            type="button"
-            disabled={searching}
-            onClick={() => onCompare('perceptual')}
-          >
-            類似ファイル
-          </Button>
-          <Button
-            variant="outline"
-            type="button"
-            disabled={searching}
-            onClick={() => onCompare('exact_duplicate')}
-          >
-            完全一致ファイル
-          </Button>
+          {onRecommend && (
+            <Button
+              variant="outline"
+              disabled={searching}
+              onClick={onRecommend}
+            >
+              関連コンテンツ
+            </Button>
+          )}
+          {showComparisons && (
+            <Button
+              variant="outline"
+              type="button"
+              disabled={searching}
+              onClick={() => onCompare('perceptual')}
+            >
+              類似ファイル
+            </Button>
+          )}
+          {showComparisons && (
+            <Button
+              variant="outline"
+              type="button"
+              disabled={searching}
+              onClick={() => onCompare('exact_duplicate')}
+            >
+              完全一致ファイル
+            </Button>
+          )}
         </div>
       </div>
       <AssetMetadataEditor

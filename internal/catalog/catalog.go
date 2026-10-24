@@ -37,6 +37,7 @@ type Upload struct {
 func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /internal/assets/{id}/authorize", s.authorizeAsset)
+	m.HandleFunc("GET /internal/assets/{id}/recommendation-candidates", s.recommendationCandidates)
 	m.HandleFunc("GET /internal/events", s.events)
 	m.HandleFunc("POST /internal/events/{id}/ack", s.ackEvent)
 	m.HandleFunc("GET /internal/blobs/{id}/info", s.blobInfo)

@@ -696,6 +696,7 @@ summary {
 }
 .comparison-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .comparison-actions button {
@@ -1312,4 +1313,59 @@ summary .count {
     padding-inline: 4px;
     font-size: 12px;
   }
+}
+
+.recommendations-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.recommendations-header > div {
+  min-width: 0;
+}
+.recommendations-header h1 {
+  font-size: 18px;
+  margin: 0;
+}
+.recommendations-header .thumbnail {
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+}
+.recommendation-source {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.recommendation-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.recommendation-score {
+  font-weight: 600;
+  color: var(--primary);
+}
+.files-recommendations .file {
+  aspect-ratio: auto;
+  min-height: 280px;
+  white-space: normal;
+}
+.files-recommendations .thumbnail {
+  flex: 0 0 160px;
+  height: 160px;
+}
+.files-recommendations .file-info {
+  flex: 1;
+}
+
+.recommendation-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
