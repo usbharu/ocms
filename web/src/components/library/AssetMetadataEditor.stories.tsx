@@ -8,6 +8,8 @@ const meta = {
   title: 'Library/AssetMetadataEditor',
   component: AssetMetadataEditor,
   args: {
+    onSearchTag: fn(),
+    onSearchCharacter: fn(),
     asset: assets[0],
     onSave: fn<(changes: AssetChanges) => Promise<Asset>>(async (changes) => ({
       ...assets[0],
@@ -17,6 +19,35 @@ const meta = {
 } satisfies Meta<typeof AssetMetadataEditor>;
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+export const SearchTag: Story = {
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    const tag = canvas.getByRole('button', { name: 'タグ「旅行」で検索' });
+    await userEvent.click(tag);
+    await expect(args.onSearchTag).toHaveBeenCalledWith('旅行');
+    await userEvent.keyboard('{Enter}');
+    await userEvent.keyboard(' ');
+    await expect(args.onSearchTag).toHaveBeenCalledTimes(3);
+    await expect(args.onSave).not.toHaveBeenCalled();
+  },
+};
+
+export const SearchCharacter: Story = {
+  args: { asset: { ...assets[0], characters: ['character_a'] } },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole('button', { name: 'キャラクター「character_a」で検索' }),
+    );
+    await userEvent.keyboard('{Enter}');
+    await userEvent.keyboard(' ');
+    await expect(args.onSearchCharacter).toHaveBeenCalledTimes(3);
+    await expect(args.onSearchCharacter).toHaveBeenCalledWith('character_a');
+    await expect(args.onSearchTag).not.toHaveBeenCalled();
+    await expect(args.onSave).not.toHaveBeenCalled();
+  },
+};
 
 export const Edit: Story = {
   play: async ({ canvasElement, args }) => {
@@ -65,6 +96,7 @@ export const Composing: Story = {
 
 export const Saving: Story = {
   args: {
+    asset: { ...assets[0], characters: ['character_a'] },
     onSave: fn<(changes: AssetChanges) => Promise<Asset>>(
       () => new Promise(() => {}),
     ),
@@ -81,6 +113,12 @@ export const Saving: Story = {
       canvas.getByRole('textbox', { name: 'ファイル名' }),
     ).toBeDisabled();
     await expect(canvas.getByRole('textbox', { name: 'タグ' })).toBeDisabled();
+    await expect(
+      canvas.getByRole('button', { name: 'タグ「旅行」で検索' }),
+    ).toBeDisabled();
+    await expect(
+      canvas.getByRole('button', { name: 'キャラクター「character_a」で検索' }),
+    ).toBeDisabled();
   },
 };
 

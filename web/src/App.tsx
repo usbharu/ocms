@@ -445,6 +445,15 @@ export function App() {
     run(() => refresh({ mode, query: query.trim() }, 1, 'all'));
   }
 
+  function openMetadataFilter(field: 'tag' | 'character', name: string) {
+    setExploration([]);
+    setSection('library');
+    setSelected(null);
+    setQuery('');
+    setMode('keyword');
+    run(() => refresh({ mode: 'keyword', query: '', [field]: name }, 1, 'all'));
+  }
+
   function changeKind(nextKind: Kind) {
     if (!isResult && total !== null) run(() => refresh(context, 1, nextKind));
     else {
@@ -566,26 +575,12 @@ export function App() {
           <TagsPage
             key={section}
             kind={section}
-            onOpen={(tag) => {
-              setExploration([]);
-              setSection('library');
-              setSelected(null);
-              setQuery('');
-              setMode('keyword');
-              run(() =>
-                refresh(
-                  {
-                    mode: 'keyword',
-                    query: '',
-                    ...(section === 'characters'
-                      ? { character: tag }
-                      : { tag }),
-                  },
-                  1,
-                  'all',
-                ),
-              );
-            }}
+            onOpen={(name) =>
+              openMetadataFilter(
+                section === 'characters' ? 'character' : 'tag',
+                name,
+              )
+            }
           />
         ) : (
           <>
@@ -734,6 +729,10 @@ export function App() {
                   onClose={closeDetail}
                   onOpen={() => openViewer(selected)}
                   onSaveMetadata={saveMetadata}
+                  onSearchTag={(tag) => openMetadataFilter('tag', tag)}
+                  onSearchCharacter={(character) =>
+                    openMetadataFilter('character', character)
+                  }
                   onCompare={compare}
                   onRecommend={openRecommendations}
                   showComparisons={!related}

@@ -79,6 +79,38 @@ async function open(page: Page) {
   ).toBeVisible();
 }
 
+for (const [label, name] of [
+  ['タグ', '風景'],
+  ['キャラクター', 'キャラクターA'],
+] as const) {
+  test(`${label} search clears the previous recommendation exploration`, async ({
+    page,
+  }) => {
+    await setup(page);
+    await open(page);
+    await page
+      .getByRole('button', { name: '関連ファイル0.png', exact: true })
+      .click();
+    await page
+      .getByRole('button', { name: `${label}「${name}」で検索` })
+      .click();
+    await expect(
+      page.getByRole('heading', { name: `${label}：${name}`, exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', { name: source.filename, exact: true })
+      .click();
+    await open(page);
+    await page.getByRole('button', { name: '戻る', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: `${label}：${name}`, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: '戻る', exact: true }),
+    ).toHaveCount(0);
+  });
+}
+
 test('ranking, keyboard selection, pagination, chained exploration and restoration', async ({
   page,
 }) => {
