@@ -428,7 +428,7 @@ CPU版は`onnxruntime`、CUDA版は`onnxruntime-gpu[cuda,cudnn]`を導入し、�
 
 - Runtime単体テスト11件：成功。メディアトークン数、出力の検証、Whisperの時刻制約・キャッシュ再利用、認証、プロンプトとモデル識別を検査した。
 - `scripts/verify-onnx-runtime.py --speech-wav ...`：成功。実モデルによる旧ベクトルとの比較、英語生成音声の認識・時刻、無音、40秒の入力で30秒境界の前後を確認した。
-- arm64 CPUイメージのビルド、`pip check`とイメージ内検査：成功。OCIレイヤー合計は圧縮時174,992,136 bytes、展開後tar合計584,110,080 bytes。モデルは含まない。この値はamd64版やGHCRの公開サイズを示すものではない。
+- arm64 CPUイメージのビルド、`pip check`とイメージ内検査：成功。OCIレイヤー合計は圧縮時174,992,800 bytes、展開後tar合計584,110,080 bytes。モデルは含まない。この値はamd64版やGHCRの公開サイズを示すものではない。
 - ONNX版Runtimeを接続した開発スタックで`scripts/media-integration.py`：AC-09〜14とACL分離の検査がすべて成功。画像・動画・音声・PDFの変換、OCR・実ASR・Chromaprint・pHash・4モダリティの実Embeddingを通した。
 - `scripts/tagging-integration.py`：成功。実WD14による画像・動画・PDFのタグ付け、永続化、ACL付き検索、重複Blobの推論再利用、手動編集の独立性と512タグ上限を確認した。
 - actionlintによるCI・Releaseワークフローの検査と`git diff --check`：成功。
