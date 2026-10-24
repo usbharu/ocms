@@ -401,3 +401,13 @@ Gitリモートは未設定のため、GitHub Actionsの実行とGHCRへの実pu
 Playwright 1.62.1の公式Ubuntu 24.04コンテナでLinux用の基準値を生成し、既存のmacOS版と全75行が一致することを確認して追加した。基準値の更新を無効にした `CI=true npm run test:ui` が53件、`npm run test:storybook` が68件成功した。コンテナ内の `npm ci`、`npm run check`、`npm run build` と、actionlintによるワークフロー検査も成功した。検査の省略やCI内での基準値の自動更新は行わない。
 
 今後のブラウザテストの失敗に備えて、`web/test-results/` を7日間保持するArtifact出力も追加した。公開済みReleaseのタグは変更していない。古いタグのReleaseを再実行しても、そのタグの修正前のコードが使われるため、修正を含むReleaseで公開する必要がある。
+
+## RuntimeのCPU・CUDAイメージ分離（2026-10-24）
+
+RuntimeのDockerfileに`RUNTIME_VARIANT=cpu|cuda`を追加した。既定はCPU版。PyTorch公式のCPU / cu130用indexから`torch`・`torchvision`・`torchcodec`を同じ版で導入し、その後の依存解決でも版が置き換わらないよう制約を付ける。FastAPIの要求と整合するようOpenTelemetry SDK・HTTP exporterを1.44.0へ揃え、ビルド中に`pip check`を実行する。
+
+通常CIとReleaseのビルドをCPU版・CUDA版に分け、キャッシュも分離した。新しいReleaseではRuntimeを`<release>-cpu`・`<release>-cuda`で公開し、通常Releaseだけ`latest-cpu`・`latest-cuda`も付ける。従来の`<release>`・`latest`はCUDA版の別名として維持する。既存の公開済みタグは変更しない。
+
+イメージ内の検査をDockerfileのビルド工程に組み込み、PyTorch関連3パッケージの版、CPU版へのNVIDIA・Triton依存の混入、TorchVisionのネイティブ演算、推論ライブラリとアプリのimport、モデルが未ロードであることを確認する。モデル取得や実推論はこの検査では行わない。現在の推論先はCPU固定のままで、CUDA版を選ぶだけではGPU推論は有効にならない。
+
+検証中：actionlintによる2ワークフローの検査、Dockerfileの`--check`、`git diff --check`は成功。CPU版のamd64ビルドを実行中。CUDA版のビルド・GPU実機での推論、新タグのGHCR公開は未検証。アプリ・API・DBの変更はなく、実サービスへのデプロイや結合試験は今回行っていない。

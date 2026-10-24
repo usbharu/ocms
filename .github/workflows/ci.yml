@@ -83,10 +83,16 @@ jobs:
         include:
           - image: ocms
             dockerfile: Dockerfile
-          - image: ocms-runtime
+            build_args: ''
+          - image: ocms-runtime-cpu
             dockerfile: runtime/Dockerfile
+            build_args: RUNTIME_VARIANT=cpu
+          - image: ocms-runtime-cuda
+            dockerfile: runtime/Dockerfile
+            build_args: RUNTIME_VARIANT=cuda
           - image: ocms-postgres
             dockerfile: infra/postgres/Dockerfile
+            build_args: ''
     steps:
       - uses: actions/checkout@v7
         with:
@@ -98,5 +104,6 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: false
+          build-args: ${{ matrix.build_args }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}

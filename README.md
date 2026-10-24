@@ -42,25 +42,40 @@ GitHub Actionsの `CI` は、ブランチへのpushとPull Requestで次を実�
 - Go：`go test -race ./...`、`go vet ./...`（Goのバージョンは `go.mod` に従う）。
 - SPA：Node.js 24で `npm ci`、`npm run check`、`npm run build`、`npm run build-storybook`、Chromiumで `npm run test:ui` と `npm run test:storybook`。レイアウトの座標検査はLinux用の基準値で実行します。任意のスクリーンショット出力（`UI_SCREENSHOTS`）は有効にしません。
 - Runtime：Python 3.12（Ubuntu 24.04標準）、NumPyとPillowで `python -m unittest discover -s runtime -p 'test_*.py'`。モデルのダウンロードは不要です。
-- Docker：次の3イメージを `linux/amd64` 向けにビルドします。通常のCIではpushしません。
+- Docker：アプリ・CPU版Runtime・CUDA版Runtime・PostgreSQLの4イメージを `linux/amd64` 向けにビルドします。Runtimeは依存整合性・CPU/CUDAの取り違え・アプリの読み込みも検査します。通常のCIではpushしません。
 
-GitHub Releaseを公開すると（`release: published`）、`Release images` がReleaseのタグのコードでGo・SPA・Runtimeの検証を再実行し、すべて成功した後に3イメージをビルドしてGHCRへpushします。ドラフト保存やGitタグのpushだけでは公開しません。プレリリースも対象です。[GitHub公式の公開手順](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)に沿って、認証には自動発行される `GITHUB_TOKEN` を使い、公開ジョブだけに `packages: write` を付与しています。追加のPATやSecret登録は不要です。
+GitHub Releaseを公開すると（`release: published`）、`Release images` がReleaseのタグのコードでGo・SPA・Runtimeの検証を再実行し、すべて成功した後に4イメージをビルドしてGHCRへpushします。Runtimeは公開前にもイメージ内で検査し、失敗した版はpushしません。ドラフト保存やGitタグのpushだけでは公開しません。プレリリースも対象です。[GitHub公式の公開手順](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images)に沿って、認証には自動発行される `GITHUB_TOKEN` を使い、公開ジョブだけに `packages: write` を付与しています。追加のPATやSecret登録は不要です。
 
 | Dockerfile | 公開先（`owner/repository` はGitHubリポジトリ名の小文字） | 内容 |
 |---|---|---|
 | `Dockerfile` | `ghcr.io/owner/repository` | SPAとGoの5サービス共通イメージ。`SERVICE` で役割を選択 |
-| `runtime/Dockerfile` | `ghcr.io/owner/repository-runtime` | Python推論Runtime。モデルは起動後に取得 |
+| `runtime/Dockerfile`（CPU） | `ghcr.io/owner/repository-runtime:v1.2.3-cpu` | CUDA依存を除いたRuntime。CPUサーバー向け |
+| `runtime/Dockerfile`（CUDA） | `ghcr.io/owner/repository-runtime:v1.2.3-cuda` | CUDA 13.0版PyTorchを含む互換イメージ |
 | `infra/postgres/Dockerfile` | `ghcr.io/owner/repository-postgres` | PGroonga・pgvector入りPostgreSQL |
 
-Releaseタグ（例：`v1.2.3`）をそのままイメージタグに使います。Dockerのタグとして有効な名前（英数字・`_` で始まり、英数字・`_`・`.`・`-` の128文字以内）を使ってください。通常のReleaseには `latest` も付け、プレリリースでは更新しません。`latest` は最後に公開処理が成功した通常Releaseを指し、過去バージョンの再実行でも更新されます。バージョンを固定する場合はReleaseタグまたはdigestを指定してください。
+アプリとPostgreSQLはReleaseタグ（例：`v1.2.3`）をそのまま使います。Runtimeは同じリポジトリに`v1.2.3-cpu`・`v1.2.3-cuda`を公開します。通常Releaseには`latest-cpu`・`latest-cuda`も付けます。既存利用者向けの`v1.2.3`・`latest`は従来どおりCUDA版の別名にします。Dockerのタグとして有効な名前（英数字・`_` で始まり、英数字・`_`・`.`・`-` の128文字以内。Runtimeは`-cuda`を含む）を使ってください。通常のReleaseには `latest` も付け、プレリリースでは更新しません。`latest` は最後に公開処理が成功した通常Releaseを指し、過去バージョンの再実行でも更新されます。バージョンを固定する場合はReleaseタグまたはdigestを指定してください。
 
 GitHubリポジトリのActionsを有効にし、組織のポリシーでもPackage作成・書き込みを許可してください。同名Packageが既に存在する場合は、そのPackageのActionsアクセス設定でリポジトリに書き込みを許可する必要があります。Packageの公開範囲はGHCRの設定に従います。匿名pullが必要な場合はPackageをPublicに設定してください。
 
 ```sh
 docker pull ghcr.io/owner/repository:v1.2.3
-docker pull ghcr.io/owner/repository-runtime:v1.2.3
+docker pull ghcr.io/owner/repository-runtime:v1.2.3-cpu
+# CUDAライブラリ同梱版を選ぶ場合
+docker pull ghcr.io/owner/repository-runtime:v1.2.3-cuda
 docker pull ghcr.io/owner/repository-postgres:v1.2.3
 ```
+
+Runtimeをローカルでビルドする場合、既定はCPU版です。CUDA版はビルド引数で選択します。
+
+```sh
+docker build --build-arg RUNTIME_VARIANT=cpu -f runtime/Dockerfile -t ocms-runtime:cpu .
+docker build --build-arg RUNTIME_VARIANT=cuda -f runtime/Dockerfile -t ocms-runtime:cuda .
+docker run --rm --entrypoint python ocms-runtime:cpu /app/check-runtime-image.py cpu
+```
+
+CPU版はPyTorch公式のCPU用indexから`torch`・`torchvision`・`torchcodec`を導入し、後続の依存解決でもCPU版が置き換わらないよう制約を付けます。CUDA版は`cu130`のindexを使います。両版ともモデルは起動後に取得するため、モデル保存領域は別途必要です。
+
+現在のEmbedding・Whisper・WD14の推論はCPU固定です。CUDA版の選択だけではGPU推論は有効になりません。GPUへの処理振り分けとGPU実機での検証は未対応です。CPUサーバーでは`-cpu`を選んでください。既に公開された`v0.1.1`のタグは変更せず、この変更を含む新しいReleaseから版を分けます。
 
 既存の `compose.yaml` はローカルビルド用です。公開イメージを使う環境では、各サービスの `image` に上記の同じReleaseタグを指定し、ローカル用の `pull_policy: never` を解除してください。DB初期化用の `scripts/init-db.sh` と `migrations/` のマウントは引き続き必要です。
 
