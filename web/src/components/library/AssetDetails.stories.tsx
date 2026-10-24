@@ -8,6 +8,7 @@ const meta = {
   component: AssetDetails,
   args: {
     onSearchTag: fn(),
+    onSearchCharacter: fn(),
     selected: assets[0],
     renditions,
     jobs,

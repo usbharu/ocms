@@ -595,6 +595,9 @@ export function App() {
                   onOpen={() => openViewer(selected)}
                   onSaveMetadata={saveMetadata}
                   onSearchTag={(tag) => openMetadataFilter('tag', tag)}
+                  onSearchCharacter={(character) =>
+                    openMetadataFilter('character', character)
+                  }
                   onCompare={compare}
                   onReprocess={reprocess}
                   onDelete={deleteAsset}

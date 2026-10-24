@@ -8,8 +8,10 @@ export function AssetMetadataEditor({
   asset,
   onSave,
   onSearchTag,
+  onSearchCharacter,
 }: {
   onSearchTag: (tag: string) => void;
+  onSearchCharacter: (character: string) => void;
   asset: Asset;
   onSave: (changes: AssetChanges) => Promise<Asset>;
 }) {
@@ -224,7 +226,16 @@ export function AssetMetadataEditor({
         <ul className="tag-chips" aria-label="登録済みキャラクター">
           {characters.map((character, index) => (
             <li className="tag-chip" key={character}>
-              <span>{character}</span>
+              <Button
+                type="button"
+                variant="link"
+                className="tag-search-button"
+                disabled={saving}
+                aria-label={`キャラクター「${character}」で検索`}
+                onClick={() => onSearchCharacter(character)}
+              >
+                {character}
+              </Button>
               <Button
                 type="button"
                 variant="ghost"

@@ -1542,87 +1542,95 @@ test('library exposes search modes directly and keeps secondary controls on dema
   }
 });
 
-for (const context of ['search', 'comparison', 'page'] as const) {
-  test(`detail tag search resets ${context} context and filters`, async ({
-    page,
-  }) => {
-    const tag = '旅行, 日本語 & + #?';
-    const assets = Array.from({ length: 49 }, (_, i) => ({
-      ...fixtures[0],
-      asset_id: `tag-${i}`,
-      filename: `タグ検索 ${i + 1}`,
-      tags: [tag],
-    }));
-    await page.route('**/api/v1/assets?**', (route) => {
-      const params = new URL(route.request().url()).searchParams;
-      const offset = Number(params.get('offset'));
-      return route.fulfill({
-        json: {
-          assets: assets.slice(offset, offset + 24),
-          total: assets.length,
-        },
+for (const [field, label] of [
+  ['tag', 'タグ'],
+  ['character', 'キャラクター'],
+] as const) {
+  for (const context of ['search', 'comparison', 'page'] as const) {
+    test(`detail ${field} search resets ${context} context and filters`, async ({
+      page,
+    }) => {
+      const tag = '旅行, 日本語 & + #?';
+      const assets = Array.from({ length: 49 }, (_, i) => ({
+        ...fixtures[0],
+        asset_id: `tag-${i}`,
+        filename: `タグ検索 ${i + 1}`,
+        tags: [tag],
+        characters: [tag],
+      }));
+      await page.route('**/api/v1/assets?**', (route) => {
+        const params = new URL(route.request().url()).searchParams;
+        const offset = Number(params.get('offset'));
+        return route.fulfill({
+          json: {
+            assets: assets.slice(offset, offset + 24),
+            total: assets.length,
+          },
+        });
       });
-    });
-    await page.route('**/api/v1/search', (route) =>
-      route.fulfill({ json: { assets } }),
-    );
-    await page.route('**/api/v1/assets/*/duplicates', (route) =>
-      route.fulfill({ json: { assets } }),
-    );
-    await page.reload();
-    if (context === 'search') {
-      await page.getByRole('searchbox').fill('以前の検索');
+      await page.route('**/api/v1/search', (route) =>
+        route.fulfill({ json: { assets } }),
+      );
+      await page.route('**/api/v1/assets/*/duplicates', (route) =>
+        route.fulfill({ json: { assets } }),
+      );
+      await page.reload();
+      if (context === 'search') {
+        await page.getByRole('searchbox').fill('以前の検索');
+        await page
+          .getByRole('combobox', { name: '検索方法' })
+          .selectOption('semantic');
+        await page.getByRole('button', { name: '検索', exact: true }).click();
+      }
+      if (context === 'comparison') {
+        await page.locator('.file').first().click();
+        await page
+          .getByRole('button', { name: '完全一致ファイル', exact: true })
+          .click();
+      }
+      await page.getByRole('button', { name: '画像', exact: true }).click();
       await page
-        .getByRole('combobox', { name: '検索方法' })
-        .selectOption('semantic');
-      await page.getByRole('button', { name: '検索', exact: true }).click();
-    }
-    if (context === 'comparison') {
-      await page.locator('.file').first().click();
-      await page
-        .getByRole('button', { name: '完全一致ファイル', exact: true })
+        .getByRole('navigation', { name: 'ページネーション' })
+        .getByRole('button', { name: '次へ' })
         .click();
-    }
-    await page.getByRole('button', { name: '画像', exact: true }).click();
-    await page
-      .getByRole('navigation', { name: 'ページネーション' })
-      .getByRole('button', { name: '次へ' })
-      .click();
-    await expect(
-      page.getByRole('button', { name: 'タグ検索 25', exact: true }),
-    ).toBeVisible();
-    await page
-      .getByRole('button', { name: 'タグ検索 25', exact: true })
-      .click();
-    const request = page.waitForRequest((r) =>
-      new URL(r.url()).searchParams.has('tag'),
-    );
-    await page.getByRole('button', { name: `タグ「${tag}」で検索` }).click();
-    const params = new URL((await request).url()).searchParams;
-    expect(Object.fromEntries(params)).toEqual({
-      tag,
-      limit: '24',
-      offset: '0',
+      await expect(
+        page.getByRole('button', { name: 'タグ検索 25', exact: true }),
+      ).toBeVisible();
+      await page
+        .getByRole('button', { name: 'タグ検索 25', exact: true })
+        .click();
+      const request = page.waitForRequest((r) =>
+        new URL(r.url()).searchParams.has(field),
+      );
+      await page
+        .getByRole('button', { name: `${label}「${tag}」で検索` })
+        .click();
+      const params = new URL((await request).url()).searchParams;
+      expect(Object.fromEntries(params)).toEqual({
+        [field]: tag,
+        limit: '24',
+        offset: '0',
+      });
+      await expect(
+        page.getByRole('heading', { name: `${label}：${tag}`, exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole('region', { name: 'ファイル詳細' }),
+      ).toHaveCount(0);
+      await expect(page.getByRole('searchbox')).toHaveValue('');
+      await expect(
+        page.getByRole('combobox', { name: '検索方法' }),
+      ).toHaveValue('keyword');
+      await expect(
+        page
+          .getByRole('group', { name: 'ファイルの種類' })
+          .getByRole('button', { name: 'すべて', exact: true }),
+      ).toHaveAttribute('aria-pressed', 'true');
+      await expect(
+        page.getByRole('navigation', { name: 'ページネーション' }),
+      ).toContainText('1–24 / 49 件');
     });
-    await expect(
-      page.getByRole('heading', { name: `タグ：${tag}`, exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole('region', { name: 'ファイル詳細' }),
-    ).toHaveCount(0);
-    await expect(page.getByRole('searchbox')).toHaveValue('');
-    await expect(page.getByRole('combobox', { name: '検索方法' })).toHaveValue(
-      'keyword',
-    );
-    await expect(
-      page
-        .getByRole('group', { name: 'ファイルの種類' })
-        .getByRole('button', { name: 'すべて', exact: true }),
-    ).toHaveAttribute('aria-pressed', 'true');
-    await expect(
-      page.getByRole('navigation', { name: 'ページネーション' }),
-    ).toContainText('1–24 / 49 件');
-  });
+  }
 }
 
 test('detail tag deletion does not search and keyboard opens tag results', async ({
@@ -1655,4 +1663,75 @@ test('detail tag deletion does not search and keyboard opens tag results', async
     page.getByRole('heading', { name: 'タグ：風景', exact: true }),
   ).toBeVisible();
   expect(requests).toHaveLength(1);
+});
+
+test('detail character deletion stays separate and long names support keyboard search', async ({
+  page,
+}) => {
+  const character = '長いキャラクター,日本語 & + #?'.repeat(4);
+  const asset = { ...fixtures[0], characters: ['削除対象', character] };
+  await page.route('**/api/v1/assets?**', (route) =>
+    route.fulfill({ json: { assets: [asset], total: 1 } }),
+  );
+  await page.route('**/api/v1/assets/image', (route) => {
+    if (route.request().method() === 'PATCH') {
+      const changes = route.request().postDataJSON();
+      expect(changes).toEqual({ characters: [character] });
+      Object.assign(asset, changes);
+    }
+    return route.fulfill({ json: asset });
+  });
+  await page.reload();
+  await page.locator('.file').first().click();
+  const requests: string[] = [];
+  page.on('request', (r) => {
+    if (new URL(r.url()).searchParams.has('character')) requests.push(r.url());
+  });
+  await page
+    .getByRole('button', { name: 'キャラクター「削除対象」を削除' })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'キャラクター「削除対象」で検索' }),
+  ).toHaveCount(0);
+  await expect(page.getByRole('list', { name: '登録済みタグ' })).toContainText(
+    '旅行',
+  );
+  expect(requests).toHaveLength(0);
+  const button = page.getByRole('button', {
+    name: `キャラクター「${character}」で検索`,
+  });
+  await button.focus();
+  if (process.env.UI_SCREENSHOTS)
+    await page.screenshot({ path: '../docs/library-character-search.png' });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await button.scrollIntoViewIfNeeded();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(320);
+  expect(
+    await page
+      .locator('.metadata-editor')
+      .evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBe(true);
+  if (process.env.UI_SCREENSHOTS)
+    await page.screenshot({
+      path: '../docs/library-character-search-mobile.png',
+    });
+  await button.press('Space');
+  await expect(
+    page.getByRole('heading', {
+      name: `キャラクター：${character}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole('region', { name: 'ファイル詳細' })).toHaveCount(
+    0,
+  );
+  expect(requests).toHaveLength(1);
+  const params = new URL(requests[0]).searchParams;
+  expect(Object.fromEntries(params)).toEqual({
+    character,
+    limit: '24',
+    offset: '0',
+  });
 });
