@@ -187,7 +187,7 @@ Button・Input・Label・Native Select・Progressをshadcn/uiベースのロー�
 - 動画pHashは5秒間隔・最大12フレームの初期実装。動画Embeddingは全体を30秒単位で処理する。動画の順序/時間を使う知覚類似の二次判定は残る。
 - プレビュー・変換は標準プロファイルのみ。画像WebP/PNG、動画H.264/AAC MP4、音声Opus/Ogg、PDFページPNGを実装する。手動画質切替、AVIF/JPEG等の追加プロファイルは未実装。
 - CPU推論は動画1区間でも数十秒かかる場合がある。大規模処理の速度や検索品質を保証する評価は行っていない。モデルのリビジョン・次元・プレフィックスは統一している。
-- Workerの作業平文はtmpfsで処理後に削除し、鍵・S3資格情報はTransferに限定する。Runtimeのメディア一時ファイルもtmpfsで処理後に削除する。
+- Workerの作業平文はtmpfsで処理後に削除し、鍵・S3資格情報はTransferに限定する。ONNX版Runtimeは画像・音声をメモリ上で扱い、作業メディアをファイルへ保存しない。
 - アプリログとOTLPの非出力検査にはWorker/Runtimeを含む。依存サービスやDocker自身の診断・設定出力、運用環境での収集・保持・アクセス制御は別途評価が必要。
 
 ## 参照した一次資料
@@ -195,7 +195,7 @@ Button・Input・Label・Native Select・Progressをshadcn/uiベースのロー�
 - [EmbeddingGemma 2のマルチモーダルAPI](https://ai.google.dev/gemma/docs/embeddinggemma/multimodal-embeddinggemma-with-sentence-transformers)
 - [PGroonga公式Dockerイメージ](https://github.com/pgroonga/docker)
 - [pgvector](https://github.com/pgvector/pgvector)
-- [faster-whisperとPyAV 19の非互換](https://github.com/SYSTRAN/faster-whisper/issues/1589)：PyAV 18.1.0へ固定し、ASRには16kHz波形を渡す。
+- [faster-whisperとPyAV 19の非互換](https://github.com/SYSTRAN/faster-whisper/issues/1589)：旧バックエンドではPyAV 18.1.0へ固定した。ONNX移行後は両依存を削除済み。ASRへの16kHz波形入力は維持する。
 - [Hydra公式Quickstart](https://www.ory.com/docs/oel/hydra/quickstart)
 - [OpenTelemetry Go Exporters](https://opentelemetry.io/docs/languages/go/exporters/)
 - [Grafana Docker OpenTelemetry LGTM](https://grafana.com/docs/opentelemetry/docker-lgtm/)
@@ -393,3 +393,46 @@ RuntimeはWD14のcategory 4を閾値0.85で抽出し、一般タグとは別に�
 - 3種類のDockerfileのネイティブ（arm64）ビルド：成功（既存キャッシュを使用）。Mac上のamd64ビルドでは `go mod download` 中にGoランタイムが異常終了した。Runtime・PostgreSQLのamd64検証ビルドは中止し、GitHubのamd64ランナー上での実行は未検証。
 
 Gitリモートは未設定のため、GitHub Actionsの実行とGHCRへの実push・pullは未検証。リモートへの反映後、ActionsとPackage書き込み権限を有効にしてReleaseを公開する必要がある。実DB・S3・モデルを使う結合試験と仕様§14のAC全項目はCIの対象外で、今回も再実行していない。
+
+### GitHub上で判明したCIの修正（2026-10-23）
+
+初回のGitHub ActionsではGo・Runtime単体テストと3種類のamd64イメージビルドが成功した。SPAはレイアウト座標の比較基準 `library-wireframe-linux.txt` が未登録で失敗し、Releaseの公開ジョブも実行されなかった。`UI_SCREENSHOTS` を指定しなくても座標比較は実行されるため、macOSでの成功だけではLinux CIを確認できていなかった。
+
+Playwright 1.62.1の公式Ubuntu 24.04コンテナでLinux用の基準値を生成し、既存のmacOS版と全75行が一致することを確認して追加した。基準値の更新を無効にした `CI=true npm run test:ui` が53件、`npm run test:storybook` が68件成功した。コンテナ内の `npm ci`、`npm run check`、`npm run build` と、actionlintによるワークフロー検査も成功した。検査の省略やCI内での基準値の自動更新は行わない。
+
+今後のブラウザテストの失敗に備えて、`web/test-results/` を7日間保持するArtifact出力も追加した。公開済みReleaseのタグは変更していない。古いタグのReleaseを再実行しても、そのタグの修正前のコードが使われるため、修正を含むReleaseで公開する必要がある。
+
+## RuntimeのCPU・CUDAイメージ分離（2026-10-24）
+
+RuntimeのDockerfileに`RUNTIME_VARIANT=cpu|cuda`を追加した。既定はCPU版。PyTorch公式のCPU / cu130用indexから`torch`・`torchvision`・`torchcodec`を同じ版で導入し、その後の依存解決でも版が置き換わらないよう制約を付ける。FastAPIの要求と整合するようOpenTelemetry SDK・HTTP exporterを1.44.0へ揃え、ビルド中に`pip check`を実行する。
+
+通常CIとReleaseのビルドをCPU版・CUDA版に分け、キャッシュも分離した。新しいReleaseではRuntimeを`<release>-cpu`・`<release>-cuda`で公開し、通常Releaseだけ`latest-cpu`・`latest-cuda`も付ける。従来の`<release>`・`latest`はCUDA版の別名として維持する。既存の公開済みタグは変更しない。
+
+イメージ内の検査をDockerfileのビルド工程に組み込み、PyTorch関連3パッケージの版、CPU版へのNVIDIA・Triton依存の混入、TorchVisionのネイティブ演算、推論ライブラリとアプリのimport、モデルが未ロードであることを確認する。モデル取得や実推論はこの検査では行わない。現在の推論先はCPU固定のままで、CUDA版を選ぶだけではGPU推論は有効にならない。
+
+検証結果：actionlintによる2ワークフローの検査、Dockerfileの`--check`、通常Release / プレリリースのタグ重複検査、`git diff --check`は成功。[GitHub ActionsのCI](https://github.com/usbharu/ocms/actions/runs/40055545103)では全7ジョブが成功し、CPU版・CUDA版のネイティブamd64ビルド、両版の`pip check`・イメージ内検査、既存のGo・SPA・Runtime単体テストを確認した。モデルは取得していない。
+
+ローカルColimaのamd64エミュレーションではCPU版の依存導入に時間がかかったため中断し、CUDA版はDocker HubのDNSエラーで失敗した。上記GitHubのネイティブ環境で両版を検証した。GPU実機での推論と、新タグのGHCR公開は未検証。実サービスへのデプロイや結合試験は今回行っていない。
+
+## RuntimeをONNXへ統一（2026-10-24）
+
+EmbeddingGemma 2・Whisper・WD14をONNX Runtime 1.23.2へ統一した。PyTorch・TorchVision・TorchCodec・SentenceTransformers・CTranslate2・faster-whisper・PyAVを実行時依存から削除した。画像・音声の前処理はTransformersのNumPy/Pillow実装を使い、動画はWorkerが抽出したフレームを処理する。Runtimeで不要になったFFmpegも削除した。仕様§3の責務分離とHTTP契約は維持する。
+
+Embeddingのfp32 ONNXモデルは`onnx-community/embeddinggemma-2-ONNX`の`daa72c51243991dfcaf9f9137d2c573d8f7790c0`へ固定した。元の重み・プロンプト・768次元・正規化を維持する。旧バックエンドで生成した人工入力10件の参照ベクトルを保存し、`scripts/verify-onnx-runtime.py`で4モダリティと検索順位を比較した。コサイン類似度の最小値は0.99999822、成分差の最大値は0.00023725だった。モデルID・リビジョンを維持するため、この移行による再索引は不要。モデルの取得元コミットは`/healthz`の`artifact_revision`で別に示す。
+
+Whisperは`onnx-community/whisper-tiny`の`ff4177021cc41f7db950912b73ea4fdf7d01d8e7`へ固定した。言語判定、beam幅3、タイムスタンプの単調性・ペア制約、30秒単位の処理と末尾の引き継ぎを実装した。デジタル無音は認識を実行しない。`ASR_MODEL=tiny`と`INFERENCE_DTYPE=float32`のみ対応し、他の指定は起動時に拒否する。従来のbfloat16や任意のASRモデル指定はそのまま移行できない。
+
+CPU版は`onnxruntime`、CUDA版は`onnxruntime-gpu[cuda,cudnn]`を導入し、両者を混在させない。ビルド中に`pip check`、不要な推論依存の混入検査、モデル取得を伴わないONNXのネイティブ演算とアプリimportを実行する。推論先は引き続きCPU固定。CUDAライブラリ同梱版を選んでもGPU推論には切り替わらない。
+
+ローカルの検証結果：
+
+- Runtime単体テスト11件：成功。メディアトークン数、出力の検証、Whisperの時刻制約・キャッシュ再利用、認証、プロンプトとモデル識別を検査した。
+- `scripts/verify-onnx-runtime.py --speech-wav ...`：成功。実モデルによる旧ベクトルとの比較、英語生成音声の認識・時刻、無音、40秒の入力で30秒境界の前後を確認した。
+- arm64 CPUイメージのビルド、`pip check`とイメージ内検査：成功。OCIレイヤー合計は圧縮時174,992,800 bytes、展開後tar合計584,110,080 bytes。モデルは含まない。この値はamd64版やGHCRの公開サイズを示すものではない。
+- ONNX版Runtimeを接続した開発スタックで`scripts/media-integration.py`：AC-09〜14とACL分離の検査がすべて成功。画像・動画・音声・PDFの変換、OCR・実ASR・Chromaprint・pHash・4モダリティの実Embeddingを通した。
+- `scripts/tagging-integration.py`：成功。実WD14による画像・動画・PDFのタグ付け、永続化、ACL付き検索、重複Blobの推論再利用、手動編集の独立性と512タグ上限を確認した。
+- actionlintによるCI・Releaseワークフローの検査と`git diff --check`：成功。
+
+2026-10-25、コミット`cd61d7d075b4c1679d33a69e8bcc380ce8ed997d`を`codex/onnx-runtime`へpushし、[GitHub ActionsのCI](https://github.com/usbharu/ocms/actions/runs/40111490177)の全7ジョブが成功した。Goのraceテスト・vet、SPAとStorybookの検査・ビルド・ブラウザテスト、Runtime単体テスト、4種類のamd64イメージビルドを確認した。RuntimeのCPU版・CUDA版とも`pip check`と、モデル取得を伴わないONNXのネイティブ演算・アプリimportの検査が成功した。GPU実機での推論はこのCIの対象外。
+
+実モデルの検証は英語の生成資料が中心で、日本語・多言語の精度評価やGPU実機の検証は行っていない。モデルのfp32重みには数GBのキャッシュ領域が必要で、小さいイメージだけで低メモリ環境の動作を保証するものではない。公開済みRelease・本番サービスは変更していない。ローカルの検証サービスはONNX版Runtimeで起動したまま維持する。
