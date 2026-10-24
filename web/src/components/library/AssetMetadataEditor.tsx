@@ -7,7 +7,9 @@ import { Label } from '../ui/label';
 export function AssetMetadataEditor({
   asset,
   onSave,
+  onSearchTag,
 }: {
+  onSearchTag: (tag: string) => void;
   asset: Asset;
   onSave: (changes: AssetChanges) => Promise<Asset>;
 }) {
@@ -150,7 +152,16 @@ export function AssetMetadataEditor({
         <ul className="tag-chips" aria-label="登録済みタグ">
           {tags.map((tag, index) => (
             <li className="tag-chip" key={tag}>
-              <span>{tag}</span>
+              <Button
+                type="button"
+                variant="link"
+                className="tag-search-button"
+                disabled={saving}
+                aria-label={`タグ「${tag}」で検索`}
+                onClick={() => onSearchTag(tag)}
+              >
+                {tag}
+              </Button>
               <Button
                 type="button"
                 variant="ghost"

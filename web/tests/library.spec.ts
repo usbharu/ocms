@@ -1541,3 +1541,118 @@ test('library exposes search modes directly and keeps secondary controls on dema
     }
   }
 });
+
+for (const context of ['search', 'comparison', 'page'] as const) {
+  test(`detail tag search resets ${context} context and filters`, async ({
+    page,
+  }) => {
+    const tag = '旅行, 日本語 & + #?';
+    const assets = Array.from({ length: 49 }, (_, i) => ({
+      ...fixtures[0],
+      asset_id: `tag-${i}`,
+      filename: `タグ検索 ${i + 1}`,
+      tags: [tag],
+    }));
+    await page.route('**/api/v1/assets?**', (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      const offset = Number(params.get('offset'));
+      return route.fulfill({
+        json: {
+          assets: assets.slice(offset, offset + 24),
+          total: assets.length,
+        },
+      });
+    });
+    await page.route('**/api/v1/search', (route) =>
+      route.fulfill({ json: { assets } }),
+    );
+    await page.route('**/api/v1/assets/*/duplicates', (route) =>
+      route.fulfill({ json: { assets } }),
+    );
+    await page.reload();
+    if (context === 'search') {
+      await page.getByRole('searchbox').fill('以前の検索');
+      await page
+        .getByRole('combobox', { name: '検索方法' })
+        .selectOption('semantic');
+      await page.getByRole('button', { name: '検索', exact: true }).click();
+    }
+    if (context === 'comparison') {
+      await page.locator('.file').first().click();
+      await page
+        .getByRole('button', { name: '完全一致ファイル', exact: true })
+        .click();
+    }
+    await page.getByRole('button', { name: '画像', exact: true }).click();
+    await page
+      .getByRole('navigation', { name: 'ページネーション' })
+      .getByRole('button', { name: '次へ' })
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'タグ検索 25', exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', { name: 'タグ検索 25', exact: true })
+      .click();
+    const request = page.waitForRequest((r) =>
+      new URL(r.url()).searchParams.has('tag'),
+    );
+    await page.getByRole('button', { name: `タグ「${tag}」で検索` }).click();
+    const params = new URL((await request).url()).searchParams;
+    expect(Object.fromEntries(params)).toEqual({
+      tag,
+      limit: '24',
+      offset: '0',
+    });
+    await expect(
+      page.getByRole('heading', { name: `タグ：${tag}`, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'ファイル詳細' }),
+    ).toHaveCount(0);
+    await expect(page.getByRole('searchbox')).toHaveValue('');
+    await expect(page.getByRole('combobox', { name: '検索方法' })).toHaveValue(
+      'keyword',
+    );
+    await expect(
+      page
+        .getByRole('group', { name: 'ファイルの種類' })
+        .getByRole('button', { name: 'すべて', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await expect(
+      page.getByRole('navigation', { name: 'ページネーション' }),
+    ).toContainText('1–24 / 49 件');
+  });
+}
+
+test('detail tag deletion does not search and keyboard opens tag results', async ({
+  page,
+}) => {
+  await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).searchParams.has('tag'))
+      requests.push(request.url());
+  });
+  await page.getByRole('button', { name: 'タグ「旅行」を削除' }).click();
+  await expect(
+    page.getByRole('button', { name: 'タグ「旅行」で検索' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('region', { name: 'ファイル詳細' }),
+  ).toBeVisible();
+  expect(requests).toHaveLength(0);
+  const button = page.getByRole('button', { name: 'タグ「風景」で検索' });
+  await button.focus();
+  if (process.env.UI_SCREENSHOTS) {
+    await page.screenshot({ path: '../docs/library-tag-search.png' });
+    await page.setViewportSize({ width: 320, height: 1000 });
+    await button.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: '../docs/library-tag-search-mobile.png' });
+  }
+  await button.press('Enter');
+  await expect(
+    page.getByRole('heading', { name: 'タグ：風景', exact: true }),
+  ).toBeVisible();
+  expect(requests).toHaveLength(1);
+});

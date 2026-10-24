@@ -7,6 +7,7 @@ const meta = {
   title: 'Library/AssetDetails',
   component: AssetDetails,
   args: {
+    onSearchTag: fn(),
     selected: assets[0],
     renditions,
     jobs,
@@ -24,6 +25,10 @@ type Story = StoryObj<typeof meta>;
 export const Image: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole('button', { name: 'タグ「旅行」で検索' }),
+    );
+    await expect(args.onSearchTag).toHaveBeenCalledWith('旅行');
     const tags = canvas.getByRole('textbox', { name: 'タグ' });
     await userEvent.type(tags, '  新しいタグ  ');
     await userEvent.click(canvas.getByRole('button', { name: '追加' }));

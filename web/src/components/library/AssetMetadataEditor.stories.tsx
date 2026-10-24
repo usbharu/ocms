@@ -8,6 +8,7 @@ const meta = {
   title: 'Library/AssetMetadataEditor',
   component: AssetMetadataEditor,
   args: {
+    onSearchTag: fn(),
     asset: assets[0],
     onSave: fn<(changes: AssetChanges) => Promise<Asset>>(async (changes) => ({
       ...assets[0],
@@ -17,6 +18,19 @@ const meta = {
 } satisfies Meta<typeof AssetMetadataEditor>;
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+export const SearchTag: Story = {
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    const tag = canvas.getByRole('button', { name: 'タグ「旅行」で検索' });
+    await userEvent.click(tag);
+    await expect(args.onSearchTag).toHaveBeenCalledWith('旅行');
+    await userEvent.keyboard('{Enter}');
+    await userEvent.keyboard(' ');
+    await expect(args.onSearchTag).toHaveBeenCalledTimes(3);
+    await expect(args.onSave).not.toHaveBeenCalled();
+  },
+};
 
 export const Edit: Story = {
   play: async ({ canvasElement, args }) => {
@@ -81,6 +95,9 @@ export const Saving: Story = {
       canvas.getByRole('textbox', { name: 'ファイル名' }),
     ).toBeDisabled();
     await expect(canvas.getByRole('textbox', { name: 'タグ' })).toBeDisabled();
+    await expect(
+      canvas.getByRole('button', { name: 'タグ「旅行」で検索' }),
+    ).toBeDisabled();
   },
 };
 

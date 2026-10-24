@@ -22,10 +22,12 @@ export function AssetDetails({
   onClose,
   onOpen,
   onSaveMetadata,
+  onSearchTag,
   onCompare,
   onReprocess,
   onDelete,
 }: {
+  onSearchTag: (tag: string) => void;
   selected: Asset;
   renditions: Rendition[];
   jobs: Job[];
@@ -151,6 +153,7 @@ export function AssetDetails({
         key={selected.asset_id}
         asset={selected}
         onSave={onSaveMetadata}
+        onSearchTag={onSearchTag}
       />
       <details className="detail-section">
         <summary>処理状況</summary>
