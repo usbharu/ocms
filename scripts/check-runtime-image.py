@@ -1,31 +1,33 @@
-"""Check installed inference dependencies without downloading models (inside the image)."""
+"""Check native ONNX inference and app imports without downloading model weights."""
+import base64
 import importlib.metadata
 import sys
 
-import torch
-import torchvision
-import torchcodec
-from sentence_transformers import SentenceTransformer
-from faster_whisper import WhisperModel
-import onnxruntime
-
+import numpy as np
+import onnxruntime as ort
 
 variant = sys.argv[1]
 assert variant in ('cpu', 'cuda'), 'expected cpu or cuda'
-expected_build = '+cpu' if variant == 'cpu' else '+cu130'
-for package in ('torch', 'torchvision', 'torchcodec'):
-    assert importlib.metadata.version(package).endswith(expected_build), package
+packages = {d.metadata['Name'].lower().replace('_', '-'): d.version
+            for d in importlib.metadata.distributions()}
+expected = 'onnxruntime' if variant == 'cpu' else 'onnxruntime-gpu'
+assert packages.get(expected) == '1.23.2', 'unexpected ONNX Runtime version'
+assert ('onnxruntime-gpu' if variant == 'cpu' else 'onnxruntime') not in packages
+for name in ('torch', 'torchvision', 'torchcodec', 'sentence-transformers',
+             'faster-whisper', 'ctranslate2', 'triton', 'av'):
+    assert name not in packages, f'unexpected inference dependency: {name}'
 if variant == 'cpu':
-    assert torch.version.cuda is None, 'CPU image includes CUDA-enabled torch'
-    packages = [d.metadata['Name'].lower().replace('_', '-') for d in importlib.metadata.distributions()]
-    assert not any(p.startswith('nvidia-') or p == 'triton' for p in packages), 'GPU dependencies in CPU image'
+    assert not any(name.startswith('nvidia-') for name in packages), 'GPU dependencies in CPU image'
 else:
-    assert torch.version.cuda == '13.0', 'unexpected CUDA build'
+    assert 'CUDAExecutionProvider' in ort.get_available_providers()
 
-# Exercise a compiled torchvision operation; import alone misses binary mismatches.
-assert torchvision.ops.nms(torch.tensor([[0., 0., 1., 1.]]), torch.tensor([1.]), 0.5).tolist() == [0]
+# Tiny Add graph (IR 10, opset 13) exercises the native library, not only imports.
+graph = base64.b64decode('CAo6UwoQCgF4CgNvbmUSAXkiA0FkZBIMbmF0aXZlLXNtb2tlKg8IARABIgQAAIA/QgNvbmVaDwoBeBIKCggIARIECgIIAWIPCgF5EgoKCAgBEgQKAggBQgQKABAN')
+session = ort.InferenceSession(graph, providers=['CPUExecutionProvider'])
+assert session.run(None, {'x': np.asarray([1], dtype=np.float32)})[0].tolist() == [2.0]
 sys.path.insert(0, '/app')
 import server
 assert server.health()['status'] == 'ok'
+assert server.health()['inference_backend'] == 'onnxruntime'
 assert server.model is None and server.whisper is None
-print(f'Runtime {variant}: dependencies, native operation and app import passed; no models downloaded')
+print(f'Runtime {variant}: single ONNX engine, native operation and app import passed; no models downloaded')

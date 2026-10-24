@@ -31,17 +31,13 @@ def prepare_image(image, size):
 
 class Tagger:
     def __init__(self, threads):
-        import onnxruntime as ort
         from huggingface_hub import hf_hub_download
-        options = ort.SessionOptions()
-        options.intra_op_num_threads = threads
-        options.inter_op_num_threads = 1
-        options.log_severity_level = 4
+        from ort_support import session
         path = hf_hub_download(MODEL_ID, 'model.onnx', revision=REVISION)
         labels = hf_hub_download(MODEL_ID, 'selected_tags.csv', revision=REVISION)
         with open(labels, newline='') as file:
             self.labels = list(csv.DictReader(file))
-        self.session = ort.InferenceSession(path, sess_options=options, providers=['CPUExecutionProvider'])
+        self.session = session(path, threads)
 
     def predict(self, image):
         input = self.session.get_inputs()[0]

@@ -8,13 +8,13 @@ import io
 import logging
 import os
 import secrets
-import tempfile
 import threading
-from contextlib import contextmanager
-from pathlib import Path
+from contextlib import ExitStack
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+from embedding_onnx import EmbeddingModel, MODEL_ID, REVISION, ARTIFACT_REVISION
+from whisper_onnx import WhisperModel
 
 # Keep telemetry under our allowlist: native validation/exception logs can contain input.
 app = FastAPI(telemetry={'tracing': False, 'metrics': False, 'logs': False,
@@ -24,14 +24,14 @@ instrument(app)
 lock = threading.Lock()
 model = None
 whisper = None
-MODEL_ID = 'google/embeddinggemma-2'
-REVISION = '914f7f89142e33e77833254d9c9b90c3cef7303b'
 INFERENCE_DTYPE = os.environ.get('INFERENCE_DTYPE', 'float32')
-if INFERENCE_DTYPE not in ['float32', 'bfloat16']:
-    raise ValueError('Invalid INFERENCE_DTYPE')
+if INFERENCE_DTYPE != 'float32':
+    raise ValueError('ONNX Runtime requires INFERENCE_DTYPE=float32')
 INFERENCE_THREADS = int(os.environ.get('INFERENCE_THREADS', '4'))
 if not 1 <= INFERENCE_THREADS <= 32:
     raise ValueError('Invalid INFERENCE_THREADS')
+if os.environ.get('ASR_MODEL', 'tiny') != 'tiny':
+    raise ValueError('ONNX ASR currently requires ASR_MODEL=tiny')
 
 
 # glibc otherwise retains large CPU inference allocations across differently sized pages.
@@ -55,18 +55,17 @@ class Input(BaseModel):
     query: bool = False
 
 
-@contextmanager
-def media_file(encoded, suffix):
-    data = base64.b64decode(encoded, validate=True)
-    with tempfile.TemporaryDirectory(prefix='infer-') as directory:
-        path = Path(directory) / ('input' + suffix)
-        path.write_bytes(data)
-        yield str(path)
+def decode_image(encoded):
+    from PIL import Image
+    with Image.open(io.BytesIO(base64.b64decode(encoded, validate=True))) as image:
+        return image.convert('RGB')
 
 
 @app.get('/healthz')
 def health():
-    return {'status': 'ok', 'model_id': MODEL_ID, 'revision': REVISION, 'loaded': model is not None, 'inference_dtype': INFERENCE_DTYPE, 'inference_threads': INFERENCE_THREADS}
+    return {'status': 'ok', 'model_id': MODEL_ID, 'revision': REVISION, 'loaded': model is not None,
+            'inference_dtype': INFERENCE_DTYPE, 'inference_threads': INFERENCE_THREADS,
+            'inference_backend': 'onnxruntime', 'artifact_revision': ARTIFACT_REVISION}
 
 
 @app.post('/encode')
@@ -74,31 +73,28 @@ def encode(item: Input, x_service_token: str | None = Header(default=None)):
     authorize(x_service_token)
     global model
     try:
-        with lock:
-            import torch
-            from sentence_transformers import SentenceTransformer
-            from PIL import Image
+        with lock, ExitStack() as resources:
             import soundfile
-            if model is None:
-                torch.set_num_threads(INFERENCE_THREADS)
-                model = SentenceTransformer(MODEL_ID, revision=REVISION, device='cpu',
-                    model_kwargs={'dtype': getattr(torch, INFERENCE_DTYPE)}, trust_remote_code=False)
-                model.max_seq_length = 8192
+            images = []
             if item.kind == 'text':
                 value = ('task: search result | query: ' if item.query else 'title: none | text: ') + item.text
             elif item.kind == 'image':
-                value = {'image': Image.open(io.BytesIO(base64.b64decode(item.data, validate=True))).convert('RGB')}
+                images = [resources.enter_context(decode_image(item.data))]
+                value = images
             elif item.kind == 'video':
-                value = {'video': [Image.open(io.BytesIO(base64.b64decode(frame, validate=True))).convert('RGB') for frame in item.frames]}
+                images = [resources.enter_context(decode_image(frame)) for frame in item.frames]
+                value = images
             elif item.kind == 'audio':
                 samples, rate = soundfile.read(io.BytesIO(base64.b64decode(item.data, validate=True)), dtype='float32')
                 if rate != 16000:
                     raise ValueError('audio must be 16 kHz')
-                value = {'audio': samples}
+                value = samples
             else:
                 raise HTTPException(400, 'INVALID_MODALITY')
             try:
-                vector = model.encode(value, normalize_embeddings=True, show_progress_bar=False).tolist()
+                if model is None:
+                    model = EmbeddingModel(INFERENCE_THREADS)
+                vector = model.encode(item.kind, value)
             finally:
                 release_memory()
             if len(vector) != 768 or not all(__import__('math').isfinite(v) for v in vector):
@@ -116,18 +112,17 @@ def transcribe(item: Input, x_service_token: str | None = Header(default=None)):
     authorize(x_service_token)
     global whisper
     try:
-        with lock, media_file(item.data, '.wav') as path:
-            from faster_whisper import WhisperModel
+        with lock:
             if whisper is None:
-                whisper = WhisperModel(os.environ.get('ASR_MODEL', 'tiny'), device='cpu', compute_type='int8',
-                    cpu_threads=INFERENCE_THREADS, num_workers=1, download_root='/models/whisper')
+                whisper = WhisperModel(INFERENCE_THREADS)
             import soundfile
-            samples, rate = soundfile.read(path, dtype='float32')
+            samples, rate = soundfile.read(io.BytesIO(base64.b64decode(item.data, validate=True)), dtype='float32')
             if rate != 16000:
                 raise ValueError('audio must be 16 kHz')
-            segments, _ = whisper.transcribe(samples, beam_size=3, condition_on_previous_text=False, vad_filter=False)
-            return {'passages': [{'kind': 'transcript', 'ordinal': i, 'start_ms': round(s.start * 1000),
-                'end_ms': round(s.end * 1000), 'content': s.text.strip()} for i, s in enumerate(segments) if s.text.strip()]}
+            try:
+                return {'passages': whisper.transcribe(samples)}
+            finally:
+                release_memory()
     except Exception as error:
         logging.warning('transcription_failed exception_type=%s', type(error).__name__)
         raise HTTPException(503, 'TRANSCRIPTION_FAILED') from None

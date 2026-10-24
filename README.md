@@ -50,7 +50,7 @@ GitHub Releaseを公開すると（`release: published`）、`Release images` �
 |---|---|---|
 | `Dockerfile` | `ghcr.io/owner/repository` | SPAとGoの5サービス共通イメージ。`SERVICE` で役割を選択 |
 | `runtime/Dockerfile`（CPU） | `ghcr.io/owner/repository-runtime:v1.2.3-cpu` | CUDA依存を除いたRuntime。CPUサーバー向け |
-| `runtime/Dockerfile`（CUDA） | `ghcr.io/owner/repository-runtime:v1.2.3-cuda` | CUDA 13.0版PyTorchを含む互換イメージ |
+| `runtime/Dockerfile`（CUDA） | `ghcr.io/owner/repository-runtime:v1.2.3-cuda` | CUDA 12・cuDNN 9版ONNX Runtimeを含む互換イメージ |
 | `infra/postgres/Dockerfile` | `ghcr.io/owner/repository-postgres` | PGroonga・pgvector入りPostgreSQL |
 
 アプリとPostgreSQLはReleaseタグ（例：`v1.2.3`）をそのまま使います。Runtimeは同じリポジトリに`v1.2.3-cpu`・`v1.2.3-cuda`を公開します。通常Releaseには`latest-cpu`・`latest-cuda`も付けます。既存利用者向けの`v1.2.3`・`latest`は従来どおりCUDA版の別名にします。Dockerのタグとして有効な名前（英数字・`_` で始まり、英数字・`_`・`.`・`-` の128文字以内。Runtimeは`-cuda`を含む）を使ってください。通常のReleaseには `latest` も付け、プレリリースでは更新しません。`latest` は最後に公開処理が成功した通常Releaseを指し、過去バージョンの再実行でも更新されます。バージョンを固定する場合はReleaseタグまたはdigestを指定してください。
@@ -73,7 +73,7 @@ docker build --build-arg RUNTIME_VARIANT=cuda -f runtime/Dockerfile -t ocms-runt
 docker run --rm --entrypoint python ocms-runtime:cpu /app/check-runtime-image.py cpu
 ```
 
-CPU版はPyTorch公式のCPU用indexから`torch`・`torchvision`・`torchcodec`を導入し、後続の依存解決でもCPU版が置き換わらないよう制約を付けます。CUDA版は`cu130`のindexを使います。両版ともモデルは起動後に取得するため、モデル保存領域は別途必要です。
+推論エンジンはEmbedding・Whisper・WD14ともONNX Runtime 1.23.2です。CPU版は`onnxruntime`、CUDA版は`onnxruntime-gpu[cuda,cudnn]`を導入します。PyTorch・CTranslate2・SentenceTransformers・PyAVは含めません。画像・音声の前処理にはTransformersのNumPy/Pillow実装を使い、FFmpegはWorkerだけに置きます。モデルは初回の推論時に取得するため、モデル保存領域は別途必要です。
 
 現在のEmbedding・Whisper・WD14の推論はCPU固定です。CUDA版の選択だけではGPU推論は有効になりません。GPUへの処理振り分けとGPU実機での検証は未対応です。CPUサーバーでは`-cpu`を選んでください。既に公開された`v0.1.1`のタグは変更せず、この変更を含む新しいReleaseから版を分けます。
 
@@ -82,6 +82,32 @@ CPU版はPyTorch公式のCPU用indexから`torch`・`torchvision`・`torchcodec`
 ブラウザテストの失敗時は、生成データによる `web/test-results/` をArtifactとして7日間保存します。レイアウトの基準値は `web/tests/library.spec.ts-snapshots/` のOS別ファイルで管理し、更新は対象OSで意図した変更を確認したうえで行います。CIでは自動更新しません。
 
 実DB・S3・モデルを使う結合試験、障害復旧、OIDC・OTLP検証はこのCIの対象外です。仕様§14の受け入れ基準すべてを保証するものではなく、必要な検証は以下の手順で別途実行します。
+
+### ONNX Runtimeを単独で検証する
+
+単体テストはモデルを取得しません。Python 3.12以降で実行します。
+
+```sh
+python3 -m venv .cache/venv-runtime
+.cache/venv-runtime/bin/pip install -r runtime/requirements.txt onnxruntime==1.23.2
+.cache/venv-runtime/bin/python -m unittest discover -s runtime -p 'test_*.py'
+```
+
+実モデルの互換性検証はモデルをダウンロードします。参照ベクトルは旧PyTorch版で生成した人工画像・波形・テキストだけを含みます。
+
+```sh
+HF_HOME="$PWD/.cache/onnx-hf" PYTHONPATH=runtime .cache/venv-runtime/bin/python scripts/verify-onnx-runtime.py
+```
+
+音声認識の回帰検証には、次の生成音声を使います。認識した本文は出力せず、期待語の一致・時刻の範囲・30秒境界・無音を検査します。
+
+```sh
+docker compose exec -T worker espeak-ng -v en-us -w /tmp/onnx-speech.wav \
+  'The quick brown fox jumps over the lazy dog. This is a test of speech recognition.'
+docker compose exec -T worker ffmpeg -v error -y -i /tmp/onnx-speech.wav -ar 16000 -ac 1 /tmp/onnx-speech16.wav
+docker compose exec -T worker cat /tmp/onnx-speech16.wav > .cache/onnx-speech.wav
+HF_HOME="$PWD/.cache/onnx-hf" PYTHONPATH=runtime .cache/venv-runtime/bin/python scripts/verify-onnx-runtime.py --speech-wav .cache/onnx-speech.wav
+```
 
 ## 検証
 
@@ -256,7 +282,19 @@ docker compose up -d --wait
 | 音声 | Opus/Ogg、Chromaprint、60秒単位のASRとネイティブ音声Embedding |
 | PDF | 全ページのPNGプレビュー、テキストレイヤー抽出／文字のないページのOCR、ページpHash・Embedding |
 
-WorkerはFFprobe / FFmpeg、Poppler、Tesseract（`eng+jpn`）、Chromaprintを使います。ASRはfaster-whisperの多言語`tiny`モデルをCPU/int8で実行します。意味検索は `google/embeddinggemma-2` のリビジョン `914f7f89142e33e77833254d9c9b90c3cef7303b`、768次元です。CPU推論の既定値はfloat32・4スレッドで、`INFERENCE_DTYPE`（float32 / bfloat16）と `INFERENCE_THREADS`（1〜32）で指定します。glibcのarena数を制限し、推論後に不要なCPUメモリを返却して、ページの縦横比の違いによるメモリの蓄積を抑えます。検索側もRuntimeが返す同じモデルID・リビジョンだけを検索対象にします。モデルは名前付き`models`ボリュームへキャッシュします。
+WorkerはFFprobe / FFmpeg、Poppler、Tesseract（`eng+jpn`）、Chromaprintを使います。Runtimeの推論はONNX Runtimeに統一しています。ASRは多言語Whisper `tiny`のfp32モデルをCPUで実行し、beam幅3でタイムスタンプを生成します。30秒ごとに処理し、未処理の末尾を次の窓へ引き継ぎます。`ASR_MODEL`は`tiny`のみ対応します。従来の任意モデル名・パス指定は使えません。
+
+意味検索は `google/embeddinggemma-2` のリビジョン `914f7f89142e33e77833254d9c9b90c3cef7303b`、768次元を維持します。ONNX版も同じ重み・プロンプト・正規化を使います。テキスト・画像・動画・音声の生成入力10件で、旧ベクトルとのコサイン類似度0.9999超・成分差0.002未満を検査します。この移行では既存ベクトルの再索引は不要です。検索側は引き続き、Runtimeが返す同じモデルID・リビジョンだけを検索対象にします。
+
+ONNXモデルは次の取得元とコミットへ固定しています。モデルはイメージに含めず、名前付き`models`ボリュームへキャッシュします。Embeddingのfp32重みだけで約2.93 GBあり、Whisper・WD14のキャッシュと合わせて数GBの空き領域が必要です。イメージの小型化と推論時の必要メモリは別に確認してください。
+
+| 用途 | 取得元 | 固定コミット |
+|---|---|---|
+| Embedding（全4モダリティ） | `onnx-community/embeddinggemma-2-ONNX` | `daa72c51243991dfcaf9f9137d2c573d8f7790c0` |
+| ASR | `onnx-community/whisper-tiny` | `ff4177021cc41f7db950912b73ea4fdf7d01d8e7` |
+| タグ・キャラクター | `SmilingWolf/wd-v1-4-convnext-tagger-v2` | `4b34d1b07bdd8e95494072648960b8a6adcbc0ff` |
+
+精度はfloat32固定です。`INFERENCE_DTYPE=bfloat16`を設定済みの場合は`float32`へ変更してください。スレッド数は`INFERENCE_THREADS`（1〜32、既定4）で指定します。ONNXのCPU arenaとメモリパターン最適化を無効にし、glibcのarena数も制限します。推論後に不要なCPUメモリを返却して、入力サイズの違いによるメモリの蓄積を抑えます。
 
 画像・動画・PDFにはWD14 Tagger（`SmilingWolf/wd-v1-4-convnext-tagger-v2`、リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）による一般タグを自動追加します。キャラクター（category 4）は一般タグとは独立したメタデータとして閾値0.85で保存します。レーティング（category 9）は除外します。一般タグの閾値は0.35で、それぞれ最大256件を採用します。画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定し、各タグの最大スコアで集約します。動画の短時間だけ現れる内容をすべて拾う保証はありません。[モデル提供者の実装](https://huggingface.co/spaces/SmilingWolf/wd-tagger/blob/main/app.py)に合わせ、透過部分の白背景合成・正方形への余白追加・BGR変換を行います。推論はRuntime内のONNX Runtimeで実行し、モデルは既存の`models`ボリュームにキャッシュします。
 

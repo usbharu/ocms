@@ -68,7 +68,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m venv .venv
-      - run: .venv/bin/pip install numpy==2.2.6 pillow==13.0.0
+      - run: .venv/bin/pip install -r runtime/requirements.txt onnxruntime==1.23.2
       - run: .venv/bin/python -m unittest discover -s runtime -p 'test_*.py'
 
   images:
