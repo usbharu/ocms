@@ -410,4 +410,6 @@ RuntimeのDockerfileに`RUNTIME_VARIANT=cpu|cuda`を追加した。既定はCPU�
 
 イメージ内の検査をDockerfileのビルド工程に組み込み、PyTorch関連3パッケージの版、CPU版へのNVIDIA・Triton依存の混入、TorchVisionのネイティブ演算、推論ライブラリとアプリのimport、モデルが未ロードであることを確認する。モデル取得や実推論はこの検査では行わない。現在の推論先はCPU固定のままで、CUDA版を選ぶだけではGPU推論は有効にならない。
 
-検証中：actionlintによる2ワークフローの検査、Dockerfileの`--check`、`git diff --check`は成功。CPU版のamd64ビルドを実行中。CUDA版のビルド・GPU実機での推論、新タグのGHCR公開は未検証。アプリ・API・DBの変更はなく、実サービスへのデプロイや結合試験は今回行っていない。
+検証結果：actionlintによる2ワークフローの検査、Dockerfileの`--check`、通常Release / プレリリースのタグ重複検査、`git diff --check`は成功。[GitHub ActionsのCI](https://github.com/usbharu/ocms/actions/runs/40055545103)では全7ジョブが成功し、CPU版・CUDA版のネイティブamd64ビルド、両版の`pip check`・イメージ内検査、既存のGo・SPA・Runtime単体テストを確認した。モデルは取得していない。
+
+ローカルColimaのamd64エミュレーションではCPU版の依存導入に時間がかかったため中断し、CUDA版はDocker HubのDNSエラーで失敗した。上記GitHubのネイティブ環境で両版を検証した。GPU実機での推論と、新タグのGHCR公開は未検証。実サービスへのデプロイや結合試験は今回行っていない。
