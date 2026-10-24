@@ -433,4 +433,6 @@ CPU版は`onnxruntime`、CUDA版は`onnxruntime-gpu[cuda,cudnn]`を導入し、�
 - `scripts/tagging-integration.py`：成功。実WD14による画像・動画・PDFのタグ付け、永続化、ACL付き検索、重複Blobの推論再利用、手動編集の独立性と512タグ上限を確認した。
 - actionlintによるCI・Releaseワークフローの検査と`git diff --check`：成功。
 
+2026-10-25、コミット`cd61d7d075b4c1679d33a69e8bcc380ce8ed997d`を`codex/onnx-runtime`へpushし、[GitHub ActionsのCI](https://github.com/usbharu/ocms/actions/runs/40111490177)の全7ジョブが成功した。Goのraceテスト・vet、SPAとStorybookの検査・ビルド・ブラウザテスト、Runtime単体テスト、4種類のamd64イメージビルドを確認した。RuntimeのCPU版・CUDA版とも`pip check`と、モデル取得を伴わないONNXのネイティブ演算・アプリimportの検査が成功した。GPU実機での推論はこのCIの対象外。
+
 実モデルの検証は英語の生成資料が中心で、日本語・多言語の精度評価やGPU実機の検証は行っていない。モデルのfp32重みには数GBのキャッシュ領域が必要で、小さいイメージだけで低メモリ環境の動作を保証するものではない。公開済みRelease・本番サービスは変更していない。ローカルの検証サービスはONNX版Runtimeで起動したまま維持する。
