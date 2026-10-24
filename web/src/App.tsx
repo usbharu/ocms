@@ -5,15 +5,18 @@ import { AssetList } from './components/library/AssetList';
 import { AssetViewer } from './components/library/AssetViewer';
 import { LibraryToolbar } from './components/library/LibraryToolbar';
 import { LoginPanel } from './components/library/LoginPanel';
+import { RecommendationsHeader } from './components/library/RecommendationsHeader';
 import { SearchForm } from './components/library/SearchForm';
 import { UploadControl } from './components/library/UploadControl';
 import { UploadProgress } from './components/library/UploadProgress';
 import { TagsPage } from './components/tags/TagsPage';
 import { Button } from './components/ui/button';
+import { NativeSelect } from './components/ui/native-select';
 import {
   type Asset,
   type AssetChanges,
   allFiles,
+  type HashStatus,
   type Job,
   type Kind,
   kindOf,
@@ -21,10 +24,23 @@ import {
   type Me,
   type Mode,
   pageSize,
+  type Recommendation,
   type Rendition,
   type SearchContext,
   type View,
 } from './lib/assets';
+
+type ExplorationSnapshot = {
+  assets: Asset[];
+  page: number;
+  total: number | null;
+  selected: Asset | null;
+  context: SearchContext;
+  kind: Kind;
+  query: string;
+  mode: Mode;
+  hashStatus: HashStatus | null;
+};
 
 const viewStorageKey = 'ocms.library.view';
 
@@ -61,6 +77,10 @@ export function App() {
   const [view, setView] = useState<View>(savedView);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [recommendationFailed, setRecommendationFailed] = useState(false);
+  const [hashStatus, setHashStatus] = useState<HashStatus | null>(null);
+  const [exploration, setExploration] = useState<ExplorationSnapshot[]>([]);
+  const related = context.mode === 'recommendation';
   const [searching, setSearching] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -102,11 +122,12 @@ export function App() {
     const version = ++requestVersion.current;
     setError('');
     setSearching(true);
+    setRecommendationFailed(false);
     try {
-      let res: { assets: Asset[]; total?: number };
+      let res: { assets: Asset[]; total?: number; hash_status?: HashStatus };
       if (next.source) {
         res = await request(
-          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'perceptual' ? 'similar' : 'duplicates'}`,
+          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'recommendation' ? 'recommendations' : next.mode === 'perceptual' ? 'similar' : 'duplicates'}`,
         );
       } else if (next.query && !next.tag && !next.character) {
         res = await request('/api/v1/search', {
@@ -141,11 +162,17 @@ export function App() {
       }
       if (version === requestVersion.current) {
         setAssets(res.assets);
+        setHashStatus(res.hash_status ?? null);
         setTotal(res.total ?? null);
         setPage(nextPage);
         setKind(nextKind);
         setContext(next);
         return res.assets;
+      }
+    } catch (error) {
+      if (version === requestVersion.current) {
+        setRecommendationFailed(next.mode === 'recommendation');
+        throw error;
       }
     } finally {
       if (version === requestVersion.current) setSearching(false);
@@ -272,6 +299,51 @@ export function App() {
     );
   };
 
+  function openRecommendations() {
+    if (!selected) return;
+    setExploration((stack) => [
+      ...stack,
+      { assets, page, total, selected, context, kind, query, mode, hashStatus },
+    ]);
+    const next: SearchContext = {
+      mode: 'recommendation',
+      query: '',
+      source: selected,
+    };
+    setContext(next);
+    setAssets([]);
+    setTotal(null);
+    setHashStatus(null);
+    setSelected(null);
+    setPage(1);
+    setKind('all');
+    setViewerOpen(false);
+    run(() => refresh(next, 1, 'all'));
+  }
+
+  function backFromRecommendations() {
+    const previous = exploration[exploration.length - 1];
+    if (!previous) return;
+    ++requestVersion.current;
+    setSearching(false);
+    setRecommendationFailed(false);
+    setError('');
+    setViewerOpen(false);
+    setAssets(previous.assets);
+    setPage(previous.page);
+    setTotal(previous.total);
+    setSelected(previous.selected);
+    setContext(previous.context);
+    setKind(previous.kind);
+    setQuery(previous.query);
+    setMode(previous.mode);
+    setHashStatus(previous.hashStatus);
+    setExploration((stack) => stack.slice(0, -1));
+    window.requestAnimationFrame(() =>
+      detailTitle.current?.focus({ preventScroll: true }),
+    );
+  }
+
   const visibleAssets = assets.filter(
     (a) => kind === 'all' || kindOf(a) === kind,
   );
@@ -346,6 +418,7 @@ export function App() {
       await request('/auth/logout', { method: 'POST' });
       ++requestVersion.current;
       setMe(null);
+      setExploration([]);
       setAssets([]);
       setSelected(null);
       setContext(allFiles);
@@ -373,6 +446,7 @@ export function App() {
   }
 
   function openMetadataFilter(field: 'tag' | 'character', name: string) {
+    setExploration([]);
     setSection('library');
     setSelected(null);
     setQuery('');
@@ -468,7 +542,7 @@ export function App() {
           setViewerOpen(false);
         }}
       >
-        {me && section === 'library' && (
+        {me && section === 'library' && !related && (
           <UploadControl
             uploadInput={uploadInput}
             busy={progress !== null}
@@ -510,30 +584,73 @@ export function App() {
           />
         ) : (
           <>
-            <h1 className="visually-hidden">ライブラリ</h1>
+            {!related && <h1 className="visually-hidden">ライブラリ</h1>}
             {progress !== null && <UploadProgress value={progress} />}
             <div className={`library ${selected ? 'has-selection' : ''}`}>
               <div className="collection">
-                <SearchForm
-                  query={query}
-                  mode={mode}
-                  searching={searching}
-                  onQueryChange={setQuery}
-                  onModeChange={setMode}
-                  onSearch={search}
-                />
-                <LibraryToolbar
-                  kind={kind}
-                  view={view}
-                  searching={searching}
-                  onKindChange={changeKind}
-                  onViewChange={setView}
-                  onRefresh={() => run(() => refresh())}
-                />
+                {related && context.source ? (
+                  <RecommendationsHeader
+                    source={context.source}
+                    hashStatus={hashStatus}
+                    onBack={backFromRecommendations}
+                  />
+                ) : (
+                  <SearchForm
+                    query={query}
+                    mode={mode}
+                    searching={searching}
+                    onQueryChange={setQuery}
+                    onModeChange={setMode}
+                    onSearch={search}
+                  />
+                )}
+                {related ? (
+                  <div className="library-toolbar">
+                    <label
+                      htmlFor="recommendation-kind"
+                      className="recommendation-kind"
+                    >
+                      種類{' '}
+                      <NativeSelect
+                        id="recommendation-kind"
+                        aria-label="関連コンテンツの種類"
+                        disabled={searching}
+                        value={kind}
+                        onChange={(event) =>
+                          changeKind(event.target.value as Kind)
+                        }
+                      >
+                        {kinds.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    </label>
+                    <Button
+                      variant="outline"
+                      disabled={searching}
+                      onClick={() => run(() => refresh())}
+                    >
+                      更新
+                    </Button>
+                  </div>
+                ) : (
+                  <LibraryToolbar
+                    kind={kind}
+                    view={view}
+                    searching={searching}
+                    onKindChange={changeKind}
+                    onViewChange={setView}
+                    onRefresh={() => run(() => refresh())}
+                  />
+                )}
                 <div className="result-heading" aria-live="polite">
                   <h2>
                     {context.source
-                      ? `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}`
+                      ? related
+                        ? 'おすすめ'
+                        : `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}`
                       : context.character
                         ? `キャラクター：${context.character}`
                         : context.tag
@@ -549,38 +666,56 @@ export function App() {
                       ? '読み込み中…'
                       : `${resultCount} 件${kind !== 'all' && (isResult || total === null) ? ` / ${assets.length} 件` : ''}`}
                   </span>
-                  {(isResult || context.tag || context.character) && (
-                    <Button
-                      variant="link"
-                      type="button"
-                      className="text-button"
-                      onClick={reset}
-                    >
-                      検索を解除
-                    </Button>
-                  )}
+                  {!related &&
+                    (isResult || context.tag || context.character) && (
+                      <Button
+                        variant="link"
+                        type="button"
+                        className="text-button"
+                        onClick={reset}
+                      >
+                        検索を解除
+                      </Button>
+                    )}
                 </div>
-                <AssetList
-                  assets={pageAssets}
-                  selectedId={selected?.asset_id}
-                  view={view}
-                  kind={kind}
-                  searching={searching}
-                  isResult={isResult}
-                  uploading={progress !== null}
-                  currentPage={currentPage}
-                  pageCount={pageCount}
-                  resultCount={resultCount}
-                  fileList={fileList}
-                  onSelect={(asset) => {
-                    setError('');
-                    setSelected(asset);
-                  }}
-                  onOpen={openViewer}
-                  onReset={reset}
-                  onUpload={() => uploadInput.current?.click()}
-                  onPageChange={changePage}
-                />
+                {related && recommendationFailed ? (
+                  <div className="empty" role="alert">
+                    関連コンテンツを取得できません。
+                    <Button
+                      variant="outline"
+                      onClick={() => run(() => refresh())}
+                    >
+                      再試行
+                    </Button>
+                  </div>
+                ) : related && !searching && visibleAssets.length === 0 ? (
+                  <div className="empty">関連コンテンツがありません。</div>
+                ) : (
+                  <AssetList
+                    assets={pageAssets}
+                    selectedId={selected?.asset_id}
+                    view={related ? 'detailed-grid' : view}
+                    recommendations={
+                      related ? (pageAssets as Recommendation[]) : undefined
+                    }
+                    kind={kind}
+                    searching={searching}
+                    isResult={isResult}
+                    uploading={progress !== null}
+                    currentPage={currentPage}
+                    pageCount={pageCount}
+                    resultCount={resultCount}
+                    fileList={fileList}
+                    onSelect={(asset) => {
+                      setError('');
+                      setSelected(asset);
+                    }}
+                    onOpen={openViewer}
+                    onReset={reset}
+                    onUpload={() => uploadInput.current?.click()}
+                    onPageChange={changePage}
+                  />
+                )}
               </div>
               {selected && (
                 <AssetDetails
@@ -599,6 +734,8 @@ export function App() {
                     openMetadataFilter('character', character)
                   }
                   onCompare={compare}
+                  onRecommend={openRecommendations}
+                  showComparisons={!related}
                   onReprocess={reprocess}
                   onDelete={deleteAsset}
                 />
