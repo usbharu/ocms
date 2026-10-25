@@ -507,3 +507,9 @@ BFF経由の `GET /api/v1/assets/{id}/recommendations` をSearchに追加した�
 - actionlintによるCI・Releaseワークフローの検査と `git diff --check`：成功。CIにも使い捨てDBの移行試験を追加した。
 
 試験用のコンテナ・ネットワーク・ボリュームは終了時に削除した。既存の8080／8081と推論・OIDC・OTLPの共有検証環境は変更していない。今回、保存・配信全体の結合試験、実メディアの推論、OIDC・OTLP試験は再実行していない。通常更新でも既に動いているプロセスは依存条件だけでは停止しないため、READMEの手順でアプリを停止してから移行する。
+
+### PR #11の初回起動競合の修正（2026-10-25）
+
+GitHub Actionsの移行試験は初回の `up` が `MIGRATION_DATABASE_UNAVAILABLE` で失敗していた。PostgreSQL初期化中の一時サーバーはUnixソケットだけで接続を受けるが、ホスト指定なしの `pg_isready` がその時点で成功し、別コンテナからのTCP接続を早く開始していた。Composeと試験の準備完了判定を `pg_isready -h 127.0.0.1` に変更した。
+
+初期化フックを一時停止する回帰試験で、Unixソケットの判定が成功してもTCP接続と移行は失敗する状態を再現し、初期化完了後のTCP待機から移行が成功することを確認した。`scripts/migration-integration.py` は起動抑止・復旧を含め全項目成功。変更は起動判定と試験に限定し、Go・SPAのコードは変更していない。

@@ -54,6 +54,13 @@ with tempfile.TemporaryDirectory(prefix='migration-', dir=root / '.cache') as te
     for file in migrations.iterdir():
         file.chmod(0o644)
     latest = max(int(p.name.split('_')[0]) for p in migrations.glob('*.up.sql'))
+    # Hold the socket-only initialization server open to reproduce fast Linux CI.
+    init_gate = temp / 'init-gate'
+    init_gate.mkdir()
+    init_gate.chmod(0o777)
+    init_script = temp / 'wait-for-test.sh'
+    init_script.write_text('touch /test-init/ready\nwhile [ ! -f /test-init/release ]; do sleep 0.1; done\n')
+    init_script.chmod(0o644)
 
     def run(*command, expected=0):
         result = docker('run', '--rm', '--network', network, '--env-file', str(envfile),
@@ -74,9 +81,22 @@ with tempfile.TemporaryDirectory(prefix='migration-', dir=root / '.cache') as te
         docker('network', 'create', network)
         docker('volume', 'create', volume)
         docker('run', '-d', '--name', name, '--network', network, '--network-alias', 'postgres',
-               '--env-file', str(envfile), '-v', volume + ':/var/lib/postgresql/data', args.postgres_image)
+               '--env-file', str(envfile), '-v', volume + ':/var/lib/postgresql/data',
+               '-v', str(init_gate) + ':/test-init',
+               '-v', str(init_script) + ':/docker-entrypoint-initdb.d/000-test-wait.sh:ro', args.postgres_image)
         for _ in range(60):
-            if docker('exec', name, 'pg_isready', '-U', 'ocms', '-d', 'ocms', expected=None).returncode == 0:
+            if (init_gate / 'ready').exists():
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError('test initialization hook did not become ready')
+        assert docker('exec', name, 'pg_isready', '-U', 'ocms', '-d', 'ocms', expected=None).returncode == 0
+        assert docker('exec', name, 'pg_isready', '-h', '127.0.0.1', '-U', 'ocms', '-d', 'ocms', expected=None).returncode != 0
+        assert 'MIGRATION_DATABASE_UNAVAILABLE' in run('up', expected=1).stderr
+        (init_gate / 'release').touch()
+        check('socket-only initialization is not TCP-ready for migrations')
+        for _ in range(60):
+            if docker('exec', name, 'pg_isready', '-h', '127.0.0.1', '-U', 'ocms', '-d', 'ocms', expected=None).returncode == 0:
                 break
             time.sleep(1)
         else:

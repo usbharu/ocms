@@ -32,7 +32,7 @@ services:
     volumes:
       - postgres:/var/lib/postgresql/data
     healthcheck:
-      test: [CMD-SHELL, pg_isready -U ocms -d ocms]
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U ocms -d ocms]
       interval: 3s
       timeout: 3s
       retries: 30
