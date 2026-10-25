@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Asset, Rendition } from '../../lib/assets';
 import { Button } from '../ui/button';
+import { FavoriteButton } from './FavoriteButton';
 
 const PDFViewer = lazy(() => import('./PDFViewer'));
 
@@ -9,6 +10,8 @@ export function AssetViewer({
   hasPrevious,
   hasNext,
   onNavigate,
+  onFavorite,
+  favoriteBusy,
   onClose,
   navigationError,
 }: {
@@ -16,6 +19,8 @@ export function AssetViewer({
   hasPrevious: boolean;
   hasNext: boolean;
   onNavigate: (direction: number) => void;
+  onFavorite?: (asset: Asset) => void;
+  favoriteBusy?: boolean;
   onClose: () => void;
   navigationError: string;
 }) {
@@ -49,7 +54,9 @@ export function AssetViewer({
       document.body.style.overflow = overflow;
       const target = opener?.isConnected
         ? opener
-        : document.querySelector<HTMLElement>('.file.active, .preview');
+        : (document.querySelector<HTMLElement>('.file.active') ??
+          document.querySelector<HTMLElement>('.preview') ??
+          document.querySelector<HTMLElement>('.files'));
       target?.focus({ preventScroll: true });
     };
   }, []);
@@ -146,6 +153,11 @@ export function AssetViewer({
           <h2>{asset.filename}</h2>
           <p>{asset.mime_type}</p>
         </div>
+        <FavoriteButton
+          asset={asset}
+          busy={favoriteBusy}
+          onToggle={onFavorite}
+        />
         <Button variant="ghost" onClick={onClose} aria-label="閲覧を閉じる">
           ×
         </Button>

@@ -14,6 +14,7 @@ import (
 
 	"ocms/internal/bff"
 	"ocms/internal/catalog"
+	"ocms/internal/dbmigrate"
 	"ocms/internal/media"
 	"ocms/internal/platform"
 	"ocms/internal/search"
@@ -29,6 +30,9 @@ func main() {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		return dbmigrate.Run(ctx, os.Args[2:])
+	}
 	name := platform.Env("SERVICE", "bff")
 	shutdown, err := platform.Telemetry(ctx, name)
 	if err != nil {

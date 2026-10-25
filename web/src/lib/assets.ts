@@ -10,6 +10,7 @@ export const ratingLabel = (rating: Rating) =>
   rating === 'unrated' ? '未判定' : rating;
 
 export type Asset = {
+  is_favorite?: boolean;
   asset_id: string;
   filename: string;
   mime_type: string;
@@ -50,6 +51,7 @@ export type Mode =
   | 'exact_duplicate'
   | 'recommendation';
 export type SearchContext = {
+  favorites?: boolean;
   mode: Mode;
   query: string;
   tag?: string;

@@ -87,8 +87,9 @@ func (s *Service) authorizeBlobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		IDs      []string `json:"blob_ids"`
-		AssetIDs []string `json:"asset_ids"`
+		Favorites bool     `json:"favorites"`
+		IDs       []string `json:"blob_ids"`
+		AssetIDs  []string `json:"asset_ids"`
 	}
 	if !platform.Decode(w, r, &in) {
 		return
@@ -103,7 +104,11 @@ func (s *Service) authorizeBlobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND (o.blob_id=ANY($2::uuid[]) OR a.id=ANY($3::uuid[])) ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs)
+	filter := ""
+	if in.Favorites {
+		filter = ` AND ` + favoriteCondition
+	}
+	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND (o.blob_id=ANY($2::uuid[]) OR a.id=ANY($3::uuid[]))`+filter+` ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

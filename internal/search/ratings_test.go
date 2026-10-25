@@ -17,6 +17,12 @@ func TestRatingsFilterAfterAuthorizationBeforeLimit(t *testing.T) {
 		if r.URL.Path != "/internal/authorize-blobs" || r.Header.Get("X-Principal") != "reader" {
 			t.Error("missing final authorization")
 		}
+		var input struct {
+			Favorites bool `json:"favorites"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil || !input.Favorites {
+			t.Error("combined rating search lost favorites scope")
+		}
 		json.NewEncoder(w).Encode(map[string]any{"assets": []catalog.Asset{
 			{ID: "a-restricted", Rating: "explicit", BlobID: &blob},
 			{ID: "z-allowed", Rating: "general", BlobID: &blob},
@@ -30,7 +36,7 @@ func TestRatingsFilterAfterAuthorizationBeforeLimit(t *testing.T) {
 				req := httptest.NewRequest("POST", "/api/v1/search", nil)
 				req.Header.Set("X-Principal", "reader")
 				w := httptest.NewRecorder()
-				s.respond(w, req, query{Mode: mode, Limit: 1, Ratings: ratings}, map[string]candidate{blob: {blob: blob, content: "synthetic snippet", rank: 1}}, nil)
+				s.respond(w, req, query{Mode: mode, Limit: 1, Ratings: ratings, Favorites: true}, map[string]candidate{blob: {blob: blob, content: "synthetic snippet", rank: 1}}, nil)
 				var out struct{ Assets []result }
 				if json.Unmarshal(w.Body.Bytes(), &out) != nil || w.Code != 200 {
 					t.Fatal("invalid response")

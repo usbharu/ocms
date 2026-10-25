@@ -73,6 +73,8 @@ flowchart TB
     BFF --> SRCH[Search Service]
 
     CAT --> PG[(PostgreSQL)]
+    MIG[DB移行 / golang-migrate] --> PG
+    MIG -. 正常終了後に起動 .-> CAT
     XFER --> PG
     SRCH --> PG
     XFER <--> S3[(S3)]
@@ -110,6 +112,7 @@ flowchart TB
 ### 4.1 概念
 
 - **Asset**：ユーザーが扱う論理ファイル。所有者、ファイル名、タグ、キャラクター、レーティング、ACLなどを持つ。同じ内容でもユーザーごとに独立する。
+- **Favorite**：PrincipalとAssetの組で保持する個人のお気に入り。登録日時を持ち、Blobの共有やAssetのメタデータ編集から独立する。
 - **Blob**：バイト列そのものを表す不変のS3暗号化オブジェクト。同一平文バイナリは可能な限り一つのBlobにまとめる。
 - **Rendition**：既存Blobから変換された派生Blobと変換プロファイルの関係。
 - **Passage**：PDFのページ、OCR抽出結果、文字起こしの時間区間などのテキスト検索単位。
@@ -128,6 +131,8 @@ erDiagram
     BLOBS ||--o{ EMBEDDINGS : embedded_as
     ASSETS ||--o{ ASSET_CHARACTERS : depicts
     ASSETS ||--o{ GRANTS : authorized_by
+    ASSETS ||--o{ ASSET_FAVORITES : bookmarked_by
+    PRINCIPALS ||--o{ ASSET_FAVORITES : saves
 ```
 
 完全一致Blobの共有と、AssetごとのACL・タグ・ファイル名は独立させる。検索インデックスは基本的にBlob単位、Asset固有の検索属性はCatalog側で管理する。
@@ -136,10 +141,11 @@ erDiagram
 
 | Schema | 主なテーブル | 所有 |
 |---|---|---|
-| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results`, `wd14_rating_results` | Catalog |
+| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results`, `wd14_rating_results`, `asset_favorites` | Catalog |
 | `storage` | `blobs`, `upload_objects` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings` | Search |
+| `public` | `schema_migrations` | DB移行管理者（golang-migrate） |
 
 ### 4.3 主要DDL（設計ベースライン）
 
@@ -180,6 +186,16 @@ CREATE TABLE catalog.assets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ
 );
+
+-- 個人のお気に入りはAssetの共有メタデータとは独立する。
+CREATE TABLE catalog.asset_favorites (
+  principal_id uuid NOT NULL REFERENCES catalog.principals(id) ON DELETE CASCADE,
+  asset_id uuid NOT NULL REFERENCES catalog.assets(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (principal_id, asset_id)
+);
+CREATE INDEX asset_favorites_recent ON catalog.asset_favorites
+  (principal_id, created_at DESC, asset_id DESC);
 
 -- Asset -> オリジナルBlob。blob_idはTransfer所有スキーマの論理参照。
 CREATE TABLE catalog.asset_originals (
@@ -324,6 +340,15 @@ CREATE INDEX idx_embeddings_blob ON search.embeddings(blob_id);
 - Assetが参照するBlob、および有効なRenditionで参照される派生Blobは削除しない。GCでは参照追加と`deleting`への遷移を競合なく排他制御し、猶予期間後に再確認して削除する。
 - Outboxイベントはat-least-once配送、Worker処理は冪等とする。`FOR UPDATE SKIP LOCKED`等でJobを取得し、リース切れJobを再実行できるようにする。
 - Blob共有に伴う処理結果（OCR、ASR、Embedding、再エンコード）はBlobごとに再利用する。Asset固有情報（ファイル名、タグ、ACL）は再利用・混同しない。
+
+### 4.5 DBマイグレーション
+
+- `migrate` はgolang-migrate v4.19.1を呼び出す起動前の保守プロセスとする。番号順の適用、排他ロック、`public.schema_migrations` のバージョン・dirty状態の管理は同ツールが担う。
+- SQLはアプリ共通イメージの `/app/migrations` に `NNN_name.up.sql` として同梱する。ファイルごとに `BEGIN` / `COMMIT` で原子性を保ち、適用済みSQLの変更は新規マイグレーションで行う。
+- 新規DBも既存DBも未適用分だけを実行する。履歴のない既存DBは自動推測せず、管理者が適用済み番号を一度だけ `baseline` で宣言する。SQLを再実行せず、既存データを保持する。
+- Catalogと検証用OIDC BFFは `migrate` の正常終了を起動条件にする。他のGoサービスはCatalogへの依存を経由して待つ。既存プロセスは更新前に停止する。失敗時はアプリを起動せず、dirty状態の確認・修復後に管理者が `force` で履歴を訂正して再実行する。
+- DB管理資格情報を持つのはPostgreSQLと `migrate` に限定し、各サービスのスキーマ・ロール分離を維持する。移行失敗のログにはSQL・接続URL・資格情報・データ値を出さず、固定のエラーコードを記録する。
+- 状態確認は `ocms migrate version`、通常適用は `ocms migrate up`、既存DBの引き継ぎは `ocms migrate baseline N`、確認済みの障害復旧は `ocms migrate force N` とする。自動ダウングレードは行わない。
 
 ## 5. 暗号化と鍵管理
 
@@ -492,7 +517,7 @@ Blob削除は参照管理と分離して行い、参照がゼロになったBlob
 
 キャラクターは `catalog.asset_characters(asset_id, name, position)` に保存し、タグの配列とは独立させる。主キーは `(asset_id, name)` とし、同じAsset内の重複を防ぐ。推論結果は別テーブル `catalog.wd14_character_results(blob_id, characters, model_id, model_revision, created_at)` に保持し、`catalog.assets.wd14_characters_tagged` で一度だけの適用を管理する。タグと同じく既存の手動入力を優先し、合計512件・1件256バイトまでとする。削除・編集はAsset単位に保持し、再試行・状態同期で復元しない。重複Assetへは推論結果だけを追加する。旧Runtimeのキャラクター欄省略と、判定結果が空配列である場合を区別する。マイグレーション006は完了済みタグJobを再実行し、既存ファイルへキャラクターを付与する。
 
-レーティングは `general < sensitive < questionable < explicit` の順とし、動画・PDFはサンプルフレーム・全ページの判定のうち最も制限の強い段階を採用する。音声などの対象外ファイルと判定前のAssetは `unrated` とする。推論結果は `catalog.wd14_rating_results(blob_id, rating, model_id, model_revision, created_at)` に保存する。`rating` は4段階のいずれかに制約し、Blobを主キーとする。Assetは `rating`・`rating_manual`・`wd14_rated` を持ち、Asset行のロック下で自動判定を一度だけ適用する。手動設定後は再試行・状態同期でも上書きしない。重複Assetへは保存した推論結果だけを適用する。007は完了済みタグJobを再実行し、既存ファイルも判定する。一般タグとキャラクターの適用済み状態は保持する。
+レーティングは `general < sensitive < questionable < explicit` の順とし、動画・PDFはサンプルフレーム・全ページの判定のうち最も制限の強い段階を採用する。音声などの対象外ファイルと判定前のAssetは `unrated` とする。推論結果は `catalog.wd14_rating_results(blob_id, rating, model_id, model_revision, created_at)` に保存する。`rating` は4段階のいずれかに制約し、Blobを主キーとする。Assetは `rating`・`rating_manual`・`wd14_rated` を持ち、Asset行のロック下で自動判定を一度だけ適用する。手動設定後は再試行・状態同期でも上書きしない。重複Assetへは保存した推論結果だけを適用する。008は完了済みタグJobを再実行し、既存ファイルも判定する。一般タグとキャラクターの適用済み状態は保持する。
 
 ### 8.4 派生Blobの再利用
 
@@ -560,7 +585,9 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `GET` | `/api/v1/uploads/{uploadId}` | Upload状態 |
 | `GET` | `/api/v1/characters` | 閲覧可能なキャラクターの一覧・件数・共起 |
 | `GET` | `/api/v1/assets` | Asset一覧・フィルタ |
-| `GET` | `/api/v1/assets/{assetId}` | 詳細、処理状態 |
+| `GET` | `/api/v1/assets/{assetId}` | 詳細、処理状態、自分のお気に入り状態 |
+| `PUT` | `/api/v1/assets/{assetId}/favorite` | 自分のお気に入りへ登録（閲覧権限、204） |
+| `DELETE` | `/api/v1/assets/{assetId}/favorite` | 自分のお気に入りを解除（閲覧権限、204） |
 | `GET` | `/api/v1/assets/{assetId}/content` | 元ファイルの復号配信（Range可） |
 | `HEAD` | `/api/v1/assets/{assetId}/content` | サイズ/MIME/Range情報 |
 | `GET` | `/api/v1/assets/{assetId}/preview` | プレビュー |
@@ -746,6 +773,23 @@ sequenceDiagram
 - 意味検索・ASR結果は対象ページ・再生時間へジャンプ可能にする。
 - アップロードは進捗表示とエラー表示に対応する。初期版の失敗時は再アップロードとする。
 
+### 12.1 ユーザー別のお気に入り
+
+Catalogは `catalog.asset_favorites(principal_id, asset_id, created_at)` を保持し、PrincipalとAssetの組を一意にする。BFFが認証した主体だけを使い、登録・解除にはAssetの閲覧権限を必要とする。read共有でも自分のお気に入りを編集できる。削除・権限喪失後の記録は保持するが、最新ACLで一覧・件数・検索結果から除外する。
+
+| API・契約 | 動作 |
+|---|---|
+| `PUT /api/v1/assets/{id}/favorite` | 冪等な登録、204。重複登録は日時を維持する |
+| `DELETE /api/v1/assets/{id}/favorite` | 冪等な解除、204。対象が未許可・削除済みなら404 |
+| `GET /api/v1/assets?favorites=true` | ACLとお気に入り条件を件数・ページング前に適用。登録日時降順、Asset ID降順 |
+| Assetの `is_favorite` | 要求主体の状態をbooleanで返す。一覧・詳細・各検索・比較に共通 |
+| 検索JSONの `favorites` | 省略時false。キーワード・意味・ハイブリッド・知覚検索に適用 |
+| `/internal/authorize-blobs` の `favorites` | 省略時false。Catalogで最新ACLと要求主体のお気に入りを照合し、Searchの結果上限適用前に絞る |
+
+一覧の `favorites` は `true` または `false` の単一値とし、それ以外は400とする。検索の候補・結果上限は既存の制限を維持する。ファイル名・タグ・キャラクターの直接検索候補もお気に入りへ限定する。同じBlobを共有する別Assetへ登録状態を流用しない。
+
+SPAのナビゲーションはライブラリ・タグ・キャラクター・お気に入りの順とする。3種類の一覧表示、詳細パネル、閲覧ダイアログに登録・解除ボタンを設ける。星の輪郭と黄色の塗りつぶし、アクセシブルな状態で登録済みかを示す。お気に入り一覧は検索・種類・表示切り替え・ページ送りに対応し、検索時は関連度順とする。検索解除・類似・完全一致比較でも範囲を維持する。
+
 ## 13. 処理品質・エラー要件
 
 - ファイルサイズ、同時処理数、Jobタイムアウト、検索件数、動画変換プロファイルは設定値とし、具体的な上限は負荷試験後に決める。
@@ -779,7 +823,8 @@ sequenceDiagram
 | AC-18 | 秘密情報の非出力 | ログ/Trace/API応答にKEK/DEK/トークンが出力されない |
 | AC-19 | 自動タグ | 画像・動画・PDFにWD14の一般タグと独立したキャラクターメタデータを付与し、手動編集・重複再利用・ACL分離を保つ |
 | AC-20 | 関連コンテンツ | キャラクター・タグ・知覚類似の固定重みで推薦し、完全一致除外・Asset別メタデータ・ACL・理由表示・探索からの復帰を保つ |
-| AC-21 | コンテンツレーティング | WD14のレーティングを独立保存し、自動判定・手動設定保持・各段階の検索切替・3表示のR-18表示・ACL分離を保つ |
+| AC-21 | お気に入り | ユーザー別・Asset別に永続保存し、共有・ACL分離、3表示と詳細の状態同期、お気に入り内検索、登録順とページングが動作する |
+| AC-22 | コンテンツレーティング | WD14のレーティングを独立保存し、自動判定・手動設定保持・各段階の検索切替・3表示のR-18表示・ACL分離を保つ |
 
 ## 15. 実装順序
 

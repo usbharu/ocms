@@ -137,6 +137,23 @@ func TestContentRatingsDatabase(t *testing.T) {
 	if len(out.Assets) != 1 || out.Assets[0].ID != c {
 		t.Fatal("duplicate rating filter or ACL failed")
 	}
+	call("PUT", "/api/v1/assets/"+a+"/favorite", owner, nil, 204)
+	for _, tc := range []struct {
+		filter string
+		count  int
+	}{{"general", 1}, {"explicit", 0}, {"", 0}} {
+		var filtered struct {
+			Assets []Asset
+			Total  int
+		}
+		raw := call("GET", "/api/v1/assets?favorites=true&ratings="+tc.filter, owner, nil, 200)
+		if err := json.Unmarshal(raw, &filtered); err != nil || filtered.Total != tc.count || len(filtered.Assets) != tc.count {
+			t.Fatalf("combined favorites/rating filter %q: %s", tc.filter, raw)
+		}
+		if len(filtered.Assets) > 0 && (!filtered.Assets[0].IsFavorite || filtered.Assets[0].Rating != "general") {
+			t.Fatal("combined Asset fields lost")
+		}
+	}
 	// Manual editing and first automatic application serialize on the Asset.
 	exec(`UPDATE catalog.assets SET wd14_rated=false,rating_manual=false,rating='unrated' WHERE id=$1`, c)
 	var wg sync.WaitGroup

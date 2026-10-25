@@ -58,9 +58,19 @@ function savedView(): View {
 }
 
 export function App() {
-  const [section, setSection] = useState<'library' | 'tags' | 'characters'>(
-    'library',
+  const [section, setSection] = useState<
+    'library' | 'tags' | 'characters' | 'favorites'
+  >('library');
+  const [favoriteBusy, setFavoriteBusy] = useState<ReadonlySet<string>>(
+    new Set(),
   );
+  const favoritePending = useRef(new Set<string>());
+  const collectionRef = useRef({
+    context: allFiles,
+    page: 1,
+    kind: 'all' as Kind,
+  });
+  const sectionRef = useRef(section);
   const [me, setMe] = useState<Me | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dev, setDev] = useState(false);
@@ -92,6 +102,7 @@ export function App() {
   const metadataVersion = useRef(0);
   const selectedId = useRef(selected?.asset_id);
   selectedId.current = selected?.asset_id;
+  sectionRef.current = section;
 
   useEffect(() => {
     try {
@@ -122,6 +133,7 @@ export function App() {
     nextPage = page,
     nextKind: Kind = kind,
   ): Promise<Asset[] | undefined> {
+    collectionRef.current = { context: next, page: nextPage, kind: nextKind };
     const version = ++requestVersion.current;
     setError('');
     setSearching(true);
@@ -130,7 +142,7 @@ export function App() {
       let res: { assets: Asset[]; total?: number; hash_status?: HashStatus };
       if (next.source) {
         res = await request(
-          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'recommendation' ? 'recommendations' : next.mode === 'perceptual' ? 'similar' : 'duplicates'}${next.ratings ? `?ratings=${next.ratings.join(',')}` : ''}`,
+          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'recommendation' ? 'recommendations' : next.mode === 'perceptual' ? 'similar' : 'duplicates'}?${new URLSearchParams({ ...(next.favorites ? { favorites: 'true' } : {}), ...(next.ratings ? { ratings: next.ratings.join(',') } : {}) })}`,
         );
       } else if (next.query && !next.tag && !next.character) {
         res = await request('/api/v1/search', {
@@ -140,10 +152,12 @@ export function App() {
             mode: next.mode,
             limit: 200,
             ratings: next.ratings,
+            ...(next.favorites ? { favorites: true } : {}),
           }),
         });
       } else {
         const params = new URLSearchParams({
+          ...(next.favorites ? { favorites: 'true' } : {}),
           ...(next.tag ? { tag: next.tag } : {}),
           ...(next.character ? { character: next.character } : {}),
           ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
@@ -298,7 +312,9 @@ export function App() {
     setMode('keyword');
     setKind('all');
     setSelected(null);
-    run(() => refresh(allFiles, 1, 'all'));
+    run(() =>
+      refresh({ ...allFiles, favorites: section === 'favorites' }, 1, 'all'),
+    );
   };
 
   const compare = (comparison: Mode) => {
@@ -311,6 +327,7 @@ export function App() {
           query: '',
           source: selected,
           ratings: context.ratings,
+          favorites: context.favorites,
         },
         1,
         'all',
@@ -359,6 +376,14 @@ export function App() {
     setMode(previous.mode);
     setHashStatus(previous.hashStatus);
     setExploration((stack) => stack.slice(0, -1));
+    collectionRef.current = {
+      context: previous.context,
+      page: previous.page,
+      kind: previous.kind,
+    };
+    if (previous.context.favorites) {
+      run(() => refresh(previous.context, previous.page, previous.kind));
+    }
     window.requestAnimationFrame(() =>
       detailTitle.current?.focus({ preventScroll: true }),
     );
@@ -440,6 +465,7 @@ export function App() {
       await request('/auth/logout', { method: 'POST' });
       ++requestVersion.current;
       setMe(null);
+      setSection('library');
       setExploration([]);
       setAssets([]);
       setSelected(null);
@@ -466,7 +492,12 @@ export function App() {
     setKind('all');
     run(() =>
       refresh(
-        { mode, query: query.trim(), ratings: context.ratings },
+        {
+          mode,
+          query: query.trim(),
+          favorites: section === 'favorites',
+          ratings: context.ratings,
+        },
         1,
         'all',
       ),
@@ -491,8 +522,51 @@ export function App() {
   }
 
   function closeDetail() {
-    fileList.current?.querySelector<HTMLButtonElement>('.file.active')?.focus();
+    (
+      fileList.current?.querySelector<HTMLButtonElement>('.file.active') ??
+      fileList.current?.querySelector<HTMLButtonElement>('.file') ??
+      fileList.current
+    )?.focus();
     setSelected(null);
+  }
+
+  async function toggleFavorite(asset: Asset) {
+    const id = asset.asset_id;
+    if (favoritePending.current.has(id)) return;
+    favoritePending.current.add(id);
+    setFavoriteBusy(new Set(favoritePending.current));
+    setError('');
+    try {
+      await request(`/api/v1/assets/${id}/favorite`, {
+        method: asset.is_favorite ? 'DELETE' : 'PUT',
+      });
+      const update = (a: Asset) =>
+        a.asset_id === id ? { ...a, is_favorite: !asset.is_favorite } : a;
+      setAssets((current) => current.map(update));
+      setSelected((current) => (current ? update(current) : current));
+      setExploration((stack) =>
+        stack.map((snapshot) => ({
+          ...snapshot,
+          assets: snapshot.assets.map(update),
+          selected: snapshot.selected ? update(snapshot.selected) : null,
+        })),
+      );
+      if (sectionRef.current === 'favorites') {
+        try {
+          const latest = collectionRef.current;
+          await refresh(latest.context, latest.page, latest.kind);
+        } catch {
+          setError(
+            'お気に入りは保存しましたが、一覧を更新できませんでした。更新ボタンで再取得してください。',
+          );
+        }
+      }
+    } catch {
+      setError('お気に入りを保存できませんでした。再度お試しください。');
+    } finally {
+      favoritePending.current.delete(id);
+      setFavoriteBusy(new Set(favoritePending.current));
+    }
   }
 
   async function saveMetadata(changes: AssetChanges): Promise<Asset> {
@@ -557,7 +631,9 @@ export function App() {
       });
       setSelected(null);
       await refresh(
-        context.source?.asset_id === selected.asset_id ? allFiles : context,
+        context.source?.asset_id === selected.asset_id
+          ? { ...allFiles, favorites: context.favorites }
+          : context,
       );
     });
   }
@@ -571,6 +647,22 @@ export function App() {
         onSectionChange={(next) => {
           setSection(next);
           setViewerOpen(false);
+          setExploration([]);
+          if (next === 'library' || next === 'favorites') {
+            setSelected(null);
+            setQuery('');
+            setMode('keyword');
+            run(() =>
+              refresh(
+                { ...allFiles, favorites: next === 'favorites' },
+                1,
+                'all',
+              ),
+            );
+          } else {
+            ++requestVersion.current;
+            setSearching(false);
+          }
         }}
       >
         {me && section === 'library' && !related && (
@@ -615,7 +707,11 @@ export function App() {
           />
         ) : (
           <>
-            {!related && <h1 className="visually-hidden">ライブラリ</h1>}
+            {!related && (
+              <h1 className="visually-hidden">
+                {section === 'favorites' ? 'お気に入り' : 'ライブラリ'}
+              </h1>
+            )}
             {progress !== null && <UploadProgress value={progress} />}
             <div className={`library ${selected ? 'has-selection' : ''}`}>
               <div className="collection">
@@ -720,7 +816,9 @@ export function App() {
                           : context.query
                             ? `「${context.query}」の検索結果`
                             : kind === 'all'
-                              ? 'すべてのファイル'
+                              ? section === 'favorites'
+                                ? 'お気に入り'
+                                : 'すべてのファイル'
                               : kinds.find((k) => k.id === kind)?.label}
                   </h2>
                   <span className="count">
@@ -754,6 +852,16 @@ export function App() {
                   <div className="empty">関連コンテンツがありません。</div>
                 ) : (
                   <AssetList
+                    favorites={section === 'favorites'}
+                    favoriteBusy={favoriteBusy}
+                    onFavorite={(asset) => {
+                      void toggleFavorite(asset);
+                    }}
+                    onLibrary={() => {
+                      setSection('library');
+                      setSelected(null);
+                      run(() => refresh(allFiles, 1, 'all'));
+                    }}
                     assets={pageAssets}
                     selectedId={selected?.asset_id}
                     view={related ? 'detailed-grid' : view}
@@ -783,6 +891,10 @@ export function App() {
                 <AssetDetails
                   key={selected.asset_id}
                   selected={selected}
+                  onFavorite={(asset) => {
+                    void toggleFavorite(asset);
+                  }}
+                  favoriteBusy={favoriteBusy.has(selected.asset_id)}
                   renditions={renditions}
                   jobs={jobs}
                   searching={searching}
@@ -809,6 +921,10 @@ export function App() {
       {me && viewerOpen && selected && (
         <AssetViewer
           asset={selected}
+          onFavorite={(asset) => {
+            void toggleFavorite(asset);
+          }}
+          favoriteBusy={favoriteBusy.has(selected.asset_id)}
           navigationError={error}
           hasPrevious={
             !viewerMoving &&
