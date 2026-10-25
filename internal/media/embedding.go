@@ -55,13 +55,16 @@ func (s *Service) embed(ctx context.Context, j contracts.Job) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	input, err := s.download(ctx, j, dir)
-	if err != nil {
-		return err
-	}
 	mime, err := s.sourceType(ctx, j.BlobID)
 	if err != nil {
 		return err
+	}
+	var input string
+	if mime != "application/pdf" && !strings.HasPrefix(mime, "image/") {
+		input, err = s.download(ctx, j, dir)
+		if err != nil {
+			return err
+		}
 	}
 	index := contracts.Index{BlobID: j.BlobID}
 	add := func(kind, path string, ordinal int, page *int, start, end *int64) error {
@@ -86,31 +89,28 @@ func (s *Service) embed(ctx context.Context, j contracts.Job) error {
 	}
 	switch {
 	case strings.HasPrefix(mime, "image/"):
-		path := filepath.Join(dir, "image.png")
-		if err = ffmpeg(ctx, input, path, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
-			return err
+		path, e := s.analysisImage(ctx, j, dir, 0)
+		if e != nil {
+			return e
 		}
 		if err = add("image", path, 0, nil, nil, nil); err != nil {
 			return err
 		}
 	case mime == "application/pdf":
-		var metadata struct {
-			Pages int `json:"pages"`
+		pages, e := s.pdfPages(ctx, j.BlobID)
+		if e != nil {
+			return e
 		}
-		if err = s.DB.QueryRow(ctx, `SELECT metadata FROM media.blob_metadata WHERE blob_id=$1`, j.BlobID).Scan(&metadata); err != nil {
-			return err
-		}
-		for page := 1; page <= metadata.Pages; page++ {
-			root := filepath.Join(dir, "page")
-			_, err = command(ctx, "pdftoppm", "-f", strconv.Itoa(page), "-l", strconv.Itoa(page), "-singlefile", "-scale-to", "512", "-png", input, root)
-			if err != nil {
-				return err
+		for page := 1; page <= pages; page++ {
+			path, e := s.analysisImage(ctx, j, dir, page)
+			if e != nil {
+				return e
 			}
 			p := page
-			if err = add("image", root+".png", page-1, &p, nil, nil); err != nil {
+			if err = add("image", path, page-1, &p, nil, nil); err != nil {
 				return err
 			}
-			slog.InfoContext(ctx, "media.embedding_page_completed", "job_id", j.ID, "page", page, "pages", metadata.Pages)
+			slog.InfoContext(ctx, "media.embedding_page_completed", "job_id", j.ID, "page", page, "pages", pages)
 		}
 	case strings.HasPrefix(mime, "video/"):
 		info, e := probe(ctx, input)
