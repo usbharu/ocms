@@ -1,7 +1,8 @@
 import asyncio
 import os
-import sys
+from pathlib import Path
 import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -11,10 +12,12 @@ from recommendation_server import RecommendationInput, recommendations, invalid_
 
 class RecommendationServerTests(unittest.TestCase):
     def test_isolated_entrypoint_authentication_and_bootstrap(self):
+        # unittest discovery adds runtime/ to the parent sys.path only. Set the
+        # child's directory explicitly so root-level CI runs import the sources.
         probe = subprocess.run([sys.executable, '-c',
             "import recommendation_server,sys; assert 'embedding_onnx' not in sys.modules; assert 'whisper_onnx' not in sys.modules; assert 'tagger' not in sys.modules"],
-            capture_output=True)
-        self.assertEqual(probe.returncode, 0, 'isolated entrypoint must not load media models')
+            cwd=Path(__file__).resolve().parent, capture_output=True)
+        self.assertEqual(probe.returncode, 0, probe.stderr.decode('utf-8', errors='replace'))
         with patch.dict(os.environ, {'INTERNAL_TOKEN': 'r' * 32}):
             with self.assertRaises(HTTPException) as caught:
                 recommendations(RecommendationInput(assets=[]), 'invalid')
