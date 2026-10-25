@@ -314,28 +314,32 @@ export function App() {
     setError('');
     setProgress(0);
     const update = () => setUploadTasks((current) => [...current]);
-    let lastAsset: string | undefined;
-    try {
-      for (const task of tasks) {
+    let nextTask = 0;
+    const worker = async () => {
+      while (nextTask < tasks.length) {
+        const task = tasks[nextTask++];
         task.state = 'uploading';
         update();
         try {
-          lastAsset = await uploadFile(
-            task,
-            me.csrf_token,
-            request,
-            (value) => {
-              task.progress = value;
-              setProgress(value);
-              update();
-            },
-          );
+          await uploadFile(task, me.csrf_token, request, (value) => {
+            task.progress = value;
+            setProgress(value);
+            update();
+          });
           task.state = 'completed';
         } catch {
           task.state = 'failed';
         }
         update();
       }
+    };
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(3, tasks.length) }, () => worker()),
+      );
+      const lastAsset = [...tasks]
+        .reverse()
+        .find((task) => task.state === 'completed')?.session?.asset_id;
       if (lastAsset) {
         const asset = await request(`/api/v1/assets/${lastAsset}`);
         setSelected(asset);

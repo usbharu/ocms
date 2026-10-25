@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Route, test } from '@playwright/test';
 
 const partSize = 8 * 1024 * 1024;
 
@@ -22,7 +22,7 @@ test('複数ファイルの失敗後も続行し、受信済み部分から再�
         json: { principal_id: 'alice', csrf_token: 'csrf' },
       });
     if (path === '/api/v1/uploads') {
-      const id = String(Object.keys(sessions).length);
+      const id = req.postDataJSON().filename === 'large.png' ? '0' : '1';
       sessions[id] = {
         filename: req.postDataJSON().filename,
         parts: new Set(),
@@ -82,6 +82,9 @@ test('複数ファイルの失敗後も続行し、受信済み部分から再�
   ]);
   const queue = page.getByRole('region', { name: 'アップロード状況' });
   await expect(queue).toContainText('1 / 2 件完了');
+  await expect(
+    page.getByRole('button', { name: 'large.pngを再試行' }),
+  ).toBeEnabled();
   expect(sessions['1'].completed).toBe(true);
   expect(sends.filter((value) => value === '0/parts/1')).toHaveLength(3);
   if (process.env.UI_SCREENSHOTS) {
@@ -98,4 +101,93 @@ test('複数ファイルの失敗後も続行し、受信済み部分から再�
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
+});
+
+test('最大3ファイルを並列に送り、完了・失敗した枠で後続を開始する', async ({
+  page,
+}) => {
+  const started: string[] = [];
+  const pending = new Map<string, Route>();
+  const selected: string[] = [];
+  await page.route('**/auth/config', (route) =>
+    route.fulfill({ json: { development: true } }),
+  );
+  await page.route('**/api/v1/**', async (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (path === '/api/v1/me')
+      return route.fulfill({
+        json: { principal_id: 'alice', csrf_token: 'csrf' },
+      });
+    if (path === '/api/v1/uploads') {
+      const id = req.postDataJSON().filename;
+      started.push(id);
+      return route.fulfill({ json: { upload_id: id, asset_id: id } });
+    }
+    const match = path.match(/^\/api\/v1\/uploads\/([^/]+)\/content$/);
+    if (match) {
+      expect(req.headers()['x-csrf-token']).toBe('csrf');
+      pending.set(match[1], route);
+      return;
+    }
+    if (path === '/api/v1/assets')
+      return route.fulfill({ json: { assets: [], total: 0 } });
+    if (/\/assets\/[^/]+$/.test(path)) {
+      const id = path.split('/').at(-1) ?? '';
+      selected.push(id);
+      return route.fulfill({
+        json: {
+          asset_id: id,
+          filename: id,
+          status: 'stored',
+          mime_type: 'image/png',
+          tags: [],
+        },
+      });
+    }
+    return route.fulfill({ json: { renditions: [], jobs: [] } });
+  });
+  await page.goto('/');
+  await page.getByLabel('アップロードするファイル').setInputFiles(
+    [1, 2, 3, 4, 5].map((number) => ({
+      name: `${number}.png`,
+      mimeType: 'image/png',
+      buffer: Buffer.from('synthetic'),
+    })),
+  );
+  const queue = page.getByRole('region', { name: 'アップロード状況' });
+  await expect.poll(() => pending.size).toBe(3);
+  expect([...started].sort()).toEqual(['1.png', '2.png', '3.png']);
+  await expect(queue.getByRole('progressbar')).toHaveCount(3);
+  await expect(queue.getByText('待機中', { exact: true })).toHaveCount(2);
+
+  // A failed request frees a slot even while the other two remain blocked.
+  await pending.get('2.png')?.fulfill({ status: 503, json: {} });
+  pending.delete('2.png');
+  await expect.poll(() => pending.has('4.png')).toBe(true);
+  expect(pending.size).toBe(3);
+  expect(started).toHaveLength(4);
+  await expect(
+    page.getByRole('button', { name: '2.pngを再試行' }),
+  ).toBeDisabled();
+
+  await pending.get('3.png')?.fulfill({ json: {} });
+  pending.delete('3.png');
+  await expect.poll(() => pending.has('5.png')).toBe(true);
+  expect(pending.size).toBe(3);
+  expect(started).toHaveLength(5);
+  // Finish out of order; selection still follows the original file order.
+  for (const id of ['5.png', '4.png']) {
+    await pending.get(id)?.fulfill({ json: {} });
+    pending.delete(id);
+  }
+  await expect(queue).toContainText('3 / 5 件完了');
+  expect(selected).toEqual([]);
+  await pending.get('1.png')?.fulfill({ json: {} });
+  pending.delete('1.png');
+  await expect(queue).toContainText('4 / 5 件完了');
+  await expect(
+    page.getByRole('button', { name: '2.pngを再試行' }),
+  ).toBeEnabled();
+  expect(selected[0]).toBe('5.png');
 });
