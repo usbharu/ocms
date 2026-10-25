@@ -247,7 +247,7 @@ func (s *Service) proxy(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "/api/v1/search" || strings.HasSuffix(path, "/similar") || strings.HasSuffix(path, "/recommendations"):
 		upstream = os.Getenv("SEARCH_URL")
-	case strings.HasSuffix(path, "/content") || strings.HasSuffix(path, "/preview"):
+	case (strings.HasPrefix(path, "/api/v1/uploads/") && (strings.Contains(path, "/parts") || strings.HasSuffix(path, "/complete"))) || strings.HasSuffix(path, "/content") || strings.HasSuffix(path, "/preview"):
 		upstream = os.Getenv("TRANSFER_URL")
 	case strings.HasPrefix(path, "/api/v1/jobs/") || strings.HasSuffix(path, "/renditions") || strings.HasSuffix(path, "/jobs"):
 		upstream = os.Getenv("MEDIA_URL")

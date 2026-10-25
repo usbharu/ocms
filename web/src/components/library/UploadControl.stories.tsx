@@ -18,7 +18,21 @@ export const Ready: Story = {
       within(canvasElement).getByLabelText('アップロードするファイル'),
       file,
     );
-    await expect(args.onUpload).toHaveBeenCalledWith(file);
+    await expect(args.onUpload).toHaveBeenCalledWith([file]);
   },
 };
 export const Busy: Story = { args: { busy: true } };
+
+export const Multiple: Story = {
+  play: async ({ canvasElement, args }) => {
+    const files = [
+      new File(['one'], 'one.png', { type: 'image/png' }),
+      new File(['two'], 'two.pdf', { type: 'application/pdf' }),
+    ];
+    await userEvent.upload(
+      within(canvasElement).getByLabelText('アップロードするファイル'),
+      files,
+    );
+    await expect(args.onUpload).toHaveBeenCalledWith(files);
+  },
+};
