@@ -13,7 +13,7 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 RUN CGO_ENABLED=0 go build -trimpath -o /ocms ./cmd/ocms
 
-FROM alpine:3.23
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates ffmpeg poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-jpn chromaprint espeak-ng font-dejavu && adduser -D -u 10001 app
 COPY --from=go /ocms /usr/local/bin/ocms
 COPY --from=web /web/dist /app/web
