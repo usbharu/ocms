@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"ocms/internal/catalog"
@@ -89,5 +90,37 @@ func TestFavoriteScopeBeforeResultLimit(t *testing.T) {
 				t.Fatalf("unexpected results: %+v", out)
 			}
 		})
+	}
+}
+
+func TestSemanticSearchDisabled(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			// A nil DB and no upstreams ensure rejection precedes all dependency I/O.
+			s := Service{SemanticSearchDisabled: true}
+			req := httptest.NewRequest("POST", "/api/v1/search", strings.NewReader(`{"query":"fixture","mode":"`+mode+`"}`))
+			rec := httptest.NewRecorder()
+			s.search(rec, req)
+			if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != "{\"error\":\"SEMANTIC_SEARCH_DISABLED\"}\n" {
+				t.Fatalf("response %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestSemanticSearchEnabledByDefault(t *testing.T) {
+	t.Setenv("INTERNAL_TOKEN", strings.Repeat("t", 32))
+	var called atomic.Bool
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer runtime.Close()
+	s := Service{Runtime: runtime.URL}
+	req := httptest.NewRequest("POST", "/api/v1/search", strings.NewReader(`{"query":"fixture","mode":"semantic"}`))
+	rec := httptest.NewRecorder()
+	s.search(rec, req)
+	if !called.Load() || rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "EMBEDDING_UNAVAILABLE") {
+		t.Fatalf("default search did not call Runtime: %d %s", rec.Code, rec.Body.String())
 	}
 }
