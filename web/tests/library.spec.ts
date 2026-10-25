@@ -384,7 +384,7 @@ test('upload resets filters and opens the uploaded file', async ({ page }) => {
     .locator('.app-header')
     .getByRole('button', { name: '＋ アップロード', exact: true })
     .click();
-  expect((await chooser).isMultiple()).toBe(false);
+  expect((await chooser).isMultiple()).toBe(true);
   await page.getByRole('button', { name: '音声', exact: true }).click();
   await expect(page.locator('.file')).toHaveCount(1);
   const content = page.waitForRequest(

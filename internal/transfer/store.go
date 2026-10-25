@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 	"ocms/internal/cryptostore"
 	"ocms/internal/platform"
@@ -35,6 +36,15 @@ func storeError(w http.ResponseWriter, err error) {
 // store is used by originals and derivatives. A stable operation ID recovers an
 // uncertain DB commit without deleting possibly committed S3 objects.
 func (s *Service) store(ctx context.Context, body io.Reader, size int64, operation string) (string, error) {
+	conn, err := s.DB.Acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Release()
+	return s.storeWithConn(ctx, conn, body, size, operation)
+}
+
+func (s *Service) storeWithConn(ctx context.Context, conn *pgxpool.Conn, body io.Reader, size int64, operation string) (string, error) {
 	ctx, end := platform.Span(ctx, "transfer.encrypt_stream")
 	defer end()
 	started := time.Now()
@@ -42,11 +52,7 @@ func (s *Service) store(ctx context.Context, body io.Reader, size int64, operati
 	if size < 0 || size > s.MaxSize {
 		return "", &storeFailure{413, "UPLOAD_TOO_LARGE"}
 	}
-	conn, err := s.DB.Acquire(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Release()
+	var err error
 	var locked bool
 	if err = conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1,0))`, operation).Scan(&locked); err != nil {
 		return "", err

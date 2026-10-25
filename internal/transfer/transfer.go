@@ -57,6 +57,9 @@ func New(ctx context.Context, db *pgxpool.Pool, max int64) (*Service, error) {
 func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("PUT /api/v1/uploads/{id}/content", s.upload)
+	m.HandleFunc("GET /api/v1/uploads/{id}/parts", s.parts)
+	m.HandleFunc("PUT /api/v1/uploads/{id}/parts/{part}", s.parts)
+	m.HandleFunc("POST /api/v1/uploads/{id}/complete", s.parts)
 	m.HandleFunc("GET /internal/blobs/{id}/content", s.workerRead)
 	m.HandleFunc("POST /internal/blobs/{id}/derivatives", s.derivative)
 	m.HandleFunc("GET /api/v1/assets/{id}/preview", s.preview)
@@ -265,6 +268,9 @@ func (s *Service) cleanupObject(ctx context.Context, db interface {
 
 // Reconcile only abandoned write intents; referenced/committed Blobs are never collected.
 func (s *Service) Reconcile(ctx context.Context) error {
+	if err := s.reconcileParts(ctx); err != nil {
+		return err
+	}
 	rows, err := s.DB.Query(ctx, `SELECT id,upload_id,object_key FROM storage.upload_objects WHERE state IN ('writing','duplicate') AND created_at<now()-interval '1 hour'`)
 	if err != nil {
 		return err
@@ -319,7 +325,7 @@ func (s *Service) Rewrap(ctx context.Context) error {
 		err = tx.QueryRow(ctx, `SELECT id,master_key_id,encrypted_dek,dek_wrap_nonce FROM storage.blobs WHERE master_key_id<>$1 LIMIT 1 FOR UPDATE`, s.Keys.Active).Scan(&blob, &keyID, &wrapped, &nonce)
 		if errors.Is(err, pgx.ErrNoRows) {
 			tx.Rollback(ctx)
-			return nil
+			return s.rewrapParts(ctx)
 		}
 		if err != nil {
 			tx.Rollback(ctx)

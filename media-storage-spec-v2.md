@@ -142,7 +142,7 @@ erDiagram
 | Schema | 主なテーブル | 所有 |
 |---|---|---|
 | `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results`, `wd14_rating_results`, `asset_favorites` | Catalog |
-| `storage` | `blobs`, `upload_objects` | Transfer |
+| `storage` | `blobs`, `upload_objects`, `upload_parts` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings` | Search |
 | `public` | `schema_migrations` | DB移行管理者（golang-migrate） |
@@ -223,6 +223,23 @@ CREATE TABLE catalog.upload_sessions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (asset_id, idempotency_key)
 );
+
+-- 分割アップロードの一時オブジェクト。暗号文はS3へ保存する。
+CREATE TABLE storage.upload_parts (
+    upload_id UUID NOT NULL,
+    part_number INTEGER NOT NULL CHECK (part_number >= 0),
+    object_key TEXT NOT NULL UNIQUE,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes BETWEEN 1 AND 8388608),
+    sha256 BYTEA NOT NULL CHECK (octet_length(sha256) = 32),
+    master_key_id TEXT NOT NULL,
+    encrypted_dek BYTEA NOT NULL,
+    dek_wrap_nonce BYTEA NOT NULL,
+    data_nonce BYTEA NOT NULL,
+    ready BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (upload_id, part_number)
+);
+CREATE INDEX upload_parts_expiry ON storage.upload_parts(created_at);
 
 -- キー本体はYAMLに保存し、DBには保存しない。
 CREATE TABLE storage.blobs (
@@ -451,8 +468,19 @@ sequenceDiagram
     SPA->>BFF: POST /uploads (name, size, MIME)
     BFF->>CAT: Uploadセッション作成
     CAT-->>SPA: asset_id, upload_id
-    SPA->>BFF: PUT /uploads/{id}/content
-    BFF->>X: 平文ストリームを転送
+    alt 8 MiB以下
+      SPA->>BFF: PUT /uploads/{id}/content
+      BFF->>X: 平文ストリームを転送
+    else 分割アップロード
+      loop 未受信部分（8 MiBずつ）
+        SPA->>BFF: PUT /uploads/{id}/parts/{part}
+        BFF->>X: 部分の平文を転送
+        X->>S3: 部分をGCM暗号化して一時保存
+      end
+      SPA->>BFF: POST /uploads/{id}/complete
+      BFF->>X: 結合要求
+      X->>S3: 部分を取得・認証復号
+    end
     X->>X: SHA-256計算 + DEK生成 + AES-CTR
     X->>S3: 一時オブジェクトへMultipart Upload
     S3-->>X: 完了
@@ -475,7 +503,11 @@ sequenceDiagram
 5. `UNIQUE (sha256, size_bytes)`を基準にBlobを一意化する。既存Blobに一致すれば一時S3オブジェクトを削除し、そのBlobを再利用する。
 6. 新規Blobの場合のみBlob確定と解析Jobの発行を実施する。
 7. Assetの作成は重複していても個別に行い、所有権・タグ・ファイル名を共有しない。
-8. 同一アップロードのリトライはIdempotency Key / Upload IDで識別する。中断後の**部分再開**は初期対象外。
+8. 同一アップロードのリトライはIdempotency Key / Upload IDで識別する。SPAは複数ファイルに独立したSessionを作り、順番に送信する。1件の失敗後も残りを継続し、ファイルごとの進捗・結果・再試行を表示する。
+9. 8 MiBを超えるファイルは8 MiB固定長の部分（末尾のみ短縮）を `PUT /uploads/{id}/parts/{part}` で送る。番号は0始まり。所有者・Session期限・申告サイズ・番号・実受信長を毎回検証する。同一部分・同一内容の再送は成功、異なる内容への上書きは409とする。
+10. Transferは部分ごとに独立したDEKを生成し、AES-256-GCMで暗号化してS3の一時領域へ保存する。AADにUpload IDと部分番号を結び付け、DEKはオブジェクトキーを識別子として既存のKEKでラップする。`storage.upload_parts` に保存意図・鍵メタデータを記録し、S3保存成功後のみ受信済みとする。鍵・S3資格情報・平文ファイルを他サービスへ渡さない。
+11. `GET /uploads/{id}/parts` は受信済み番号・サイズと固定部分サイズ・状態を返す。`POST /uploads/{id}/complete` は全部分の存在・長さを照合し、1部分ずつ認証復号して従来の暗号化・SHA-256・重複排除・Catalog完了処理へ流す。最終Blobの形式は§5を維持する。完了再送は同一Blobを再利用する。
+12. 部分の送信・結合・回収はUpload ID単位で排他し、競合は409とする。Catalog完了後に一時オブジェクトを削除し、未回収の部分は作成から25時間経過後にリコンシラが回収する（Session期限は24時間）。KEKの再ラップには部分のDEKも含める。ブラウザ内で失敗した部分は最大3回送信し、その後は同じ画面の「再試行」で受信済み部分をスキップする。ページ再読み込み後の自動復元は対象外。
 
 Blob削除は参照管理と分離して行い、参照がゼロになったBlobにのみGCを適用する。競合防止、冪等性、S3完了後のDB障害からの復旧は実装必須。
 
@@ -585,6 +617,9 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `POST` | `/api/v1/uploads` | Upload Session作成 |
 | `PUT` | `/api/v1/uploads/{uploadId}/content` | 平文ストリーム送信 |
 | `GET` | `/api/v1/uploads/{uploadId}` | Upload状態 |
+| `GET` | `/api/v1/uploads/{uploadId}/parts` | 受信済み部分と固定部分サイズ・状態 |
+| `PUT` | `/api/v1/uploads/{uploadId}/parts/{part}` | 0始まりの部分送信・冪等再送 |
+| `POST` | `/api/v1/uploads/{uploadId}/complete` | 全部分を結合して保存完了 |
 | `GET` | `/api/v1/characters` | 閲覧可能なキャラクターの一覧・件数・共起 |
 | `GET` | `/api/v1/assets` | Asset一覧・フィルタ |
 | `GET` | `/api/v1/assets/{assetId}` | 詳細、処理状態、自分のお気に入り状態 |
@@ -827,6 +862,7 @@ SPAのナビゲーションはライブラリ・タグ・キャラクター・�
 | AC-20 | 関連コンテンツ | キャラクター・タグ・知覚類似の固定重みで推薦し、完全一致除外・Asset別メタデータ・ACL・理由表示・探索からの復帰を保つ |
 | AC-21 | お気に入り | ユーザー別・Asset別に永続保存し、共有・ACL分離、3表示と詳細の状態同期、お気に入り内検索、登録順とページングが動作する |
 | AC-22 | コンテンツレーティング | WD14のレーティングを独立保存し、自動判定・手動設定保持・各段階の検索切替・3表示のR-18表示・ACL分離を保つ |
+| AC-23 | 複数・分割アップロード | 複数ファイルの独立送信・部分再送・再結合・境界サイズ・ACL・重複排除・一時データ回収が動作する |
 
 ## 15. 実装順序
 
@@ -853,7 +889,7 @@ SPAのナビゲーションはライブラリ・タグ・キャラクター・�
 | Embedding分割粒度 | 動画30秒、音声30〜120秒を仮初期値に評価 |
 | 検索順位融合 | RRFを初期案として評価 |
 | ブラウザ対応変換プロファイル | H.264/AAC MP4を標準とし、追加形式を検証 |
-| Upload途中再開 | 初期版対象外。必要なら再設計 |
+| Upload途中再開 | 分割APIで受信済み部分を再利用。同じ画面から再試行できる。再読み込み後の自動復元は対象外 |
 | 物理DBロール・GC協調プロトコル | API/DBトランザクション設計時に詳細確定 |
 
 ## 17. 技術リファレンス

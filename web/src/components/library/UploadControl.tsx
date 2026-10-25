@@ -8,7 +8,7 @@ export function UploadControl({
   uploadInput,
 }: {
   busy: boolean;
-  onUpload: (file: File) => void;
+  onUpload: (files: File[]) => void;
   uploadInput?: RefObject<HTMLInputElement | null>;
 }) {
   const localInput = useRef<HTMLInputElement>(null);
@@ -31,12 +31,13 @@ export function UploadControl({
         className="visually-hidden"
         tabIndex={-1}
         type="file"
+        multiple
         aria-label="アップロードするファイル"
         accept="image/*,video/*,audio/*,application/pdf"
         disabled={busy}
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onUpload(f);
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) onUpload(files);
           e.target.value = '';
         }}
       />
