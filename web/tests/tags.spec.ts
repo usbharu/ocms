@@ -98,14 +98,19 @@ test('library graph supports selection, zoom and keyboard navigation', async ({
       }),
     )
     .toBe(true);
-  // Selection animates the viewport; establish 100% before checking relative zoom.
+  // Zoom out first: a random layout's fit can be too close to the maximum zoom
+  // for a full 1.5x increase. Returning from 2/3 verifies the same factor.
   await page.getByRole('button', { name: '全体を表示' }).click();
   await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
     '100%',
   );
+  await page.getByRole('button', { name: '縮小', exact: true }).click();
+  await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
+    '67%',
+  );
   await page.getByRole('button', { name: '拡大', exact: true }).click();
   await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
-    '150%',
+    '100%',
   );
   await page.getByRole('button', { name: '全体を表示' }).click();
   await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
