@@ -1,8 +1,15 @@
 import { useRef, useState } from 'react';
-import type { Asset, AssetChanges } from '../../lib/assets';
+import {
+  type Asset,
+  type AssetChanges,
+  type Rating,
+  ratingLabel,
+  ratings,
+} from '../../lib/assets';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { NativeSelect } from '../ui/native-select';
 
 export function AssetMetadataEditor({
   asset,
@@ -15,6 +22,7 @@ export function AssetMetadataEditor({
   asset: Asset;
   onSave: (changes: AssetChanges) => Promise<Asset>;
 }) {
+  const rating = asset.rating ?? 'unrated';
   const [filename, setFilename] = useState(asset.filename);
   const [tags, setTags] = useState(asset.tags);
   const [tagInput, setTagInput] = useState('');
@@ -149,6 +157,21 @@ export function AssetMetadataEditor({
           }}
         />
       </details>
+      <Label htmlFor="asset-rating">コンテンツレーティング</Label>
+      <NativeSelect
+        id="asset-rating"
+        value={rating}
+        disabled={saving}
+        onChange={(event) => {
+          void save({ rating: event.target.value as Rating });
+        }}
+      >
+        {ratings.map((value) => (
+          <option key={value} value={value}>
+            {ratingLabel(value)}
+          </option>
+        ))}
+      </NativeSelect>
       <Label htmlFor="asset-tag-input">タグ</Label>
       {tags.length > 0 ? (
         <ul className="tag-chips" aria-label="登録済みタグ">

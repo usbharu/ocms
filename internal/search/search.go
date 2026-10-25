@@ -58,12 +58,19 @@ type query struct {
 	Limit     int      `json:"limit"`
 	Types     []string `json:"media_types"`
 	AssetID   string   `json:"asset_id,omitempty"`
+	Ratings   []string `json:"ratings"`
 }
 
 func (s *Service) search(w http.ResponseWriter, r *http.Request) {
 	var in query
 	if !platform.Decode(w, r, &in) {
 		return
+	}
+	for _, rating := range in.Ratings {
+		if !contracts.ValidRating(rating) {
+			platform.Error(w, 400, "INVALID_RATING")
+			return
+		}
 	}
 	if in.Limit <= 0 || in.Limit > 200 {
 		in.Limit = 20
@@ -73,7 +80,7 @@ func (s *Service) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Mode == "perceptual" {
-		s.perceptual(w, r, in.AssetID, in.Limit, in.Favorites)
+		s.perceptual(w, r, in.AssetID, in.Limit, in.Favorites, in.Ratings)
 		return
 	}
 	if in.Mode != "keyword" && in.Mode != "semantic" && in.Mode != "hybrid" {
@@ -95,7 +102,7 @@ func (s *Service) search(w http.ResponseWriter, r *http.Request) {
 		var out struct {
 			Assets []catalog.Asset `json:"assets"`
 		}
-		if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets?q="+url.QueryEscape(in.Query)+"&favorites="+strconv.FormatBool(in.Favorites), r.Header.Get("X-Principal"), nil, &out); err != nil {
+		if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets?q="+url.QueryEscape(in.Query)+"&favorites="+strconv.FormatBool(in.Favorites)+ratingQuery(in.Ratings), r.Header.Get("X-Principal"), nil, &out); err != nil {
 			platform.RespondError(w, err)
 			return
 		}
@@ -211,6 +218,9 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 	out := []result{}
 	seen := map[string]bool{}
 	for _, a := range authorized.Assets {
+		if !contracts.MatchesRating(a.Rating, in.Ratings) {
+			continue
+		}
 		_, directMatch := directRanks[a.ID]
 		contentMatch := false
 		if a.BlobID != nil {
@@ -262,14 +272,19 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 	platform.JSON(w, 200, map[string]any{"mode": in.Mode, "assets": out})
 }
 func (s *Service) similar(w http.ResponseWriter, r *http.Request) {
+	ratings, err := contracts.ParseRatings(r.URL.Query())
+	if err != nil {
+		platform.Error(w, 400, "INVALID_RATING")
+		return
+	}
 	favorites := r.URL.Query().Get("favorites")
 	if favorites != "" && favorites != "true" && favorites != "false" {
 		platform.Error(w, 400, "INVALID_FAVORITES")
 		return
 	}
-	s.perceptual(w, r, r.PathValue("id"), 20, favorites == "true")
+	s.perceptual(w, r, r.PathValue("id"), 20, favorites == "true", ratings)
 }
-func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID string, limit int, favorites bool) {
+func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID string, limit int, favorites bool, ratings []string) {
 	var a catalog.Asset
 	if assetID == "" {
 		platform.Error(w, 400, "ASSET_REQUIRED")
@@ -335,7 +350,7 @@ func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID str
 			return
 		}
 	}
-	s.respond(w, r, query{Mode: "perceptual", Limit: limit, Favorites: favorites}, candidates, nil)
+	s.respond(w, r, query{Mode: "perceptual", Limit: limit, Favorites: favorites, Ratings: ratings}, candidates, nil)
 }
 func audioDistance(a, b []int32) float64 {
 	best := 1.0
@@ -489,4 +504,11 @@ func (s *Service) embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func ratingQuery(ratings []string) string {
+	if ratings == nil {
+		return ""
+	}
+	return "&ratings=" + url.QueryEscape(strings.Join(ratings, ","))
 }

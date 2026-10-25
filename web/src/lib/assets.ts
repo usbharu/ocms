@@ -1,3 +1,14 @@
+export const ratings = [
+  'general',
+  'sensitive',
+  'questionable',
+  'explicit',
+  'unrated',
+] as const;
+export type Rating = (typeof ratings)[number];
+export const ratingLabel = (rating: Rating) =>
+  rating === 'unrated' ? '未判定' : rating;
+
 export type Asset = {
   is_favorite?: boolean;
   asset_id: string;
@@ -5,6 +16,7 @@ export type Asset = {
   mime_type: string;
   tags: string[];
   characters?: string[];
+  rating?: Rating;
   status: string;
   snippet?: string;
   page_number?: number;
@@ -15,6 +27,7 @@ export type AssetChanges = {
   filename?: string;
   tags?: string[];
   characters?: string[];
+  rating?: Rating;
 };
 
 export type Rendition = {
@@ -44,6 +57,7 @@ export type SearchContext = {
   tag?: string;
   character?: string;
   source?: Asset;
+  ratings?: Rating[];
 };
 export type View = 'list' | 'grid' | 'detailed-grid';
 export type Kind = 'all' | 'image' | 'video' | 'audio' | 'document';

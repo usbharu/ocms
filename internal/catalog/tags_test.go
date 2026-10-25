@@ -27,7 +27,7 @@ func TestBlobTagsRequiresLiveLeaseBeforeWriting(t *testing.T) {
 	defer worker.Close()
 	t.Setenv("MEDIA_URL", worker.URL)
 	t.Setenv("INTERNAL_TOKEN", strings.Repeat("t", 32))
-	body := `{"tags":["general"],"characters":["character"],"model_id":"` + contracts.TagModel + `","model_revision":"` + contracts.TagRevision + `"}`
+	body := `{"rating":"explicit","tags":["general"],"characters":["character"],"model_id":"` + contracts.TagModel + `","model_revision":"` + contracts.TagRevision + `"}`
 	req := httptest.NewRequest("POST", "/internal/blobs/"+blob+"/tags", strings.NewReader(body))
 	req.Header.Set("X-Service-Token", strings.Repeat("t", 32))
 	req.Header.Set("X-Job-ID", "test-job")

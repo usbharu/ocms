@@ -139,6 +139,11 @@ export function AssetList({
                     }}
                     onDoubleClick={() => onOpen?.(a)}
                   >
+                    {a.rating &&
+                      a.rating !== 'general' &&
+                      a.rating !== 'unrated' && (
+                        <span className="rating-badge">R-18</span>
+                      )}
                     <Thumbnail
                       key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`}
                       asset={a}

@@ -88,6 +88,16 @@ test('library graph supports selection, zoom and keyboard navigation', async ({
   await expect(graph).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('combobox', { name: 'タグを選択' }).selectOption('旅行');
   await expect(page.getByText('20件のファイル · 関連タグ 1件')).toBeVisible();
+  // The selection summary renders before Cytoscape finishes moving the viewport.
+  await expect
+    .poll(() =>
+      graph.evaluate((element) => {
+        const cy = (element as HTMLElement & { _cyreg: { cy: Core } })._cyreg
+          .cy;
+        return cy.nodes(':selected').data('name') === '旅行' && !cy.animated();
+      }),
+    )
+    .toBe(true);
   // Selection animates the viewport; establish 100% before checking relative zoom.
   await page.getByRole('button', { name: '全体を表示' }).click();
   await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(

@@ -26,6 +26,8 @@ import {
   pageSize,
   type Recommendation,
   type Rendition,
+  ratingLabel,
+  ratings,
   type SearchContext,
   type View,
 } from './lib/assets';
@@ -97,6 +99,7 @@ export function App() {
   const detailTitle = useRef<HTMLHeadingElement>(null);
   const fileList = useRef<HTMLElement>(null);
   const requestVersion = useRef(0);
+  const metadataVersion = useRef(0);
   const selectedId = useRef(selected?.asset_id);
   selectedId.current = selected?.asset_id;
   sectionRef.current = section;
@@ -138,8 +141,12 @@ export function App() {
     try {
       let res: { assets: Asset[]; total?: number; hash_status?: HashStatus };
       if (next.source) {
+        const params = new URLSearchParams({
+          ...(next.favorites ? { favorites: 'true' } : {}),
+          ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
+        });
         res = await request(
-          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'recommendation' ? 'recommendations' : next.mode === 'perceptual' ? 'similar' : 'duplicates'}${next.favorites ? '?favorites=true' : ''}`,
+          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'recommendation' ? 'recommendations' : next.mode === 'perceptual' ? 'similar' : 'duplicates'}${params.size ? `?${params}` : ''}`,
         );
       } else if (next.query && !next.tag && !next.character) {
         res = await request('/api/v1/search', {
@@ -148,6 +155,7 @@ export function App() {
             query: next.query,
             mode: next.mode,
             limit: 200,
+            ratings: next.ratings,
             ...(next.favorites ? { favorites: true } : {}),
           }),
         });
@@ -156,6 +164,7 @@ export function App() {
           ...(next.favorites ? { favorites: 'true' } : {}),
           ...(next.tag ? { tag: next.tag } : {}),
           ...(next.character ? { character: next.character } : {}),
+          ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
           limit: String(pageSize),
           offset: String((nextPage - 1) * pageSize),
           ...(nextKind !== 'all' ? { kind: nextKind } : {}),
@@ -220,20 +229,25 @@ export function App() {
     if (!selected || !me) return;
     let active = true;
     const update = async () => {
+      const version = metadataVersion.current;
       const [ds, js, asset] = await Promise.all([
         request(`/api/v1/assets/${selected.asset_id}/renditions`),
         request(`/api/v1/assets/${selected.asset_id}/jobs`),
         request(`/api/v1/assets/${selected.asset_id}`),
       ]);
-      if (active) {
+      if (active && version === metadataVersion.current) {
         setRenditions(ds.renditions);
         setJobs(js.jobs);
         setSelected((current) =>
-          current ? { ...current, status: asset.status } : null,
+          current
+            ? { ...current, status: asset.status, rating: asset.rating }
+            : null,
         );
         setAssets((current) =>
           current.map((a) =>
-            a.asset_id === asset.asset_id ? { ...a, status: asset.status } : a,
+            a.asset_id === asset.asset_id
+              ? { ...a, status: asset.status, rating: asset.rating }
+              : a,
           ),
         );
       }
@@ -316,6 +330,7 @@ export function App() {
           mode: comparison,
           query: '',
           source: selected,
+          ratings: context.ratings,
           favorites: context.favorites,
         },
         1,
@@ -332,6 +347,7 @@ export function App() {
     ]);
     const next: SearchContext = {
       mode: 'recommendation',
+      ratings: context.ratings,
       query: '',
       source: selected,
     };
@@ -378,7 +394,9 @@ export function App() {
   }
 
   const visibleAssets = assets.filter(
-    (a) => kind === 'all' || kindOf(a) === kind,
+    (a) =>
+      (kind === 'all' || kindOf(a) === kind) &&
+      (!context.ratings || context.ratings.includes(a.rating ?? 'unrated')),
   );
   const isResult = Boolean(
     (context.query && !context.tag && !context.character) || context.source,
@@ -478,7 +496,12 @@ export function App() {
     setKind('all');
     run(() =>
       refresh(
-        { mode, query: query.trim(), favorites: section === 'favorites' },
+        {
+          mode,
+          query: query.trim(),
+          favorites: section === 'favorites',
+          ratings: context.ratings,
+        },
         1,
         'all',
       ),
@@ -552,16 +575,19 @@ export function App() {
 
   async function saveMetadata(changes: AssetChanges): Promise<Asset> {
     if (!selected) throw new Error('ファイルを選択してください');
+    ++metadataVersion.current;
     const assetId = selected.asset_id;
     const version = requestVersion.current;
     const updated: Asset = await request(`/api/v1/assets/${assetId}`, {
       method: 'PATCH',
       body: JSON.stringify(changes),
     });
+    ++metadataVersion.current;
     const metadata = {
       filename: updated.filename,
       tags: updated.tags,
       characters: updated.characters,
+      rating: updated.rating,
     };
     setSelected((current) =>
       current?.asset_id === assetId ? { ...current, ...metadata } : current,
@@ -750,6 +776,37 @@ export function App() {
                     onRefresh={() => run(() => refresh())}
                   />
                 )}
+                <fieldset className="rating-filter" disabled={searching}>
+                  <legend>レーティング</legend>
+                  {ratings.map((rating) => (
+                    <label key={rating}>
+                      <input
+                        type="checkbox"
+                        checked={
+                          !context.ratings || context.ratings.includes(rating)
+                        }
+                        onChange={(event) => {
+                          const selectedRatings = context.ratings ?? [
+                            ...ratings,
+                          ];
+                          const nextRatings = event.target.checked
+                            ? [...selectedRatings, rating]
+                            : selectedRatings.filter(
+                                (value) => value !== rating,
+                              );
+                          const next = { ...context, ratings: nextRatings };
+                          setContext(next);
+                          setSelected(null);
+                          setAssets([]);
+                          setTotal(null);
+                          setPage(1);
+                          run(() => refresh(next, 1));
+                        }}
+                      />
+                      {ratingLabel(rating)}
+                    </label>
+                  ))}
+                </fieldset>
                 <div className="result-heading" aria-live="polite">
                   <h2>
                     {context.source

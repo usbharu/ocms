@@ -1,5 +1,5 @@
 import unittest
-from tagger import select_tags, prepare_image
+from tagger import select_tags, select_rating, prepare_image
 
 
 class TaggerTest(unittest.TestCase):
@@ -21,6 +21,19 @@ class TaggerTest(unittest.TestCase):
         for scores in [[float('nan')], [float('inf')], [-1], [1.1], []]:
             with self.assertRaises(ValueError):
                 select_tags([{'name': 'x', 'category': '0'}], scores)
+
+    def test_rating_is_separate_and_uses_highest_score(self):
+        labels = [{'name': name, 'category': '9'} for name in
+                  ['general', 'sensitive', 'questionable', 'explicit']]
+        labels.append({'name': 'other', 'category': '0'})
+        self.assertEqual(select_rating(labels, [.1, .7, .15, .05, 1]), 'sensitive')
+        self.assertEqual(select_rating(labels, [.25, .25, .25, .25, 1]), 'explicit')
+        self.assertEqual(select_tags(labels, [.1, .7, .15, .05, 1]), [{'name': 'other', 'score': 1.0}])
+        for scores in [[1], [.1, .2, float('nan'), .4, 1], [.1, .2, .3, 1.1, 1]]:
+            with self.assertRaises(ValueError):
+                select_rating(labels, scores)
+        with self.assertRaises(ValueError):
+            select_rating(labels[1:], [.2, .3, .4, 1])
 
     def test_white_alpha_square_bgr_and_raw_range(self):
         from PIL import Image

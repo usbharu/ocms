@@ -66,5 +66,8 @@ func (s *Service) reconcileCharacters(ctx context.Context, blob string) error {
 	if _, err = tx.Exec(ctx, applyWD14Characters, blob, ids); err != nil {
 		return err
 	}
+	if _, err = tx.Exec(ctx, applyWD14Rating, blob, ids); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }

@@ -1,4 +1,4 @@
-"""WD 1.4 general tags and separate character predictions; ratings are excluded."""
+"""WD 1.4 general tags, characters and separate content rating."""
 import csv
 import math
 
@@ -14,6 +14,15 @@ def select_tags(labels, scores, category=0, threshold=THRESHOLD):
             for label, score in zip(labels, scores)
             if int(label['category']) == category and float(score) >= threshold]
     return sorted(tags, key=lambda tag: (-tag['score'], tag['name']))[:256]
+
+
+def select_rating(labels, scores):
+    ratings = select_tags(labels, scores, category=9, threshold=0)
+    if len(ratings) != 4 or {r['name'] for r in ratings} != {'general', 'sensitive', 'questionable', 'explicit'}:
+        raise ValueError('invalid rating output')
+    # A score tie selects the more restrictive rating.
+    order = ['general', 'sensitive', 'questionable', 'explicit']
+    return max(ratings, key=lambda r: (r['score'], order.index(r['name'])))['name']
 
 
 def prepare_image(image, size):
@@ -43,5 +52,6 @@ class Tagger:
         input = self.session.get_inputs()[0]
         value = prepare_image(image, input.shape[1])
         scores = self.session.run(None, {input.name: value})[0][0]
-        return {'tags': select_tags(self.labels, scores),
+        return {'rating': select_rating(self.labels, scores),
+                'tags': select_tags(self.labels, scores),
                 'characters': select_tags(self.labels, scores, category=4, threshold=0.85)}

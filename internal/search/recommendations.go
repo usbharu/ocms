@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"ocms/internal/catalog"
+	"ocms/internal/contracts"
 	"ocms/internal/platform"
 )
 
@@ -85,6 +86,11 @@ func rankRecommendations(source catalog.Asset, assets []catalog.Asset, hashes ma
 }
 
 func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
+	ratings, err := contracts.ParseRatings(r.URL.Query())
+	if err != nil {
+		platform.Error(w, 400, "INVALID_RATING")
+		return
+	}
 	ctx, end := platform.Span(r.Context(), "search.recommendations")
 	defer end()
 	r = r.WithContext(ctx)
@@ -123,7 +129,11 @@ func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
 			platform.RespondError(w, err)
 			return
 		}
-		assets = append(assets, authorized.Assets...)
+		for _, asset := range authorized.Assets {
+			if contracts.MatchesRating(asset.Rating, ratings) {
+				assets = append(assets, asset)
+			}
+		}
 	}
 	// Do not return recommendations if access to the source was revoked meanwhile.
 	if err = platform.Call(ctx, "GET", sourceURL, principal, nil, &source); err != nil {
