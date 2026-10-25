@@ -141,8 +141,12 @@ export function App() {
     try {
       let res: { assets: Asset[]; total?: number; hash_status?: HashStatus };
       if (next.source) {
+        const params = new URLSearchParams({
+          ...(next.favorites ? { favorites: 'true' } : {}),
+          ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
+        });
         res = await request(
-          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'recommendation' ? 'recommendations' : next.mode === 'perceptual' ? 'similar' : 'duplicates'}?${new URLSearchParams({ ...(next.favorites ? { favorites: 'true' } : {}), ...(next.ratings ? { ratings: next.ratings.join(',') } : {}) })}`,
+          `/api/v1/assets/${next.source.asset_id}/${next.mode === 'recommendation' ? 'recommendations' : next.mode === 'perceptual' ? 'similar' : 'duplicates'}${params.size ? `?${params}` : ''}`,
         );
       } else if (next.query && !next.tag && !next.character) {
         res = await request('/api/v1/search', {
