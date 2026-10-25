@@ -95,6 +95,7 @@ services:
       DATABASE_URL: postgres://search_app:${APP_DB_PASSWORD}@postgres:5432/ocms?sslmode=disable
       MEDIA_URL: http://worker:8080
       RUNTIME_URL: http://runtime:8080
+      SEMANTIC_SEARCH_ENABLED: ${SEMANTIC_SEARCH_ENABLED:-true}
     depends_on:
       catalog: {condition: service_healthy}
   runtime:
@@ -123,6 +124,7 @@ services:
       TRANSFER_URL: http://transfer:8080
       SEARCH_URL: http://search:8080
       RUNTIME_URL: http://runtime:8080
+      SEMANTIC_SEARCH_ENABLED: ${SEMANTIC_SEARCH_ENABLED:-true}
       MEDIA_JOB_TIMEOUT_SECONDS: ${MEDIA_JOB_TIMEOUT_SECONDS:-7200}
     tmpfs: ["/tmp:rw,size=768m,mode=1777"]
     mem_limit: 768m

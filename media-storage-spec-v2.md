@@ -565,6 +565,8 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 - 検索用ベクトルは`vector(768)`に格納し、cosine距離`<=>`を利用する。モデル改訂時は別リビジョンとして再インデックスする。
 - 将来次元を256/512等に短縮する場合、テーブル・インデックスを別途設計し、短縮後は再正規化する。
 
+運用設定 `SEMANTIC_SEARCH_ENABLED` は既定で `true` とする。SearchとWorkerの起動時に `false` を指定した場合、`semantic`・`hybrid` 検索はHTTP 503（`SEMANTIC_SEARCH_DISABLED`）を返し、Workerは `embedding.generate` Jobの取得・再試行・期限切れによる失敗確定を停止する。Job・チェックポイント・検索ベクトルは保持し、新規Jobも待機させる。停止中のEmbedding JobはAsset状態の集約から除外し、それ以外のJobが完了すれば `ready` とする。再有効化時は通常のJob取得・状態集約を再開する。失敗確定済みJobの再実行は通常の再試行操作に従う。全文・知覚類似・完全一致検索、関連コンテンツ、OCR・ASR、自動タグは継続する。AC-14の意味検索検証は有効時に行う。
+
 ### 9.5 検索時のACL
 
 1. Searchがキーワード・類似・ベクトル検索から候補Blob/Assetを取得する。

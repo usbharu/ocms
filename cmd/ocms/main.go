@@ -34,6 +34,10 @@ func run() error {
 		return dbmigrate.Run(ctx, os.Args[2:])
 	}
 	name := platform.Env("SERVICE", "bff")
+	semanticSearchEnabled, err := strconv.ParseBool(platform.Env("SEMANTIC_SEARCH_ENABLED", "true"))
+	if err != nil {
+		return errors.New("invalid SEMANTIC_SEARCH_ENABLED: expected boolean")
+	}
 	shutdown, err := platform.Telemetry(ctx, name)
 	if err != nil {
 		return err
@@ -108,6 +112,7 @@ func run() error {
 		}
 		defer db.Close()
 		s := media.New(db)
+		s.SemanticSearchDisabled = !semanticSearchEnabled
 		go s.Run(ctx)
 		handler = s.Handler()
 	case "search":
@@ -116,7 +121,9 @@ func run() error {
 			return e
 		}
 		defer db.Close()
-		handler = search.New(db).Handler()
+		s := search.New(db)
+		s.SemanticSearchDisabled = !semanticSearchEnabled
+		handler = s.Handler()
 	case "bff":
 		s, e := bff.New(ctx)
 		if e != nil {

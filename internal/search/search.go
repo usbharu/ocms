@@ -20,6 +20,7 @@ import (
 )
 
 type Service struct {
+	SemanticSearchDisabled  bool
 	DB                      *pgxpool.Pool
 	Catalog, Media, Runtime string
 }
@@ -85,6 +86,10 @@ func (s *Service) search(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Mode != "keyword" && in.Mode != "semantic" && in.Mode != "hybrid" {
 		platform.Error(w, 400, "SEARCH_MODE_UNSUPPORTED")
+		return
+	}
+	if s.SemanticSearchDisabled && in.Mode != "keyword" {
+		platform.Error(w, http.StatusServiceUnavailable, "SEMANTIC_SEARCH_DISABLED")
 		return
 	}
 	spanName := "search.keyword"
