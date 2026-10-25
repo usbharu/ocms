@@ -73,3 +73,44 @@ func TestViewerContentSecurityPolicy(t *testing.T) {
 		t.Fatal("viewer must not enable inline script or JavaScript eval")
 	}
 }
+
+func TestRecommendationsUseSearchAndSessionPrincipal(t *testing.T) {
+	t.Setenv("AUTH_MODE", "development")
+	t.Setenv("PUBLIC_URL", "http://localhost:8080")
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/api/v1/assets/source/recommendations" || r.Header.Get("X-Principal") != "reader" || r.Header.Get("Cookie") != "" {
+			t.Error("recommendation proxy did not enforce session boundary")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"assets":[]}`))
+	}))
+	defer upstream.Close()
+	t.Setenv("SEARCH_URL", upstream.URL)
+	t.Setenv("CATALOG_URL", "http://127.0.0.1:1")
+	s, err := New(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sessions["session"] = session{Principal: "reader", Expiry: time.Now().Add(time.Hour)}
+	for _, authenticated := range []bool{false, true} {
+		req := httptest.NewRequest("GET", "/api/v1/assets/source/recommendations", nil)
+		req.Header.Set("X-Principal", "forged")
+		if authenticated {
+			req.AddCookie(&http.Cookie{Name: "ocms_session", Value: "session"})
+		}
+		response := httptest.NewRecorder()
+		s.Handler(fstest.MapFS{}).ServeHTTP(response, req)
+		expected := 401
+		if authenticated {
+			expected = 200
+		}
+		if response.Code != expected {
+			t.Fatalf("status %d, expected %d", response.Code, expected)
+		}
+	}
+	if calls != 1 {
+		t.Fatal("anonymous request reached Search")
+	}
+}

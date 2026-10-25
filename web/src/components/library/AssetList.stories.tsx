@@ -126,3 +126,26 @@ export const EmptyFavorites: Story = {
 export const FavoriteSaving: Story = {
   args: { favoriteBusy: new Set([assets[0].asset_id]) },
 };
+
+export const Recommendations: Story = {
+  args: {
+    view: 'detailed-grid',
+    recommendations: assets.map((asset, i) => ({
+      ...asset,
+      score: 92.125 - i * 20,
+      common_tags: ['旅行', '風景', '画像', '記録'],
+      common_characters: ['キャラクターA'],
+      perceptual: 'visual',
+    })),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText('評価 92.1')).toBeVisible();
+    await expect(
+      canvas.getAllByText('共通タグ：旅行 · 風景 · 画像 · ほか1件')[0],
+    ).toBeVisible();
+    await expect(
+      canvas.getAllByText('共通キャラクター：キャラクターA')[0],
+    ).toBeVisible();
+  },
+};

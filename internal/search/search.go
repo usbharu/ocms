@@ -31,6 +31,7 @@ func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("POST /api/v1/search", s.search)
 	m.HandleFunc("GET /api/v1/assets/{id}/similar", s.similar)
+	m.HandleFunc("GET /api/v1/assets/{id}/recommendations", s.recommendations)
 	m.HandleFunc("POST /internal/index", s.index)
 	m.HandleFunc("POST /internal/embeddings", s.embeddings)
 	m.HandleFunc("GET /internal/passages/{id}", s.passages)

@@ -93,7 +93,7 @@ Hydraでの成功をPocket ID固有の接続検証済みと扱わない。利用
 
 ## DB・メディア処理を変更する際の注意
 
-マイグレーション001〜004は空のDBへの初回起動時に適用される。既存DBへの自動適用や適用履歴の管理は未実装。SQLを追加・変更する場合は、既存DBへの適用手順もREADMEに記載する。推論チェックポイントを使う既存メディアDBには `004_embedding_checkpoints.sql` を一度適用する。実行手順はREADMEの「メディア処理と検索」を参照する。
+マイグレーションは `migrate` サービスとgolang-migrateが `public.schema_migrations` のバージョン・dirty状態を使って管理する。SQLは `migrations/NNN_name.up.sql` に追加し、全体を `BEGIN;` / `COMMIT;` で囲む。適用済みSQLは変更せず、psql専用の変数・メタコマンドは使わない。履歴のない既存DBは適用済み番号を確認して一度だけ `baseline` で引き継ぐ。dirty状態の自動解除は禁止し、READMEの「DBマイグレーションと更新」に従う。管理資格情報は `migrate` に限定し、通常サービスへ渡さない。移行を変更した場合は使い捨てDBの `python3 scripts/migration-integration.py` を実行する。
 
 WorkerとTransferは `MEDIA_MAX_PDF_PAGES`（既定500）を共有する。WorkerのJob期限は `MEDIA_JOB_TIMEOUT_SECONDS`（既定7200秒）。制限やチェックポイントを変更するときは、両サービスの整合性、境界値、再試行時の結果再利用を確認する。WorkerとRuntimeの作業平文はtmpfsで扱い、処理後に削除する。
 

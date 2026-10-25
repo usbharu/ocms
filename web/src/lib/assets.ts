@@ -35,7 +35,8 @@ export type Mode =
   | 'semantic'
   | 'hybrid'
   | 'perceptual'
-  | 'exact_duplicate';
+  | 'exact_duplicate'
+  | 'recommendation';
 export type SearchContext = {
   favorites?: boolean;
   mode: Mode;
@@ -90,3 +91,11 @@ export function renditionName(profile: string) {
   const page = profile.match(/^pdf\.page-(\d+)-v1$/);
   return page ? `${page[1]} ページ · PNG` : profile;
 }
+
+export type HashStatus = 'pending' | 'ready' | 'unsupported';
+export type Recommendation = Asset & {
+  score: number;
+  common_tags: string[];
+  common_characters: string[];
+  perceptual?: 'visual' | 'audio';
+};

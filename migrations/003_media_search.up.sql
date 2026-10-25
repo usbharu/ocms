@@ -3,8 +3,12 @@ CREATE EXTENSION IF NOT EXISTS pgroonga;
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE SCHEMA media;
 CREATE SCHEMA search;
-SELECT format('CREATE ROLE media_app LOGIN PASSWORD %L', :'app_password') \gexec
-SELECT format('CREATE ROLE search_app LOGIN PASSWORD %L', :'app_password') \gexec
+DO $$ BEGIN
+ EXECUTE format('CREATE ROLE media_app LOGIN PASSWORD %L', current_setting('ocms.app_db_password'));
+END $$;
+DO $$ BEGIN
+ EXECUTE format('CREATE ROLE search_app LOGIN PASSWORD %L', current_setting('ocms.app_db_password'));
+END $$;
 
 CREATE TABLE media.processing_jobs (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),event_id uuid NOT NULL,source_blob_id uuid NOT NULL,

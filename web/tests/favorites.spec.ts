@@ -1,5 +1,89 @@
 import { expect, test } from '@playwright/test';
 
+for (const section of ['library', 'favorites']) {
+  test(`favorite changes survive recommendation back navigation from ${section}`, async ({
+    page,
+  }) => {
+    const items = [
+      {
+        asset_id: 'source',
+        filename: '元.png',
+        mime_type: 'image/png',
+        tags: [],
+        status: 'ready',
+        is_favorite: true,
+      },
+      {
+        asset_id: 'related',
+        filename: '関連.png',
+        mime_type: 'image/png',
+        tags: [],
+        status: 'ready',
+        is_favorite: true,
+      },
+    ];
+    await page.route('**/auth/config', (r) => r.fulfill({ json: {} }));
+    await page.route('**/api/v1/**', (r) => {
+      const url = new URL(r.request().url());
+      if (url.pathname.endsWith('/me'))
+        return r.fulfill({ json: { principal_id: 'alice' } });
+      if (url.pathname.endsWith('/favorite')) {
+        items[1].is_favorite = false;
+        return r.fulfill({ status: 204 });
+      }
+      if (url.pathname.endsWith('/recommendations'))
+        return r.fulfill({
+          json: {
+            assets: [
+              {
+                ...items[1],
+                score: 80,
+                common_tags: [],
+                common_characters: [],
+              },
+            ],
+          },
+        });
+      if (url.pathname === '/api/v1/assets') {
+        const assets =
+          url.searchParams.get('favorites') === 'true'
+            ? items.filter((a) => a.is_favorite)
+            : items;
+        return r.fulfill({ json: { assets, total: assets.length } });
+      }
+      if (url.pathname.endsWith('/renditions'))
+        return r.fulfill({ json: { renditions: [] } });
+      if (url.pathname.endsWith('/jobs'))
+        return r.fulfill({ json: { jobs: [] } });
+      return r.fulfill({ json: items[0] });
+    });
+    await page.goto('/');
+    if (section === 'favorites')
+      await page
+        .getByRole('navigation', { name: 'ワークスペース' })
+        .getByRole('button', { name: 'お気に入り', exact: true })
+        .click();
+    await page.getByRole('button', { name: '元.png', exact: true }).click();
+    await page
+      .getByRole('button', { name: '関連コンテンツ', exact: true })
+      .click();
+    await page
+      .getByRole('button', { name: '関連.png：お気に入りを解除' })
+      .click();
+    await expect(
+      page.getByRole('button', { name: '関連.png：お気に入りに登録' }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: '戻る', exact: true }).click();
+    const list = page.getByRole('region', { name: 'ファイル一覧' });
+    if (section === 'favorites')
+      await expect(list.locator('.file')).toHaveCount(1);
+    else
+      await expect(
+        list.getByRole('button', { name: '関連.png：お気に入りに登録' }),
+      ).toBeVisible();
+  });
+}
+
 for (const view of ['list', 'grid', 'detailed-grid']) {
   test(`favorites in ${view}`, async ({ page }) => {
     let favorite = false;

@@ -1,3 +1,4 @@
+BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA catalog;
 CREATE SCHEMA storage;
@@ -50,9 +51,14 @@ CREATE TABLE storage.upload_objects (
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ON storage.upload_objects(upload_id) WHERE state='stored';
-SELECT format('CREATE ROLE catalog_app LOGIN PASSWORD %L', :'app_password') \gexec
-SELECT format('CREATE ROLE transfer_app LOGIN PASSWORD %L', :'app_password') \gexec
+DO $$ BEGIN
+ EXECUTE format('CREATE ROLE catalog_app LOGIN PASSWORD %L', current_setting('ocms.app_db_password'));
+END $$;
+DO $$ BEGIN
+ EXECUTE format('CREATE ROLE transfer_app LOGIN PASSWORD %L', current_setting('ocms.app_db_password'));
+END $$;
 GRANT USAGE ON SCHEMA catalog TO catalog_app;
 GRANT ALL ON ALL TABLES IN SCHEMA catalog TO catalog_app;
 GRANT USAGE ON SCHEMA storage TO transfer_app;
 GRANT ALL ON ALL TABLES IN SCHEMA storage TO transfer_app;
+COMMIT;

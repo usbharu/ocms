@@ -73,6 +73,8 @@ flowchart TB
     BFF --> SRCH[Search Service]
 
     CAT --> PG[(PostgreSQL)]
+    MIG[DB移行 / golang-migrate] --> PG
+    MIG -. 正常終了後に起動 .-> CAT
     XFER --> PG
     SRCH --> PG
     XFER <--> S3[(S3)]
@@ -89,9 +91,9 @@ flowchart TB
 | サービス | 責務 | 保持しない責務 |
 |---|---|---|
 | **BFF / Auth** | OIDC Code Flow、セッションCookie、CSRF、フロントエンド向けAPI、内部への認証主体伝搬 | S3 I/O、暗号鍵操作 |
-| **Catalog Service** | 論理Asset、所有者・ACL、アップロード状態、AssetとBlobの参照、重複結果へのアクセス制御 | 暗号化・復号、モデル推論 |
+| **Catalog Service** | 論理Asset、所有者・ACL、アップロード状態、AssetとBlobの参照、重複結果へのアクセス制御、Asset別メタデータの認可済み推薦候補 | 暗号化・復号、モデル推論 |
 | **Transfer Service** | マスターキー読み込み、DEK生成/ラップ、AES-CTR暗号化・復号、S3 I/O、SHA-256計算、HTTP Range、Blob登録 | OCR、全文検索 |
-| **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、Catalog経由の一括認可 | 平文ファイル保存 |
+| **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、関連コンテンツの評価・推薦、Catalog経由の一括認可 | 平文ファイル保存 |
 | **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成、WD14タグ集約 | ユーザー直接認証、マスターキー参照 |
 | **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ・キャラクター推論API | 検索DB操作、ACL判断 |
 
@@ -142,6 +144,7 @@ erDiagram
 | `storage` | `blobs`, `upload_objects` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings` | Search |
+| `public` | `schema_migrations` | DB移行管理者（golang-migrate） |
 
 ### 4.3 主要DDL（設計ベースライン）
 
@@ -332,6 +335,15 @@ CREATE INDEX idx_embeddings_blob ON search.embeddings(blob_id);
 - Assetが参照するBlob、および有効なRenditionで参照される派生Blobは削除しない。GCでは参照追加と`deleting`への遷移を競合なく排他制御し、猶予期間後に再確認して削除する。
 - Outboxイベントはat-least-once配送、Worker処理は冪等とする。`FOR UPDATE SKIP LOCKED`等でJobを取得し、リース切れJobを再実行できるようにする。
 - Blob共有に伴う処理結果（OCR、ASR、Embedding、再エンコード）はBlobごとに再利用する。Asset固有情報（ファイル名、タグ、ACL）は再利用・混同しない。
+
+### 4.5 DBマイグレーション
+
+- `migrate` はgolang-migrate v4.19.1を呼び出す起動前の保守プロセスとする。番号順の適用、排他ロック、`public.schema_migrations` のバージョン・dirty状態の管理は同ツールが担う。
+- SQLはアプリ共通イメージの `/app/migrations` に `NNN_name.up.sql` として同梱する。ファイルごとに `BEGIN` / `COMMIT` で原子性を保ち、適用済みSQLの変更は新規マイグレーションで行う。
+- 新規DBも既存DBも未適用分だけを実行する。履歴のない既存DBは自動推測せず、管理者が適用済み番号を一度だけ `baseline` で宣言する。SQLを再実行せず、既存データを保持する。
+- Catalogと検証用OIDC BFFは `migrate` の正常終了を起動条件にする。他のGoサービスはCatalogへの依存を経由して待つ。既存プロセスは更新前に停止する。失敗時はアプリを起動せず、dirty状態の確認・修復後に管理者が `force` で履歴を訂正して再実行する。
+- DB管理資格情報を持つのはPostgreSQLと `migrate` に限定し、各サービスのスキーマ・ロール分離を維持する。移行失敗のログにはSQL・接続URL・資格情報・データ値を出さず、固定のエラーコードを記録する。
+- 状態確認は `ocms migrate version`、通常適用は `ocms migrate up`、既存DBの引き継ぎは `ocms migrate baseline N`、確認済みの障害復旧は `ocms migrate force N` とする。自動ダウングレードは行わない。
 
 ## 5. 暗号化と鍵管理
 
@@ -577,6 +589,7 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `DELETE` | `/api/v1/assets/{assetId}` | 論理削除 |
 | `GET` | `/api/v1/assets/{assetId}/duplicates` | 同一バイナリのAsset一覧（閲覧可能分のみ） |
 | `GET` | `/api/v1/assets/{assetId}/similar` | 知覚的類似ファイル検索 |
+| `GET` | `/api/v1/assets/{assetId}/recommendations` | キャラクター・タグ・知覚類似による推薦（最大200件） |
 | `POST` | `/api/v1/search` | キーワード・意味・ハイブリッド検索 |
 | `POST` | `/api/v1/search/by-media` | 画像/音声などを入力とする検索 |
 | `POST` | `/api/v1/assets/{assetId}/renditions` | 再エンコード要求 |
@@ -650,6 +663,7 @@ WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を
 |---|---|
 | `Catalog.Authorize(assetId, principal, action)` | 単一Asset ACL |
 | `Catalog.BatchAuthorize(assetIds, principal, read)` | 検索結果のACL |
+| `GET /internal/assets/{assetId}/recommendation-candidates` | 比較元と候補のACLを確認し、Asset別メタデータの上位1,000件の `asset_ids` を返す |
 | `Catalog.CompleteUpload(uploadId, blobId)` | Upload完了・参照確定・Outbox |
 | `Transfer.ReadBlob(blobId, optionalRange, jobContext)` | Worker用復号ストリーム |
 | `Transfer.StoreDerivative(sourceBlobId, profile, stream)` | 派生Blob保存・重複排除 |
@@ -657,6 +671,37 @@ WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を
 | `Search.UpsertEmbeddings(blobId, modelRevision, vectors)` | ベクトル反映 |
 
 外部でユーザー指定の生`blob_id`から任意のファイルを取得できる経路は提供しない。
+
+### 10.3 関連コンテンツ
+
+`GET /api/v1/assets/{assetId}/recommendations` は、比較元から関連する閲覧可能なAssetを取得する。比較元自身・比較元と同じBlob・削除済みAssetを除外する。未許可・削除済みの比較元は404、依存サービスの障害は503とし、障害を空結果や解析待ちとして返さない。
+
+評価値は `100 × (0.5C + 0.3T + 0.2H)` とする。`C` はキャラクター集合、`T` はタグ集合のJaccard係数（共通要素数÷和集合の要素数）。保存された名前の完全一致で比較し、重複を除く。空集合同士は0点とする。`H` は画像・動画・PDFではpHashの最小距離が12以下のとき `1 − 距離/64`、音声では既存の音響距離が0.25以下のとき `1 − 距離`。非該当・未生成は0点とし、重みを再配分しない。
+
+Catalogは閲覧可能なAsset自身のメタデータから `0.5C + 0.3T` の上位1,000件を取得する。Searchは知覚類似の上位1,000 Blobを取得し、両方の候補をCatalogで最終認可する。一括認可の識別子上限に収まるよう、Asset IDとBlob IDを分けて要求する。Blobを共有する別Assetのメタデータを評価に流用しない。比較元の閲覧権限も応答前に再確認する。
+
+Searchは認可後のAssetごとに総合評価を計算し、0点を除き、丸める前の評価値の降順・同点ならAsset IDの昇順で最大200件を返す。候補上限があるため、全ライブラリの厳密な順位は保証しない。ページングと種類フィルターはSPAが取得済み結果に適用する。
+
+```mermaid
+sequenceDiagram
+    participant SPA
+    participant BFF
+    participant Search
+    participant Catalog
+    SPA->>BFF: 関連コンテンツを要求
+    BFF->>Search: セッションの主体を伝搬
+    Search->>Catalog: 比較元の認可・メタデータ候補
+    Search->>Search: 知覚類似候補を取得
+    Search->>Catalog: 候補を一括認可・比較元を再確認
+    Search->>Search: Assetごとに評価・順位付け
+    Search-->>SPA: BFF経由で評価・理由付きの結果
+```
+
+応答は `source_asset_id`、`hash_status`（`ready` / `pending` / `unsupported`）、`assets` を含む。各Assetに `score`（丸めない数値）、`common_tags`、`common_characters`、知覚類似がある場合だけ `perceptual`（`visual` / `audio`）を追加する。ハッシュ未生成でもメタデータ候補を返す。知覚類似の `page_number` / `start_ms` は最も近い実際のページ・フレームの値を返し、生のハッシュは公開しない。新しい永続データ・推論・閲覧履歴は追加しない。
+
+```json
+{"source_asset_id":"00000000-0000-4000-8000-000000000001","hash_status":"pending","assets":[]}
+```
 
 ## 11. OpenTelemetry・ログ
 
@@ -697,10 +742,12 @@ WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を
 
 ## 12. フロントエンド
 
+- ファイル詳細の「関連コンテンツ」から比較元のサムネイル・名前と戻る操作を持つ画面を開く。推薦は関連性で分けず、評価順の詳細グリッドに評価値（小数1桁）と共通キャラクター・共通タグ・見た目や音の類似理由を表示する。評価値は確率ではない。24件単位のページ移動と種類フィルターを提供し、取得結果内で全画面閲覧と連続探索を行う。戻る操作で前の比較元・ページ・選択を復元し、最初の画面では元のライブラリ条件と選択へ戻る。読み込み・空・失敗と再試行・類似解析待ちを区別する。
 - 共通ヘッダーにOCMS、ライブラリ・タグ・キャラクターの切り替え、画面の操作、ログアウトを一段で配置する。本文に切り替え行や同名の見出し行を重ねない。ページのh1は読み上げ用に維持する。ライブラリのアップロードはヘッダーから実行する。
-- キャラクター画面はタグ画面と同じ一覧・検索・ワードクラウド・共起グラフを提供し、キャラクター専用APIから取得する。詳細ではタグと別の欄でキャラクターを追加・削除する。
+- キャラクター画面はタグ画面と同じ一覧・検索・ワードクラウド・共起グラフを提供し、キャラクター専用APIから取得する。詳細ではタグと別の欄でキャラクターを追加・削除する。キャラクター名からライブラリのキャラクター完全一致フィルターへ移動できる。
 - タグ画面でタグ名の検索、件数付き一覧、ワードクラウド、共起グラフを切り替える。ワードクラウドの配置にd3-cloud、グラフの配置・描画にCytoscape.jsを使い、可視化は遅延読み込みする。クラウドの文字とグラフの円は被リンク数に応じて大きくし、グラフの線幅は共起件数に応じて変える。グラフはタグ選択による関連の強調、拡大・縮小・ドラッグ・タッチ操作に対応する。クラウドで配置できないタグは一覧へ誘導し、キーボード操作用のタグ選択とファイル表示を用意する。タグからライブラリの完全一致フィルターへ移動でき、解除・種類変更・ページ移動を利用できる。
 - グラフの配置はcytoscape-colaに任せ、ノードとラベルの境界を含めて重なりを避ける。被リンクが多いタグを大きく、少ないタグを小さく表示し、継続シミュレーションでドラッグに周囲が追従する。縮小時の小さなラベルは隠し、ホバー・選択時に表示する。タグ選択で関連を強調し、必要なら読みやすい倍率へ寄る。手動ズーム・パンは配置の更新で上書きしない。再配置、動きの停止・再開を提供し、画面外・アンマウント時はシミュレーションを停止する。動きを減らす設定では初期配置をアニメーションせず、その後も明示的に再開するまで静止する。
+- ライブラリの詳細パネルではタグ名・キャラクター名のクリック・キーボード操作で、それぞれの完全一致フィルターへ移動する。検索語・種類・比較条件を解除して先頭ページを表示し、詳細パネルを閉じる。タグ名・キャラクター名と削除ボタンは独立させ、保存中はどちらも無効化する。
 - TypeScript + React SPAでログイン、アップロード、ファイル一覧/詳細、プレビュー、タグ編集、検索を提供する。
 - 一覧は1ページ24件とし、前後のページ移動と表示範囲・件数を表示する。通常一覧はAPIからページ単位で取得し、検索・比較は取得済み結果をページ分割する。検索・比較APIの既存の結果上限は維持する。検索・種類・比較元の変更時は先頭ページへ戻す。
 - 幅800pxを超える画面のファイル詳細はスクロールに追従し、長い内容は詳細内でスクロールする。幅800px以下では一覧の上に表示する。
@@ -762,7 +809,8 @@ SPAのナビゲーションはライブラリ・タグ・キャラクター・�
 | AC-17 | 障害復旧 | S3/DB障害、Job再実行、孤立オブジェクト回収が動作 |
 | AC-18 | 秘密情報の非出力 | ログ/Trace/API応答にKEK/DEK/トークンが出力されない |
 | AC-19 | 自動タグ | 画像・動画・PDFにWD14の一般タグと独立したキャラクターメタデータを付与し、手動編集・重複再利用・ACL分離を保つ |
-| AC-20 | お気に入り | ユーザー別・Asset別に永続保存し、共有・ACL分離、3表示と詳細の状態同期、お気に入り内検索、登録順とページングが動作する |
+| AC-20 | 関連コンテンツ | キャラクター・タグ・知覚類似の固定重みで推薦し、完全一致除外・Asset別メタデータ・ACL・理由表示・探索からの復帰を保つ |
+| AC-21 | お気に入り | ユーザー別・Asset別に永続保存し、共有・ACL分離、3表示と詳細の状態同期、お気に入り内検索、登録順とページングが動作する |
 
 ## 15. 実装順序
 

@@ -35,11 +35,29 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 
 グラフは [cytoscape-cola](https://github.com/cytoscape/cytoscape.js-cola) の重なり回避と継続シミュレーションを使います。タグが付いたファイル数に応じてノードを大きくし、ラベルを含めた間隔を確保します。ドラッグすると周囲も追従し、選択したタグへ表示が寄ります。「再配置」で配置をやり直し、「動きを停止」「動きを再開」で動きを切り替えられます。画面外ではシミュレーションを停止します。OSの動きを減らす設定では静止状態から始めます。
 
+## 関連コンテンツ
+
+ファイル詳細の「関連コンテンツ」で、選んだファイルに関連するコンテンツを評価順に表示します。評価は共通キャラクター50％・共通タグ30％・見た目や音20％の合算です。キャラクターとタグは集合のJaccard係数、見た目はpHash、音は既存の音響フィンガープリントを使います。解析待ちの項目は0点とし、他の項目の重みは変えません。表示値は確率ではありません。
+
+カードで評価値と共通キャラクター・タグ、知覚類似の理由を確認できます。種類で絞り込み、24件ずつ表示します。ファイルを選んで詳細・全画面閲覧で確認し、さらに「関連コンテンツ」を開いて探索を続けられます。「戻る」で前の比較元・ページ・選択へ戻り、最後は元のライブラリ条件を復元します。
+
+比較元自身・同一内容の別ファイル・未許可・削除済みファイルは推薦しません。メタデータ候補は上位1,000 Asset、知覚類似候補は上位1,000 Blobに制限し、認可後の最大200件を返します。種類フィルターもこの200件以内に適用します。全ライブラリの厳密な順位、意味検索、好みの学習は対象外です。追加のマイグレーションや再推論は不要です。API・評価式は仕様書§10.3を参照してください。
+
+開発スタック起動後に、生成したDB行と実APIを使う結合試験を実行できます。試験用のAsset・ハッシュは終了時に削除し、既存メディアは変更しません。初期設定のローカル開発環境だけで実行してください。
+
+```sh
+python3 scripts/recommendations-integration.py
+```
+
+実コーデック・モデルによる知覚類似の回帰は、別途 `python3 scripts/media-integration.py` で確認します。
+その生成メディアを推薦APIでも確認する場合は、続いて `python3 scripts/recommendations-integration.py --media` を実行します。
+
 ## CIとReleaseイメージ
 
 GitHub Actionsの `CI` は、ブランチへのpushとPull Requestで次を実行します。
 
 - Go：`go test -race ./...`、`go vet ./...`（Goのバージョンは `go.mod` に従う）。
+- DB移行：実PostgreSQLの使い捨てコンテナで `scripts/migration-integration.py` を実行し、適用・排他・復旧・Composeの起動抑止を確認します。
 - SPA：Node.js 24で `npm ci`、`npm run check`、`npm run build`、`npm run build-storybook`、Chromiumで `npm run test:ui` と `npm run test:storybook`。レイアウトの座標検査はLinux用の基準値で実行します。任意のスクリーンショット出力（`UI_SCREENSHOTS`）は有効にしません。
 - Runtime：Python 3.12（Ubuntu 24.04標準）、NumPyとPillowで `python -m unittest discover -s runtime -p 'test_*.py'`。モデルのダウンロードは不要です。
 - Docker：アプリ・CPU版Runtime・CUDA版Runtime・PostgreSQLの4イメージを `linux/amd64` 向けにビルドします。Runtimeは依存整合性・CPU/CUDAの取り違え・アプリの読み込みも検査します。通常のCIではpushしません。
@@ -77,7 +95,7 @@ docker run --rm --entrypoint python ocms-runtime:cpu /app/check-runtime-image.py
 
 現在のEmbedding・Whisper・WD14の推論はCPU固定です。CUDA版の選択だけではGPU推論は有効になりません。GPUへの処理振り分けとGPU実機での検証は未対応です。CPUサーバーでは`-cpu`を選んでください。既に公開された`v0.1.1`のタグは変更せず、この変更を含む新しいReleaseから版を分けます。
 
-既存の `compose.yaml` はローカルビルド用です。公開イメージを使う環境では、各サービスの `image` に上記の同じReleaseタグを指定し、ローカル用の `pull_policy: never` を解除してください。DB初期化用の `scripts/init-db.sh` と `migrations/` のマウントは引き続き必要です。
+既存の `compose.yaml` はローカルビルド用です。公開イメージを使う環境では、各サービスの `image` に上記の同じReleaseタグを指定し、ローカル用の `pull_policy: never` を解除してください。SQLはアプリ共通イメージの `/app/migrations` に同梱します。`migrate` サービスにも各Goサービスと同じReleaseタグを指定してください。DB初期化用スクリプトやホスト側SQLのマウントは不要です。
 
 ブラウザテストの失敗時は、生成データによる `web/test-results/` をArtifactとして7日間保存します。レイアウトの基準値は `web/tests/library.spec.ts-snapshots/` のOS別ファイルで管理し、更新は対象OSで意図した変更を確認したうえで行います。CIでは自動更新しません。
 
@@ -111,7 +129,7 @@ HF_HOME="$PWD/.cache/onnx-hf" PYTHONPATH=runtime .cache/venv-runtime/bin/python 
 
 ## 検証
 
-タグ画面の実API・DB検証は `python3 scripts/tags-integration.py` で実行します。初期設定の開発スタックで、生成したDB行を使ってタグ件数・共起・ACL・完全一致フィルター・編集・削除・表示上限を確認し、生成行は終了時に削除します。タグAPI追加に伴うDBマイグレーションはありません。既存環境への反映は `docker compose build bff` の後、`docker compose up -d --no-deps --wait catalog bff` を実行します。OIDC検証環境では `docker compose -f compose.yaml -f compose.verify.yaml up -d --no-deps --wait catalog bff bff-oidc` を使います。
+タグ画面の実API・DB検証は `python3 scripts/tags-integration.py` で実行します。初期設定の開発スタックで、生成したDB行を使ってタグ件数・共起・ACL・完全一致フィルター・編集・削除・表示上限を確認し、生成行は終了時に削除します。タグAPI追加に伴うDBマイグレーションはありません。既存環境への反映も「DBマイグレーションと更新」の手順に従い、起動前に未適用のSQLがないことを確認します。
 
 起動後に実API・DB・S3を通して検証します。テストは生成データをDBとS3に残します。初期設定の開発用環境で実行してください。
 
@@ -204,7 +222,7 @@ npm run test:ui
 
 テストがローカルのプレビューサーバー（`127.0.0.1:4173`）を起動し、生成データのAPI応答で検索・比較・タグ編集・アップロード・削除確認・認証方式の表示・レスポンシブ表示を検証します。DBやS3には接続しません。実サービスとの接続やRangeは上記の結合試験で、動画の再生・シークは実サービスに接続したブラウザで別途確認します。`UI_SCREENSHOTS=1 npm run test:ui` で生成データのPC・モバイル画面を `docs/library-ia.png` と `docs/library-ia-mobile.png` に保存できます。グリッド2種類も `docs/library-grid.png`、`docs/library-detailed-grid.png` と、それぞれの `-mobile.png` に保存します。
 
-詳細パネルの「ファイル名」はEnterまたはフォーカス移動で自動保存し、Escapeで編集前の名前に戻します。日本語変換中のEnterでは保存しません。タグはチップで表示し、入力欄からEnterまたは「追加」で1件ずつ追加、チップの×で削除します。カンマを含む入力も1件のタグとして扱います。保存中は編集操作を無効化し、失敗時は入力を保持して「保存を再試行」を表示します。ファイル名は1024バイト、タグは1件256バイト・合計512件が上限です。画面例は [PC](docs/library-ia.png)、[モバイル](docs/library-ia-mobile.png)、[長いタグ・320px幅](docs/library-metadata-320.png) を参照してください。
+詳細パネルの「ファイル名」はEnterまたはフォーカス移動で自動保存し、Escapeで編集前の名前に戻します。日本語変換中のEnterでは保存しません。タグはチップで表示し、入力欄からEnterまたは「追加」で1件ずつ追加、チップの×で削除します。タグ名・キャラクター名をクリックすると、それぞれに完全一致するファイルを表示します。検索語・種類・比較条件を解除して先頭ページへ戻り、詳細パネルを閉じます。タグ名・キャラクター名はTabで選択し、EnterまたはSpaceでも検索できます。画面例は [タグからの検索](docs/library-tag-search.png)、[キャラクターからの検索](docs/library-character-search.png) を参照してください。カンマを含む入力も1件のタグとして扱います。保存中は編集操作を無効化し、失敗時は入力を保持して「保存を再試行」を表示します。ファイル名は1024バイト、タグは1件256バイト・合計512件が上限です。画面例は [PC](docs/library-ia.png)、[モバイル](docs/library-ia-mobile.png)、[長いタグ・320px幅](docs/library-metadata-320.png) を参照してください。
 
 詳細のプレビューをクリックするか、一覧のファイルをダブルクリック・選択後に再選択すると、暗い背景の全画面閲覧画面を開きます。左右スワイプ・左右キー・前後ボタンで一覧順に移動でき、一覧のページ境界も越えます。動画・音声はプレイヤーを表示し、画像は元画像、PDFはPDF.jsで描画します。画像・PDFは拡大縮小ボタンとピンチ、拡大後のドラッグに対応します。PDF内のページは専用の前後ボタンで移動します。Escapeまたは閉じるボタンで一覧に戻ります。未対応形式や読み込み失敗時にも、元ファイルへのリンクと前後移動を利用できます。PDF.jsのWorker・フォント・CMap・画像デコーダーはビルドに同梱し、外部CDNは使いません。
 
@@ -277,18 +295,70 @@ docker compose up -d --wait
 
 お気に入り一覧は登録が新しい順です。キーワード・意味・ハイブリッド検索、種類フィルター、表示切り替え、ページ送りを利用でき、検索結果は関連度順になります。検索解除・更新・類似比較・完全一致比較でもお気に入りの範囲を維持します。削除済み・閲覧権限を失ったファイルは件数と結果に含めません。権限が戻ると、保存済みのお気に入りが再表示されます。
 
-006まで適用済みの既存DBには007を一度適用してからGoサービスとSPAを更新します。初回起動の空DBには001〜007が番号順に適用されます。
-
-```sh
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_favorites.sql
-BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build bff
-docker compose up -d --wait
-# OIDC・OTLP検証構成では上のupを次で置き換える
-# docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
-python3 scripts/favorites-integration.py
-```
+007は `007_favorites.up.sql` としてgolang-migrateで適用します。既存環境は「DBマイグレーションと更新」に従い、履歴がなければ適用済み番号を一度だけbaselineへ登録してください。006まで適用済みなら `baseline 6` の後に `up` を実行します。旧方式で007を手動適用済みなら `baseline 7` で引き継ぎ、007を再実行しません。更新後は `python3 scripts/favorites-integration.py` で検証します。
 
 登録は `PUT /api/v1/assets/{assetId}/favorite`、解除は同じURLへの `DELETE`（いずれも204）です。`GET /api/v1/assets?favorites=true` で自分のお気に入りに限定し、検索では `POST /api/v1/search` のJSONへ `"favorites": true` を追加します。Asset応答の `is_favorite` は要求ユーザー自身の状態を返します。
+
+## DBマイグレーションと更新
+
+[golang-migrate](https://github.com/golang-migrate/migrate/tree/v4.19.1) v4.19.1をGoライブラリとして利用します。`migrate` サービスが `ocms migrate up` を実行し、`public.schema_migrations` にバージョンとdirty状態を管理します。番号順の実行、DBロック、適用済みの判定、dirty状態はgolang-migrateが担当します。アプリ側のコードは環境変数・既存DBの初回登録・ログの秘匿処理を接続します。管理接続にはロール・拡張の作成と、接続単位のログ設定を変更できる権限が必要です。
+
+空のDBでは `docker compose up -d --wait` が全SQLを適用してからCatalogを起動します。Transfer・Search・Worker・BFFはCatalogを経由して待ち、検証用OIDC BFFも `migrate` の正常終了を待ちます。移行に失敗すると新しいアプリは起動しません。DBの管理資格情報は `migrate` とPostgreSQLだけに渡し、通常サービスのDBロール分離は維持します。
+
+既に起動しているサービスは依存条件では停止しません。更新時はアプリを停止し、移行の成功後に再起動します。`.env` と暗号鍵、既存ボリュームは保持してください。
+
+```sh
+docker compose build
+docker compose stop bff worker search transfer catalog
+docker compose up -d --wait postgres
+docker compose run --rm migrate
+docker compose up -d --wait
+```
+
+OIDC・OTLP環境では、すべてのコマンドで `docker compose -f compose.yaml -f compose.verify.yaml` を使い、停止対象に `bff-oidc` も含めます。失敗時はサービスを停止したまま、以下の状態確認・復旧手順を実行します。
+
+### 履歴のない既存DBを引き継ぐ
+
+旧版でSQLを手動適用したDBには履歴がないため、通常の `up` は `MIGRATION_BASELINE_REQUIRED` で停止します。最後まで適用済みの番号を確認し、一度だけ `baseline` で登録してください。これはSQLを実行せず、宣言したバージョンをgolang-migrateの履歴へ設定する操作です。スキーマや過去のデータ更新を自動判定・検証するものではありません。
+
+例えば006まで適用済みなら、アプリを停止して上の更新手順の `run --rm migrate` の前に次を実行します。
+
+```sh
+docker compose run --rm migrate migrate baseline 6
+docker compose run --rm migrate
+```
+
+004までのDBなら `baseline 4`、002までなら `baseline 2` を指定し、それより後のSQLだけを適用します。履歴のあるDB、空DB、同梱SQLに存在しない番号へのbaselineは拒否します。適用済み番号を推測して指定しないでください。
+
+### 状態確認と失敗後の復旧
+
+```sh
+docker compose run --rm migrate migrate version
+```
+
+失敗したSQLは `BEGIN` / `COMMIT` によりロールバックしますが、golang-migrateのdirty状態は残り、次の `up` を止めます。原因とDB状態を確認してから、最後に正常終了したバージョンを明示してdirty状態を解除し、再実行します。例えば007が失敗し、006までの状態へ戻っていることを確認できた場合：
+
+```sh
+docker compose run --rm migrate migrate force 6
+docker compose run --rm migrate
+docker compose up -d --wait
+```
+
+001自体が失敗し、スキーマ全体が未適用の状態へ戻っている場合は、golang-migrateの未適用バージョンを表す `force -1` を使います。
+
+`force` はSQLを実行せず履歴を書き換える復旧操作です。自動実行しません。適用済みのSQLは変更せず、変更は新しい番号のSQLで追加します。golang-migrateはチェックサム履歴を持たないため、適用済みSQLの改変を自動検出しません。DBのバージョンが同梱SQLより新しいイメージでの `up` は拒否します。自動ダウングレード・`down`・`drop` は提供しません。
+
+SQLは `migrations/NNN_name.up.sql` に追加し、ファイル全体を `BEGIN;` / `COMMIT;` で囲みます。psql専用の変数展開・メタコマンドは使いません。初期ロールのパスワードは管理接続のセッション設定を使い、SQLやプロセス引数へ資格情報を埋め込みません。PostgreSQLはPGroonga・pgvectorを組み込んだ同梱イメージを使います。
+
+検証は既存の開発DBを使わず、一時ネットワーク・ボリュームだけを作成し、終了時に削除します。必要環境はDockerとPython 3.9以降です。
+
+```sh
+docker build -f infra/postgres/Dockerfile -t ocms-migration-postgres-test:local .
+docker build -t ocms-migration-test:local .
+python3 scripts/migration-integration.py --postgres-image ocms-migration-postgres-test:local
+go test -race ./...
+go vet ./...
+```
 
 ## メディア処理と検索
 
@@ -319,31 +389,11 @@ ONNXモデルは次の取得元とコミットへ固定しています。モデ�
 
 `tags.generate` Jobはメディア解析後に作成し、失敗時は通常のJobと同じ再試行・リース管理を使います。推論結果はBlob単位で再利用し、各Assetのタグ欄へ一度だけ追加します。手動タグは保持し、追加後は自動タグも編集・削除できます。手動タグを含む合計は512件までとし、自動追加時に上限を超える場合は既存タグを優先します。削除したタグはJob再試行や状態同期で復活しません。重複アップロードにも推論結果だけをコピーし、別Assetの手動タグはコピーしません。タグは既存の一覧・全文検索で検索できます。音声はタグ付け対象外です。
 
-004まで適用済みのDBには005・006を一度適用し、Runtimeと各Goサービスを更新します。005適用済みの場合は、後述の006のみの反映手順を使ってください。005は解析済みの画像・動画・PDFへタグ付けJobを追加するため、保存済みファイルも順次処理します。既存の失敗Jobは詳細画面から再試行してください。
-
-```sh
-docker compose stop worker
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
-BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
-docker compose up -d --wait
-# OIDC・OTLP検証構成を使っている場合は上のupを次で置き換える
-# docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
-```
+004まで適用済みのDBは「DBマイグレーションと更新」の手順で引き継ぎます。履歴がなければ `baseline 4` を一度だけ実行し、以後は `up` で未適用分を反映します。005は解析済みの画像・動画・PDFへタグ付けJobを追加するため、保存済みファイルも順次処理します。既存の失敗Jobは詳細画面から再試行してください。
 
 キャラクターはタグとは別の `catalog.asset_characters` テーブルに保存し、推論結果も `catalog.wd14_character_results` に分離します。詳細パネルから追加・削除でき、上限はタグとは独立して512件、1件256バイトです。ヘッダーの「キャラクター」で名前検索・一覧・ワードクラウド・共起グラフを表示し、選択するとそのキャラクターが付いたファイルへ移動します。件数と共起は閲覧可能なAssetだけから集計します。通常のキーワード検索でもキャラクター名が一致するAssetを取得できます。
 
-005適用済みの既存DBには006を一度適用します。完了済みのタグJobを再実行し、既存ファイルのキャラクターを判定します。一般タグの適用済み状態は保持し、編集済みのタグを復元しません。失敗済みJobは詳細画面から再試行してください。既存環境への反映手順：
-
-```sh
-docker compose stop worker
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
-BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
-docker compose up -d --wait
-# OIDC・OTLP検証構成では上のupを次で置き換える
-# docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
-python3 scripts/characters-integration.py
-```
+005まで適用済みのDBは、履歴がなければ `baseline 5` で引き継ぎます。006は完了済みのタグJobを再実行し、既存ファイルのキャラクターを判定します。一般タグの適用済み状態と手動編集は保持します。更新後の検証は `python3 scripts/characters-integration.py` です。
 
 モデルの初回取得には追加の通信・ディスク容量が必要です。タグ推論の失敗は`TAGGING_FAILED`としてJobへ記録し、画像・タグの内容はログに出しません。生成データでの検証手順：
 
@@ -357,11 +407,7 @@ Workerはマスターキー・S3資格情報を持ちません。Transferは実�
 
 埋め込みは推論1回ごとにベクトルと入力のSHA-256をWorkerのDBへ保存します。再起動・再試行時は同じJob・モデル・リビジョン・推論型・入力に対する結果を再利用し、検索索引全体の保存とJob完了後にチェックポイントを削除します。長い本文は全文を1000文字ずつに分けて処理します。元の本文・画像はチェックポイントへ保存しません。GrafanaのWorkerログにはページ数・ページ完了・チェックポイント保存/再利用を出し、生のツール診断や文書内容は記録しません。期限超過・作業領域不足・メモリ不足・推論サービス停止を区別し、不正入力は無駄な自動再試行をしません。
 
-既存の003適用済みDBには、チェックポイント用の004を一度適用してからWorkerを更新します。今回の作業環境には適用済みです。
-
-```sh
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/004_embedding_checkpoints.sql
-```
+003まで適用済みのDBは、履歴がなければ `baseline 3` で引き継いでから `up` を実行し、004以降を適用します。推論チェックポイントを利用する前に更新を完了してください。
 
 PDFの任意ページは `/api/v1/assets/{assetId}/preview?page=2` で取得できます。再エンコード要求・一覧は `/api/v1/assets/{assetId}/renditions`、Job一覧は `/api/v1/assets/{assetId}/jobs`、個別状態は `/api/v1/jobs/{jobId}` です。派生ファイルも元Assetの最新ACLを確認して配信します。
 
@@ -369,21 +415,7 @@ Searchはファイル名・タグに加えて抽出本文をPGroongaで検索し
 
 ## 基盤版からの更新
 
-既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜007を一度適用します。
-
-```sh
-docker compose build
-docker compose stop worker
-docker compose up -d --no-deps --wait postgres
-docker compose exec -T postgres sh -c 'psql -U ocms -d ocms -v ON_ERROR_STOP=1 -v app_password="$APP_DB_PASSWORD" -f /migrations/003_media_search.sql'
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/004_embedding_checkpoints.sql
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
-docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_favorites.sql
-docker compose up -d --wait
-```
-
-今回の作業環境には適用済みです。003を繰り返し実行する必要はありません。未配送のOutboxイベントはWorkerが受け取り、既存Blobも処理します。以前の保存テストで使ったPNGヘッダーだけの疑似データや空ファイルは、復号配信できても実メディアとして解析できないため、処理失敗になるのが正常です。
+001/002まで適用済みのDBは保持したまま、新しいPostgreSQLイメージへ切り替えます。「DBマイグレーションと更新」の手順で、履歴がなければ適用済み番号を `baseline` に指定し、その後のSQLを適用してください。未配送のOutboxイベントと既存Blobは引き続き処理されます。以前の保存テストで使った不完全なPNGや空ファイルは、復号配信できてもメディア解析に失敗する場合があります。
 
 ## Pocket ID接続
 
@@ -441,6 +473,6 @@ docker compose exec transfer ocms reconcile
 
 Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォート、セミコロン、コンポーネント名はPascalCase、変数・関数名はcamelCaseとします。`npm run build` でTypeScriptのstrictチェックを行います。整形・lintはBiomeを使います。関数と関数の間には空行を1行入れます。Biomeにはこれを強制するルールがないため、空行は手動で入れ、レビューで確認します。
 
-マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜007を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
+マイグレーションは `migrate` サービスとgolang-migrateで管理し、既存DBにも未適用分を適用します。更新・初回引き継ぎ・復旧のコマンドは「DBマイグレーションと更新」を参照してください。SQLはアプリイメージに同梱し、適用済みファイルは変更しません。
 
 停止は `docker compose down` です。名前付きボリュームは保持します。

@@ -71,6 +71,31 @@ jobs:
       - run: .venv/bin/pip install -r runtime/requirements.txt onnxruntime==1.23.2
       - run: .venv/bin/python -m unittest discover -s runtime -p 'test_*.py'
 
+  migrations:
+    name: PostgreSQL migrations and startup gating
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/postgres/Dockerfile
+          load: true
+          tags: ocms-migration-postgres-test:local
+          cache-from: type=gha,scope=ocms-postgres
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: ocms-migration-test:local
+          cache-from: type=gha,scope=ocms
+      - run: python3 scripts/migration-integration.py --postgres-image ocms-migration-postgres-test:local
+
   images:
     name: Build ${{ matrix.image }}
     # Release runs the build with push enabled after the checks above succeed.
