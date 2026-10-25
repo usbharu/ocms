@@ -20,6 +20,7 @@ import (
 )
 
 type Service struct {
+	SemanticSearchDisabled             bool
 	DB                                 *pgxpool.Pool
 	Catalog, Transfer, Search, Runtime string
 }
@@ -192,7 +193,7 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 func (s *Service) tick(ctx context.Context) error {
-	if _, err := s.DB.Exec(ctx, `UPDATE media.processing_jobs SET status='failed',error_code='LEASE_EXHAUSTED',locked_until=NULL WHERE status='running' AND locked_until<now() AND attempts>=4`); err != nil {
+	if _, err := s.DB.Exec(ctx, `UPDATE media.processing_jobs SET status='failed',error_code='LEASE_EXHAUSTED',locked_until=NULL WHERE status='running' AND locked_until<now() AND attempts>=4 AND (NOT $1::boolean OR job_type<>'embedding.generate')`, s.SemanticSearchDisabled); err != nil {
 		return err
 	}
 
@@ -211,8 +212,7 @@ func (s *Service) tick(ctx context.Context) error {
 			return err
 		}
 	}
-	var j contracts.Job
-	err := s.DB.QueryRow(ctx, `WITH next AS (SELECT id FROM media.processing_jobs WHERE ((status IN ('queued','retry') AND available_at<=now()) OR (status='running' AND locked_until<now())) AND attempts<4 ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media.processing_jobs j SET status='running',attempts=attempts+1,lease_token=gen_random_uuid(),locked_until=now()+interval '90 seconds',updated_at=now() FROM next WHERE j.id=next.id RETURNING j.id,j.source_blob_id,j.job_type,j.status,j.attempts,j.lease_token,j.traceparent`).Scan(&j.ID, &j.BlobID, &j.Type, &j.Status, &j.Attempts, &j.Lease, &j.Traceparent)
+	j, err := s.claim(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s.syncStates(ctx)
 	}
@@ -299,6 +299,14 @@ func (s *Service) tick(ctx context.Context) error {
 	slog.InfoContext(jobCtx, "media.job_completed", "job_id", j.ID, "job_type", j.Type)
 	return s.syncStates(finishCtx)
 }
+
+// Disabled embedding jobs remain queued (including expired leases) for re-enabling.
+func (s *Service) claim(ctx context.Context) (contracts.Job, error) {
+	var j contracts.Job
+	err := s.DB.QueryRow(ctx, `WITH next AS (SELECT id FROM media.processing_jobs WHERE ((status IN ('queued','retry') AND available_at<=now()) OR (status='running' AND locked_until<now())) AND attempts<4 AND (NOT $1::boolean OR job_type<>'embedding.generate') ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media.processing_jobs j SET status='running',attempts=attempts+1,lease_token=gen_random_uuid(),locked_until=now()+interval '90 seconds',updated_at=now() FROM next WHERE j.id=next.id RETURNING j.id,j.source_blob_id,j.job_type,j.status,j.attempts,j.lease_token,j.traceparent`, s.SemanticSearchDisabled).Scan(&j.ID, &j.BlobID, &j.Type, &j.Status, &j.Attempts, &j.Lease, &j.Traceparent)
+	return j, err
+}
+
 func (s *Service) heartbeat(ctx context.Context, cancel context.CancelFunc, j contracts.Job, done <-chan struct{}) {
 	timer := time.NewTicker(20 * time.Second)
 	defer timer.Stop()
@@ -322,7 +330,8 @@ func (s *Service) state(ctx context.Context, blob, status string) error {
 }
 func (s *Service) syncStates(ctx context.Context) error {
 	// Periodic reconciliation includes Assets added after a shared Blob completed.
-	rows, err := s.DB.Query(ctx, `SELECT source_blob_id,CASE WHEN bool_or(status='failed') THEN 'failed' WHEN count(*)>=2 AND bool_and(status='completed') THEN 'ready' ELSE 'processing' END FROM media.processing_jobs GROUP BY source_blob_id`)
+	// Paused embeddings must not keep otherwise completed media processing pending.
+	rows, err := s.DB.Query(ctx, `SELECT source_blob_id,CASE WHEN bool_or(status='failed') THEN 'failed' WHEN count(*)>=CASE WHEN $1::boolean THEN 1 ELSE 2 END AND bool_and(status='completed') THEN 'ready' ELSE 'processing' END FROM media.processing_jobs WHERE NOT $1::boolean OR job_type<>'embedding.generate' GROUP BY source_blob_id`, s.SemanticSearchDisabled)
 	if err != nil {
 		return err
 	}
