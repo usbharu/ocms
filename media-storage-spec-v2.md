@@ -93,7 +93,7 @@ flowchart TB
 | **Transfer Service** | マスターキー読み込み、DEK生成/ラップ、AES-CTR暗号化・復号、S3 I/O、SHA-256計算、HTTP Range、Blob登録 | OCR、全文検索 |
 | **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、関連コンテンツの評価・推薦、Catalog経由の一括認可 | 平文ファイル保存 |
 | **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成、WD14タグ集約 | ユーザー直接認証、マスターキー参照 |
-| **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ・キャラクター推論API | 検索DB操作、ACL判断 |
+| **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ・キャラクター・レーティング推論API | 検索DB操作、ACL判断 |
 
 ### 3.2 通信ルール
 
@@ -109,7 +109,7 @@ flowchart TB
 
 ### 4.1 概念
 
-- **Asset**：ユーザーが扱う論理ファイル。所有者、ファイル名、タグ、キャラクター、ACLなどを持つ。同じ内容でもユーザーごとに独立する。
+- **Asset**：ユーザーが扱う論理ファイル。所有者、ファイル名、タグ、キャラクター、レーティング、ACLなどを持つ。同じ内容でもユーザーごとに独立する。
 - **Blob**：バイト列そのものを表す不変のS3暗号化オブジェクト。同一平文バイナリは可能な限り一つのBlobにまとめる。
 - **Rendition**：既存Blobから変換された派生Blobと変換プロファイルの関係。
 - **Passage**：PDFのページ、OCR抽出結果、文字起こしの時間区間などのテキスト検索単位。
@@ -120,6 +120,7 @@ flowchart TB
 erDiagram
     ASSETS ||--o| ASSET_ORIGINALS : points_to
     BLOBS ||--o{ ASSET_ORIGINALS : shared_by
+    BLOBS ||--o| WD14_RATING_RESULTS : rates
     BLOBS ||--o{ RENDITIONS : source
     BLOBS ||--o{ RENDITIONS : output
     BLOBS ||--o{ PASSAGES : extracted_to
@@ -135,7 +136,7 @@ erDiagram
 
 | Schema | 主なテーブル | 所有 |
 |---|---|---|
-| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results` | Catalog |
+| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results`, `wd14_rating_results` | Catalog |
 | `storage` | `blobs`, `upload_objects` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings` | Search |
@@ -168,6 +169,10 @@ CREATE TABLE catalog.assets (
     filename TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     tags TEXT[] NOT NULL DEFAULT '{}',
+    rating TEXT NOT NULL DEFAULT 'unrated'
+      CHECK (rating IN ('unrated','general','sensitive','questionable','explicit')),
+    rating_manual BOOLEAN NOT NULL DEFAULT false,
+    wd14_rated BOOLEAN NOT NULL DEFAULT false,
     metadata JSONB NOT NULL DEFAULT '{}',
     status TEXT NOT NULL CHECK
       (status IN ('pending','uploading','stored','processing','ready','failed','deleted')),
@@ -476,16 +481,18 @@ Blob削除は参照管理と分離して行い、参照がゼロになったBlob
 
 **HLSプレイリスト、HLSセグメント、ABRは実装しない。** MP4は`moov` atomを先頭に配置し、HTTP Rangeでシークする。Codecやコンテナがブラウザ非対応の場合は標準MP4派生ファイルを作る。
 
-### 8.3 WD14による一般タグ・キャラクターの自動付与
+### 8.3 WD14による一般タグ・キャラクター・レーティングの自動付与
 
 - メディア解析完了後、画像・動画・PDFに `tags.generate` Jobを作成する。音声は対象外とする。リース・期限・最大4回の再試行を既存Jobと共有する。
-- Runtimeは `SmilingWolf/wd-v1-4-convnext-tagger-v2`（リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）をCPUで実行し、category 0の一般タグを閾値0.35、category 4のキャラクターを閾値0.85で分けて返す。レーティングは除外する。
+- Runtimeは `SmilingWolf/wd-v1-4-convnext-tagger-v2`（リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）をCPUで実行し、category 0の一般タグを閾値0.35、category 4のキャラクターを閾値0.85で分けて返す。category 9のレーティングは一般タグ・キャラクターと分離し、4段階のうち最大スコアの段階を返す。同点の場合は制限の強い段階を採用する。
 - 画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定する。タグごとの最大スコアで集約し、上位256タグを採用する。
 - Workerが結果をCatalogへ送る際、CatalogはWorkerに実行中JobのBlob・リース・期限を照会して確認する。Catalogは `catalog.wd14_results` にBlob単位の推論結果とモデル情報を保存し、各Assetの `tags` へ一度だけ追加する。適用済みかどうかは `catalog.assets.wd14_tagged` で管理する。
 - タグの追加は既存タグを保持する原子的な更新とする。手動タグとの合計上限は512件で、上限を超える場合は既存タグを優先する。利用者は自動付与後のタグを編集・削除でき、Jobの再試行で削除済みタグを復活させない。後から作成した重複Assetには推論結果だけをコピーし、別Assetの手動タグをコピーしない。状態同期で追加漏れを補う。
 - 既存の一覧・検索・ACLを利用する。タグの内容・推論入力・元ファイル名はログやTraceに記録しない。
 
 キャラクターは `catalog.asset_characters(asset_id, name, position)` に保存し、タグの配列とは独立させる。主キーは `(asset_id, name)` とし、同じAsset内の重複を防ぐ。推論結果は別テーブル `catalog.wd14_character_results(blob_id, characters, model_id, model_revision, created_at)` に保持し、`catalog.assets.wd14_characters_tagged` で一度だけの適用を管理する。タグと同じく既存の手動入力を優先し、合計512件・1件256バイトまでとする。削除・編集はAsset単位に保持し、再試行・状態同期で復元しない。重複Assetへは推論結果だけを追加する。旧Runtimeのキャラクター欄省略と、判定結果が空配列である場合を区別する。マイグレーション006は完了済みタグJobを再実行し、既存ファイルへキャラクターを付与する。
+
+レーティングは `general < sensitive < questionable < explicit` の順とし、動画・PDFはサンプルフレーム・全ページの判定のうち最も制限の強い段階を採用する。音声などの対象外ファイルと判定前のAssetは `unrated` とする。推論結果は `catalog.wd14_rating_results(blob_id, rating, model_id, model_revision, created_at)` に保存する。`rating` は4段階のいずれかに制約し、Blobを主キーとする。Assetは `rating`・`rating_manual`・`wd14_rated` を持ち、Asset行のロック下で自動判定を一度だけ適用する。手動設定後は再試行・状態同期でも上書きしない。重複Assetへは保存した推論結果だけを適用する。007は完了済みタグJobを再実行し、既存ファイルも判定する。一般タグとキャラクターの適用済み状態は保持する。
 
 ### 8.4 派生Blobの再利用
 
@@ -580,6 +587,10 @@ GET /api/v1/assets?limit=24&offset=24&kind=image
 {"assets":[],"total":24}
 ```
 
+Asset応答の `rating` は `general`・`sensitive`・`questionable`・`explicit`・`unrated` のいずれかとする。`PATCH /api/v1/assets/{assetId}` の `rating` で手動設定し、省略時は保持する。`unrated` の手動指定も自動判定から保護する。
+
+一覧・完全一致・知覚類似・推薦のGET APIは `ratings=general,sensitive` のようなカンマ区切り条件を受け付け、`POST /api/v1/search` は同名の文字列配列を受け付ける。省略・JSONのnullは全段階、空文字列・空配列は0件とする。不正値は400で拒否する。Catalogの認可を保ち、件数・結果上限・ページ分割の前にAsset単位で条件を適用する。タグ・キャラクター・種類の条件とはANDで結合する。
+
 キャラクター一覧API `GET /api/v1/characters?q=...` は `{characters: [{name, asset_count}], links: [{source, target, asset_count}], total}` を返す。検索・ACL・件数・共起・上限はタグ一覧と同じ規則で、キャラクターの関連テーブルだけを集計する。Asset応答には独立した `characters: ["character_name"]` を含める。`PATCH /api/v1/assets/{assetId}` の `characters` はそのAssetのキャラクター全件を置き換え、省略時は保持する。空配列で全件削除する。Asset一覧の `character` は完全一致条件で、`tag` と併用時は両方に一致するAssetだけを返す。
 
 タグ一覧API `GET /api/v1/tags` は `q` によるタグ名の大文字小文字を区別しない部分一致検索を受け付ける。Catalogが閲覧可能かつ未削除のAssetだけを集計し、同じAsset内の重複タグは1件として数える。空白だけのタグは除外し、その他のタグ名は保存値のまま区別する。被リンク数はタグが付いたAsset数とする。Blobを共有していても、AssetごとのタグとACLで計算する。
@@ -622,6 +633,7 @@ Content-Type: application/json
   "query": "海辺の夕焼けを撮影した動画",
   "mode": "hybrid",
   "media_types": ["image", "video"],
+  "ratings": ["general", "sensitive"],
   "limit": 20
 }
 ```
@@ -630,7 +642,7 @@ Content-Type: application/json
 
 ### 10.2 内部API（論理契約）
 
-WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], characters: [{name, score}], model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], characters: ["character_name"], model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
+WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], characters: [{name, score}], rating: "general", model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], characters: ["character_name"], rating: "general", model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
 
 | 呼び出し | 用途 |
 |---|---|
@@ -723,6 +735,7 @@ sequenceDiagram
 - ライブラリの詳細パネルではタグ名・キャラクター名のクリック・キーボード操作で、それぞれの完全一致フィルターへ移動する。検索語・種類・比較条件を解除して先頭ページを表示し、詳細パネルを閉じる。タグ名・キャラクター名と削除ボタンは独立させ、保存中はどちらも無効化する。
 - TypeScript + React SPAでログイン、アップロード、ファイル一覧/詳細、プレビュー、タグ編集、検索を提供する。
 - 一覧は1ページ24件とし、前後のページ移動と表示範囲・件数を表示する。通常一覧はAPIからページ単位で取得し、検索・比較は取得済み結果をページ分割する。検索・比較APIの既存の結果上限は維持する。検索・種類・比較元の変更時は先頭ページへ戻す。
+- 検索条件に4段階と未判定のチェックボックスを設け、既定ではすべてオンとする。詳細パネルでレーティングの確認・手動設定を行う。リスト・グリッド・詳細グリッドでは `sensitive`・`questionable`・`explicit` に共通の「R-18」を表示し、`general` と未判定には付けない。未判定をgeneralと見なさず、詳細と検索条件では区別する。
 - 幅800pxを超える画面のファイル詳細はスクロールに追従し、長い内容は詳細内でスクロールする。幅800px以下では一覧の上に表示する。
 - 動画はブラウザ標準の`<video controls>`と認証済みURLを利用する。`preload="metadata"`を基本とし、MP4 + Rangeで再生・シークする。
 - 音声は`<audio controls>`、画像の詳細はプレビューURL、PDFの詳細はページプレビューを使う。
@@ -766,6 +779,7 @@ sequenceDiagram
 | AC-18 | 秘密情報の非出力 | ログ/Trace/API応答にKEK/DEK/トークンが出力されない |
 | AC-19 | 自動タグ | 画像・動画・PDFにWD14の一般タグと独立したキャラクターメタデータを付与し、手動編集・重複再利用・ACL分離を保つ |
 | AC-20 | 関連コンテンツ | キャラクター・タグ・知覚類似の固定重みで推薦し、完全一致除外・Asset別メタデータ・ACL・理由表示・探索からの復帰を保つ |
+| AC-21 | コンテンツレーティング | WD14のレーティングを独立保存し、自動判定・手動設定保持・各段階の検索切替・3表示のR-18表示・ACL分離を保つ |
 
 ## 15. 実装順序
 

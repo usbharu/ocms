@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestListOptions(t *testing.T) {
 			if (err != nil) != tc.invalid {
 				t.Fatalf("invalid = %v, want %v", err != nil, tc.invalid)
 			}
-			if err == nil && got != tc.want {
+			if err == nil && !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %+v, want %+v", got, tc.want)
 			}
 		})

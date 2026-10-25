@@ -89,6 +89,7 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 	}
 	scores := map[string]float64{}
 	characters := map[string]float64{}
+	rating := "general"
 	infer := func(path string) error {
 		data, e := os.ReadFile(path)
 		if e != nil {
@@ -98,12 +99,13 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 		if e = platform.Call(ctx, "POST", s.Runtime+"/tag", "", map[string]string{"kind": "image", "data": base64.StdEncoding.EncodeToString(data)}, &result); e != nil {
 			return processingError("TAGGING_FAILED")
 		}
-		if result.Characters == nil {
+		if result.Characters == nil || contracts.RatingLevel(result.Rating) < 0 {
 			return processingError("INVALID_TAG_RESULT")
 		}
 		if e = mergeCharacters(characters, result); e != nil {
 			return e
 		}
+		rating = restrictiveRating(rating, result.Rating)
 		return mergeTags(scores, result)
 	}
 	frame := filepath.Join(dir, "frame.png")
@@ -152,5 +154,12 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 			return err
 		}
 	}
-	return platform.Call(ctx, "POST", s.Catalog+"/internal/blobs/"+j.BlobID+"/tags", "", map[string]any{"tags": sortedTags(scores), "characters": sortedTags(characters), "model_id": contracts.TagModel, "model_revision": contracts.TagRevision}, nil)
+	return platform.Call(ctx, "POST", s.Catalog+"/internal/blobs/"+j.BlobID+"/tags", "", map[string]any{"rating": rating, "tags": sortedTags(scores), "characters": sortedTags(characters), "model_id": contracts.TagModel, "model_revision": contracts.TagRevision}, nil)
+}
+
+func restrictiveRating(current, next string) string {
+	if contracts.RatingLevel(next) > contracts.RatingLevel(current) {
+		return next
+	}
+	return current
 }

@@ -20,6 +20,7 @@ func (s *Service) blobTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		Rating     string   `json:"rating"`
 		Tags       []string `json:"tags"`
 		Characters []string `json:"characters"`
 		Model      string   `json:"model_id"`
@@ -28,7 +29,7 @@ func (s *Service) blobTags(w http.ResponseWriter, r *http.Request) {
 	if !platform.Decode(w, r, &in) {
 		return
 	}
-	if in.Model != contracts.TagModel || in.Revision != contracts.TagRevision || len(in.Tags) > 256 || len(in.Characters) > 256 || !validCharacters(in.Characters) {
+	if (in.Rating != "" && contracts.RatingLevel(in.Rating) < 0) || in.Model != contracts.TagModel || in.Revision != contracts.TagRevision || len(in.Tags) > 256 || len(in.Characters) > 256 || !validCharacters(in.Characters) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
@@ -66,6 +67,12 @@ func (s *Service) blobTags(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), applyWD14Characters, r.PathValue("id"), ids)
+	}
+	if err == nil && in.Rating != "" {
+		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.wd14_rating_results(blob_id,rating,model_id,model_revision) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, r.PathValue("id"), in.Rating, in.Model, in.Revision)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), applyWD14Rating, r.PathValue("id"), ids)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

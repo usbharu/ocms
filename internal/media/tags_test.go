@@ -78,3 +78,16 @@ func TestCharacterAggregationIsIndependent(t *testing.T) {
 		}
 	}
 }
+
+func TestMostRestrictivePageRating(t *testing.T) {
+	rating := "general"
+	for _, value := range []string{"general", "questionable", "sensitive", "explicit", "general"} {
+		rating = restrictiveRating(rating, value)
+	}
+	if rating != "explicit" {
+		t.Fatal("a safer page downgraded the content rating")
+	}
+	if restrictiveRating("sensitive", "general") != "sensitive" {
+		t.Fatal("rating downgraded")
+	}
+}

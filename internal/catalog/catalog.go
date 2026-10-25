@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"ocms/internal/contracts"
 	"ocms/internal/platform"
 )
 
@@ -18,6 +19,7 @@ type Service struct {
 	MaxSize int64
 }
 type Asset struct {
+	Rating     string   `json:"rating"`
 	ID         string   `json:"asset_id"`
 	Filename   string   `json:"filename"`
 	MIME       string   `json:"mime_type"`
@@ -253,12 +255,12 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	platform.JSON(w, 200, map[string]string{"asset_id": assetID, "state": "completed"})
 }
 
-const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,ARRAY(SELECT c.name FROM catalog.asset_characters c WHERE c.asset_id=a.id ORDER BY c.position,c.name) FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
+const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,ARRAY(SELECT c.name FROM catalog.asset_characters c WHERE c.asset_id=a.id ORDER BY c.position,c.name),a.rating FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
 const allowed = `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1))`
 
 func scanAsset(row pgx.Row) (Asset, error) {
 	var a Asset
-	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID, &a.Characters)
+	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID, &a.Characters, &a.Rating)
 	return a, err
 }
 func (s *Service) readable(ctx context.Context, id, principal string) (Asset, error) {
@@ -287,9 +289,10 @@ func (s *Service) detail(w http.ResponseWriter, r *http.Request) {
 }
 
 type listOptions struct {
-	limit  int
-	offset int
-	kind   string
+	limit   int
+	offset  int
+	kind    string
+	ratings []string
 }
 
 func parseListOptions(r *http.Request) (listOptions, error) {
@@ -305,6 +308,11 @@ func parseListOptions(r *http.Request) (listOptions, error) {
 			}
 			*target = value
 		}
+	}
+	var err error
+	options.ratings, err = contracts.ParseRatings(r.URL.Query())
+	if err != nil {
+		return options, err
 	}
 	switch options.kind {
 	case "", "image", "video", "audio", "document":
@@ -326,13 +334,14 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	where := `WHERE ` + allowed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND strpos(lower(c.name),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='document' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
 	where += ` AND ($4='' OR $4=ANY(a.tags)) AND ($5='' OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND c.name=$5))`
+	where += ` AND ($6::text[] IS NULL OR a.rating=ANY($6))`
 	var total int
-	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character")).Scan(&total)
+	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings).Scan(&total)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $6 OFFSET $7`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.limit, options.offset)
+	rows, err := s.DB.Query(r.Context(), selectAsset+where+` ORDER BY a.created_at DESC,a.id DESC LIMIT $7 OFFSET $8`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, options.limit, options.offset)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -354,6 +363,11 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	platform.JSON(w, 200, map[string]any{"assets": items, "total": total})
 }
 func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
+	ratings, err := contracts.ParseRatings(r.URL.Query())
+	if err != nil {
+		platform.Error(w, 400, "INVALID_RATING")
+		return
+	}
 	if !guard(w, r) {
 		return
 	}
@@ -363,7 +377,7 @@ func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []Asset{}
 	if a.BlobID != nil {
-		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND o.blob_id=$2 AND a.id<>$3 ORDER BY a.created_at LIMIT 200`, user(r), *a.BlobID, a.ID)
+		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND o.blob_id=$2 AND a.id<>$3 AND ($4::text[] IS NULL OR a.rating=ANY($4)) ORDER BY a.created_at LIMIT 200`, user(r), *a.BlobID, a.ID, ratings)
 		if err != nil {
 			platform.RespondError(w, err)
 			return
@@ -391,6 +405,7 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		Filename   *string   `json:"filename"`
 		Tags       *[]string `json:"tags"`
 		Characters *[]string `json:"characters"`
+		Rating     *string   `json:"rating"`
 	}
 	if !platform.Decode(w, r, &in) {
 		return
@@ -399,7 +414,7 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
-	if (in.Tags != nil && !validAssetTags(*in.Tags)) || (in.Characters != nil && !validCharacters(*in.Characters)) {
+	if (in.Rating != nil && !contracts.ValidRating(*in.Rating)) || (in.Tags != nil && !validAssetTags(*in.Tags)) || (in.Characters != nil && !validCharacters(*in.Characters)) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
@@ -410,7 +425,7 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	tag, err := tx.Exec(r.Context(), `UPDATE catalog.assets a SET filename=coalesce($3,filename),tags=coalesce($4,tags),updated_at=now() WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission IN ('write','admin')))`, user(r), r.PathValue("id"), in.Filename, in.Tags)
+	tag, err := tx.Exec(r.Context(), `UPDATE catalog.assets a SET filename=coalesce($3,filename),tags=coalesce($4,tags),rating=coalesce($5,rating),rating_manual=rating_manual OR $5::text IS NOT NULL,updated_at=now() WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission IN ('write','admin')))`, user(r), r.PathValue("id"), in.Filename, in.Tags, in.Rating)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

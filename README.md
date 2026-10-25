@@ -317,12 +317,32 @@ ONNXモデルは次の取得元とコミットへ固定しています。モデ�
 
 `tags.generate` Jobはメディア解析後に作成し、失敗時は通常のJobと同じ再試行・リース管理を使います。推論結果はBlob単位で再利用し、各Assetのタグ欄へ一度だけ追加します。手動タグは保持し、追加後は自動タグも編集・削除できます。手動タグを含む合計は512件までとし、自動追加時に上限を超える場合は既存タグを優先します。削除したタグはJob再試行や状態同期で復活しません。重複アップロードにも推論結果だけをコピーし、別Assetの手動タグはコピーしません。タグは既存の一覧・全文検索で検索できます。音声はタグ付け対象外です。
 
-004まで適用済みのDBには005・006を一度適用し、Runtimeと各Goサービスを更新します。005適用済みの場合は、後述の006のみの反映手順を使ってください。005は解析済みの画像・動画・PDFへタグ付けJobを追加するため、保存済みファイルも順次処理します。既存の失敗Jobは詳細画面から再試行してください。
+コンテンツレーティングはWD14のcategory 9から `general`・`sensitive`・`questionable`・`explicit` を自動判定します。動画・PDFは判定したフレーム・ページのうち最も制限の強い段階を採用します。手動設定は右側の詳細パネルで行い、再処理でも保持します。リスト・グリッド・詳細グリッドではgeneral以外の判定済みファイルに「R-18」を表示します。判定前と音声は「未判定」です。検索条件の各段階と未判定を個別にオン・オフでき、すべてオフの場合は0件になります。既定はすべてオンです。
+
+006まで適用済みの既存DBには007を一度適用します。Runtime・Worker・Catalog・Search・BFFを同じコードへ更新してください。完了済みのタグJobを再実行するため、既存コンテンツも順次判定されます。失敗済みJobは詳細から再試行してください。
+
+```sh
+docker compose stop worker
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_content_ratings.sql
+BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
+docker compose up -d --wait
+# OIDC・OTLP検証構成では上のupを次で置き換える
+# docker compose -f compose.yaml -f compose.verify.yaml up -d --wait
+```
+
+DBを使うレーティングの回帰テストは、全マイグレーションを適用した使い捨てDBに対して実行します。生成行は終了時に削除します。通常の `go test` では接続先を指定しない限りこのテストをスキップします。
+
+```sh
+OCMS_TEST_DATABASE_URL='postgres://<user>:<password>@127.0.0.1:<port>/<test-db>?sslmode=disable' go test -race ./internal/catalog -run TestContentRatingsDatabase
+```
+
+004まで適用済みのDBには005〜007を一度適用し、Runtimeと各Goサービスを更新します。005適用済みの場合は、後述の006・007の反映手順を使ってください。005は解析済みの画像・動画・PDFへタグ付けJobを追加するため、保存済みファイルも順次処理します。既存の失敗Jobは詳細画面から再試行してください。
 
 ```sh
 docker compose stop worker
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_content_ratings.sql
 BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
 docker compose up -d --wait
 # OIDC・OTLP検証構成を使っている場合は上のupを次で置き換える
@@ -331,11 +351,12 @@ docker compose up -d --wait
 
 キャラクターはタグとは別の `catalog.asset_characters` テーブルに保存し、推論結果も `catalog.wd14_character_results` に分離します。詳細パネルから追加・削除でき、上限はタグとは独立して512件、1件256バイトです。ヘッダーの「キャラクター」で名前検索・一覧・ワードクラウド・共起グラフを表示し、選択するとそのキャラクターが付いたファイルへ移動します。件数と共起は閲覧可能なAssetだけから集計します。通常のキーワード検索でもキャラクター名が一致するAssetを取得できます。
 
-005適用済みの既存DBには006を一度適用します。完了済みのタグJobを再実行し、既存ファイルのキャラクターを判定します。一般タグの適用済み状態は保持し、編集済みのタグを復元しません。失敗済みJobは詳細画面から再試行してください。既存環境への反映手順：
+005適用済みの既存DBには006・007を一度適用します。完了済みのタグJobを再実行し、既存ファイルのキャラクターを判定します。一般タグの適用済み状態は保持し、編集済みのタグを復元しません。失敗済みJobは詳細画面から再試行してください。既存環境への反映手順：
 
 ```sh
 docker compose stop worker
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_content_ratings.sql
 BUILDX_CONFIG="$PWD/.cache/buildx" docker compose build runtime bff
 docker compose up -d --wait
 # OIDC・OTLP検証構成では上のupを次で置き換える
@@ -367,7 +388,7 @@ Searchはファイル名・タグに加えて抽出本文をPGroongaで検索し
 
 ## 基盤版からの更新
 
-既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜006を一度適用します。
+既存の001/002適用済みDBは保持したまま、先に新しいPostgreSQLイメージへ切り替え、003〜007を一度適用します。
 
 ```sh
 docker compose build
@@ -377,6 +398,7 @@ docker compose exec -T postgres sh -c 'psql -U ocms -d ocms -v ON_ERROR_STOP=1 -
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/004_embedding_checkpoints.sql
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/005_wd14_tags.sql
 docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/006_characters.sql
+docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/007_content_ratings.sql
 docker compose up -d --wait
 ```
 
@@ -438,6 +460,6 @@ docker compose exec transfer ocms reconcile
 
 Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォート、セミコロン、コンポーネント名はPascalCase、変数・関数名はcamelCaseとします。`npm run build` でTypeScriptのstrictチェックを行います。整形・lintはBiomeを使います。関数と関数の間には空行を1行入れます。Biomeにはこれを強制するルールがないため、空行は手動で入れ、レビューで確認します。
 
-マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜006を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
+マイグレーションは空のPostgreSQLボリュームへの初回起動時に001〜007を番号順で適用します。PostgreSQLイメージにはPGroonga 4.1.0とpgvector 0.8.7を組み込んでいます。既存DBへ自動適用する仕組みは未実装です。既存環境への追加時は対象SQLを `docker compose exec -T postgres psql -U ocms -d ocms -v ON_ERROR_STOP=1 -f /migrations/<filename>` で適用します。
 
 停止は `docker compose down` です。名前付きボリュームは保持します。
