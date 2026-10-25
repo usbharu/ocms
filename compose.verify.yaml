@@ -48,6 +48,7 @@ services:
     network_mode: service:hydra
     depends_on:
       oidc-setup: {condition: service_completed_successfully}
+      migrate: {condition: service_completed_successfully}
     environment:
       SERVICE: bff
       AUTH_MODE: oidc

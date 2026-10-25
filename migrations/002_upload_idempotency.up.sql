@@ -1,3 +1,4 @@
+BEGIN;
 CREATE TABLE catalog.upload_request_keys (
  principal_id uuid NOT NULL REFERENCES catalog.principals,
  idempotency_key text NOT NULL,
@@ -6,3 +7,4 @@ CREATE TABLE catalog.upload_request_keys (
  PRIMARY KEY(principal_id,idempotency_key)
 );
 GRANT ALL ON catalog.upload_request_keys TO catalog_app;
+COMMIT;
