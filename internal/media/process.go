@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -72,7 +73,11 @@ func ffmpeg(ctx context.Context, input, output string, args ...string) error {
 	return err
 }
 func (s *Service) download(ctx context.Context, j contracts.Job, dir string) (string, error) {
-	req, err := platform.Request(ctx, "GET", s.Transfer+"/internal/blobs/"+j.BlobID+"/content", nil)
+	return downloadFile(ctx, s.Transfer+"/internal/blobs/"+j.BlobID+"/content", filepath.Join(dir, "source"))
+}
+
+func downloadFile(ctx context.Context, url, file string) (string, error) {
+	req, err := platform.Request(ctx, "GET", url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -84,7 +89,6 @@ func (s *Service) download(ctx context.Context, j contracts.Job, dir string) (st
 	if res.StatusCode != 200 {
 		return "", processingError("SOURCE_UNAVAILABLE")
 	}
-	file := filepath.Join(dir, "source")
 	out, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return "", err
@@ -340,27 +344,56 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 		return processingError("PDF_PAGE_LIMIT")
 	}
 	metadata["pages"] = pages
+	// Extract the text layer once. A file avoids command()'s diagnostic-sized
+	// stdout cap; form feeds preserve empty pages and page attribution.
+	textPath := filepath.Join(dir, "text")
+	if _, err = command(ctx, "pdftotext", input, textPath); err != nil {
+		return err
+	}
+	textFile, err := os.Open(textPath)
+	if err != nil {
+		return err
+	}
+	defer textFile.Close()
+	stat, err := textFile.Stat()
+	if err != nil {
+		return err
+	}
+	if stat.Size() > maxWorkBytes {
+		return processingError("OUTPUT_TOO_LARGE")
+	}
+	textPages := bufio.NewReader(textFile)
+	var images map[int]string
 	for p := 1; p <= pages; p++ {
-		root := filepath.Join(dir, fmt.Sprintf("page-%d", p))
-		_, err = command(ctx, "pdftoppm", "-f", strconv.Itoa(p), "-l", strconv.Itoa(p), "-singlefile", "-scale-to", "1600", "-png", input, root)
-		if err != nil {
-			return err
+		// Amortize PDF parsing and process startup while bounding tmpfs usage.
+		if (p-1)%8 == 0 {
+			images, err = renderPDFBatch(ctx, input, dir, p, min(p+7, pages))
+			if err != nil {
+				return err
+			}
 		}
-		imagePath := root + ".png"
+		imagePath := images[p]
 		if err = s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", p), "image/png"); err != nil {
 			return err
 		}
-		h, e := hashImage(ctx, imagePath)
+		thumbnail := filepath.Join(dir, "thumbnail.png")
+		if err = resizeAnalysisImage(ctx, imagePath, thumbnail); err != nil {
+			return err
+		}
+		if err = s.storeOutput(ctx, j, thumbnail, fmt.Sprintf("pdf.thumbnail-%d-v1", p), "image/png"); err != nil {
+			return err
+		}
+		h, e := hashImage(ctx, thumbnail)
 		if e != nil {
 			return e
 		}
 		page := p
 		index.Hashes = append(index.Hashes, contracts.Hash{Kind: "pdf_page", Ordinal: p - 1, Page: &page, Hash: h})
-		text, err := command(ctx, "pdftotext", "-f", strconv.Itoa(p), "-l", strconv.Itoa(p), input, "-")
+		text, err := readPDFTextPage(textPages)
 		if err != nil {
 			return err
 		}
-		content := strings.TrimSpace(string(text))
+		content := text
 		kind := "pdf_text"
 		if content == "" {
 			content, err = ocr(ctx, imagePath)
@@ -379,6 +412,52 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 	}
 	return nil
 }
+
+// Preserve page boundaries without allowing a single page to allocate the
+// entire extracted document. The previous per-page command had a 2 MiB cap.
+func readPDFTextPage(reader *bufio.Reader) (string, error) {
+	var text strings.Builder
+	for {
+		part, err := reader.ReadSlice('\f')
+		if text.Len()+len(part) > 2<<20 {
+			return "", processingError("OUTPUT_TOO_LARGE")
+		}
+		text.Write(part)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err == io.EOF {
+			err = nil
+		}
+		return strings.TrimSpace(text.String()), err
+	}
+}
+
+// Render at most eight pages at once; callers remove each page after use.
+func renderPDFBatch(ctx context.Context, input, dir string, first, last int) (map[int]string, error) {
+	root := filepath.Join(dir, "page")
+	if _, err := command(ctx, "pdftoppm", "-f", strconv.Itoa(first), "-l", strconv.Itoa(last), "-scale-to", "1600", "-png", input, root); err != nil {
+		return nil, err
+	}
+	paths, err := filepath.Glob(root + "-*.png")
+	if err != nil {
+		return nil, err
+	}
+	images := make(map[int]string)
+	for _, path := range paths {
+		number := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "page-"), ".png")
+		page, err := strconv.Atoi(number)
+		if err != nil || page < first || page > last {
+			return nil, processingError("MEDIA_INVALID_DATA")
+		}
+		images[page] = path
+	}
+	if len(images) != last-first+1 {
+		return nil, processingError("MEDIA_INVALID_DATA")
+	}
+	return images, nil
+}
+
 func (s *Service) audioAnalysis(ctx context.Context, input, dir string, index *contracts.Index) error {
 	raw, err := command(ctx, "fpcalc", "-raw", "-json", input)
 	if err != nil {
@@ -429,6 +508,16 @@ func (s *Service) audioAnalysis(ctx context.Context, input, dir string, index *c
 	return nil
 }
 
+var dctCosines = func() [8][32]float64 {
+	var table [8][32]float64
+	for u := range table {
+		for x := range table[u] {
+			table[u][x] = math.Cos((float64(2*x+1) * float64(u) * math.Pi) / 64)
+		}
+	}
+	return table
+}()
+
 // hashImage computes a 64-bit DCT pHash from 32x32 luminance samples.
 func hashImage(ctx context.Context, path string) (string, error) {
 	raw, err := command(ctx, "ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-i", path, "-vf", "scale=32:32,format=gray", "-frames:v", "1", "-f", "rawvideo", "-")
@@ -444,7 +533,7 @@ func phash(samples []byte) string {
 			var sum float64
 			for x := 0; x < 32; x++ {
 				for y := 0; y < 32; y++ {
-					sum += float64(samples[x*32+y]) * math.Cos((float64(2*x+1)*float64(u)*math.Pi)/64) * math.Cos((float64(2*y+1)*float64(v)*math.Pi)/64)
+					sum += float64(samples[x*32+y]) * dctCosines[u][x] * dctCosines[v][y]
 				}
 			}
 			coefficients[u*8+v] = sum

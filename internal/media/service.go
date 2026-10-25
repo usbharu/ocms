@@ -47,14 +47,15 @@ func (s *Service) asset(r *http.Request) (catalog.Asset, error) {
 }
 func (s *Service) authorize(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		BlobID string `json:"blob_id"`
-		Lease  string `json:"lease_token"`
+		BlobID    string `json:"blob_id"`
+		Lease     string `json:"lease_token"`
+		Rendition string `json:"rendition_blob_id"`
 	}
 	if !platform.Decode(w, r, &in) {
 		return
 	}
 	var allowed bool
-	err := s.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM media.processing_jobs WHERE id::text=$1 AND source_blob_id::text=$2 AND lease_token::text=$3 AND status='running' AND locked_until>now())`, r.PathValue("id"), in.BlobID, in.Lease).Scan(&allowed)
+	err := s.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM media.processing_jobs WHERE id::text=$1 AND source_blob_id::text=$2 AND lease_token::text=$3 AND status='running' AND locked_until>now() AND ($4='' OR EXISTS(SELECT 1 FROM media.renditions WHERE source_blob_id::text=$2 AND output_blob_id::text=$4)))`, r.PathValue("id"), in.BlobID, in.Lease, in.Rendition).Scan(&allowed)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

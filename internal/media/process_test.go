@@ -1,8 +1,10 @@
 package media
 
 import (
+	"bufio"
 	"math/bits"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -22,5 +24,35 @@ func TestPHashBrightnessInvariance(t *testing.T) {
 	b, _ := strconv.ParseUint(phash(brighter), 2, 64)
 	if distance := bits.OnesCount64(a ^ b); distance > 2 {
 		t.Fatalf("brightness shift changed %d bits", distance)
+	}
+}
+
+func TestPHashCompatibility(t *testing.T) {
+	for seed, want := range map[int]string{
+		1:  "0010101011010101000011101010110000011111100000110011000011011011",
+		7:  "0110110001001101010110000011000010001001011111110110110100110010",
+		19: "0101100000011001111100001000010111111100000000101011100110011111",
+	} {
+		samples := make([]byte, 1024)
+		for i := range samples {
+			samples[i] = byte((i*i + seed*i + seed*17) % 251)
+		}
+		if phash(samples) != want {
+			t.Fatalf("pHash changed for seed %d", seed)
+		}
+	}
+}
+
+func TestPDFTextPages(t *testing.T) {
+	long := strings.Repeat("text ", 20000)
+	reader := bufio.NewReader(strings.NewReader(long + "\f\fthird\f"))
+	for _, want := range []string{strings.TrimSpace(long), "", "third", ""} {
+		got, err := readPDFTextPage(reader)
+		if err != nil || got != want {
+			t.Fatal("PDF page text lost or attributed to the wrong page")
+		}
+	}
+	if _, err := readPDFTextPage(bufio.NewReader(strings.NewReader(strings.Repeat("x", (2<<20)+1)))); errorCode(err) != "OUTPUT_TOO_LARGE" {
+		t.Fatal("oversized page text accepted")
 	}
 }

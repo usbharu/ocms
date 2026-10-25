@@ -83,9 +83,12 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	input, err := s.download(ctx, j, dir)
-	if err != nil {
-		return err
+	var input string
+	if strings.HasPrefix(mime, "video/") {
+		input, err = s.download(ctx, j, dir)
+		if err != nil {
+			return err
+		}
 	}
 	scores := map[string]float64{}
 	characters := map[string]float64{}
@@ -111,17 +114,12 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 	frame := filepath.Join(dir, "frame.png")
 	switch {
 	case mime == "application/pdf":
-		var metadata struct {
-			Pages int `json:"pages"`
+		pages, e := s.pdfPages(ctx, j.BlobID)
+		if e != nil {
+			return e
 		}
-		if err = s.DB.QueryRow(ctx, `SELECT metadata FROM media.blob_metadata WHERE blob_id=$1`, j.BlobID).Scan(&metadata); err != nil {
-			return err
-		}
-		if metadata.Pages < 1 || metadata.Pages > pdfPageLimit() {
-			return processingError("PDF_PAGE_LIMIT")
-		}
-		for p := 1; p <= metadata.Pages; p++ {
-			_, err = command(ctx, "pdftoppm", "-f", strconv.Itoa(p), "-l", strconv.Itoa(p), "-singlefile", "-scale-to", "512", "-png", input, filepath.Join(dir, "frame"))
+		for p := 1; p <= pages; p++ {
+			frame, err = s.analysisImage(ctx, j, dir, p)
 			if err != nil {
 				return err
 			}
@@ -147,7 +145,7 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 			}
 		}
 	default:
-		if err = ffmpeg(ctx, input, frame, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
+		if frame, err = s.analysisImage(ctx, j, dir, 0); err != nil {
 			return err
 		}
 		if err = infer(frame); err != nil {

@@ -417,7 +417,7 @@ go vet ./...
 | 画像 | WebP、PNGサムネイル、OCR、64bit DCT pHash、ネイティブ画像Embedding |
 | 動画 | H.264/AAC MP4（faststart）、PNGサムネイル、5秒間隔・最大12枚のフレームpHash、音声ASR・指紋、30秒単位のネイティブ動画Embedding |
 | 音声 | Opus/Ogg、Chromaprint、60秒単位のASRとネイティブ音声Embedding |
-| PDF | 全ページのPNGプレビュー、テキストレイヤー抽出／文字のないページのOCR、ページpHash・Embedding |
+| PDF | 全ページのPNGプレビュー・解析サムネイル、テキストレイヤー一括抽出／文字のないページのOCR、ページpHash・Embedding |
 
 WorkerはFFprobe / FFmpeg、Poppler、Tesseract（`eng+jpn`）、Chromaprintを使います。Runtimeの推論はONNX Runtimeに統一しています。ASRは多言語Whisper `tiny`のfp32モデルをCPUで実行し、beam幅3でタイムスタンプを生成します。30秒ごとに処理し、未処理の末尾を次の窓へ引き継ぎます。`ASR_MODEL`は`tiny`のみ対応します。従来の任意モデル名・パス指定は使えません。
 
@@ -461,7 +461,17 @@ python3 scripts/media-integration.py
 python3 scripts/tagging-integration.py
 ```
 
-Workerはマスターキー・S3資格情報を持ちません。Transferは実行中JobのID、対象Blob、リーストークン、期限をWorkerに照会してから復号データを渡します。平文作業領域はtmpfs内の0700一時ディレクトリで、処理後に削除します。Jobは既定2時間、PDFは既定500ページで、それぞれ `MEDIA_JOB_TIMEOUT_SECONDS` と `MEDIA_MAX_PDF_PAGES` で変更できます。入力/出力256 MiB、画像約1600万画素、動画10分、音声30分、Workerのメモリ768 MiB・tmpfs 768 MiBという上限も設けています。PDFのページ画像は保存・抽出後に順次削除し、ページ数に比例してtmpfsを消費しないようにしています。
+Workerはマスターキー・S3資格情報を持ちません。Transferは実行中JobのID、対象Blob、リーストークン、期限をWorkerに照会してから復号データを渡します。平文作業領域はtmpfs内の0700一時ディレクトリで、処理後に削除します。Jobは既定2時間、PDFは既定500ページで、それぞれ `MEDIA_JOB_TIMEOUT_SECONDS` と `MEDIA_MAX_PDF_PAGES` で変更できます。入力/出力256 MiB、画像約1600万画素、動画10分、音声30分、Workerのメモリ768 MiB・tmpfs 768 MiBという上限も設けています。PDFは最大8ページずつ描画し、ページ画像は保存・抽出後に順次削除します。tmpfsには全ページを保持しません。
+
+画像のタグ・意味検索は保存済みの512pxサムネイルを使い、元画像を再取得・再変換しません。PDFは1600pxのページプレビューから512pxの解析サムネイルを作成・暗号化保存し、pHash・タグ・画像Embeddingで共用します。OCRは1600pxのプレビューを使い、文字のあるページは一括抽出した本文を使います。抽出本文は全体256 MiB・1ページ2 MiBまでとし、上限超過は切り捨てずJobを失敗させます。タグ・EmbeddingのJobは元PDFを取得・描画しません。既存PDFに解析サムネイルがなければ、保存済みプレビューを縮小します。動画は各処理の時間サンプリングを保って縮小フレームを使います。元ファイルの完全一致判定用SHA-256は変更しません。
+
+Worker・Transferを同じコードへ更新すると、新しいJobからこの経路を使います。DBマイグレーションや既存コンテンツの自動再処理はありません。完了済みの検索ベクトル・タグ・pHashは保持します。縮小方法の変更によるPDFの推論結果・pHashの差や、実データでの処理時間・精度は別途評価が必要です。
+
+解析画像の回帰テストは、全マイグレーションを適用した使い捨てDBで実行できます。PDFの検証にはFFmpeg・Poppler・Tesseract（英語・日本語データ）が必要です。画像の検証ではコーデックを無効にして、保存済みサムネイルだけでタグ・Embeddingが動くことを確認します。推論APIとTransferの保存・配信はテスト用の応答を使い、実モデル・S3の結合検証は既存のメディア試験で行います。
+
+```sh
+OCMS_TEST_DATABASE_URL='postgres://<user>:<password>@127.0.0.1:<port>/<test-db>?sslmode=disable' go test -race ./internal/media -run 'Test(AnalysisRenditionAuthorizationDatabase|PDFThumbnailPipelineDatabase|ImageThumbnailJobsDatabase|PDFRenderBatches)'
+```
 
 埋め込みは推論1回ごとにベクトルと入力のSHA-256をWorkerのDBへ保存します。再起動・再試行時は同じJob・モデル・リビジョン・推論型・入力に対する結果を再利用し、検索索引全体の保存とJob完了後にチェックポイントを削除します。長い本文は全文を1000文字ずつに分けて処理します。元の本文・画像はチェックポイントへ保存しません。GrafanaのWorkerログにはページ数・ページ完了・チェックポイント保存/再利用を出し、生のツール診断や文書内容は記録しません。期限超過・作業領域不足・メモリ不足・推論サービス停止を区別し、不正入力は無駄な自動再試行をしません。
 

@@ -536,7 +536,11 @@ Blob削除は参照管理と分離して行い、参照がゼロになったBlob
 | 動画 | MP4 / H.264 + AAC、`+faststart` | ブラウザでの再生・シーク |
 | 動画 | MP4 1080p/720pなど（任意） | **手動**画質切替 |
 | 音声 | Opus、AAC（任意） | 再生互換性・圧縮効率 |
-| PDF | ページ画像 | プレビュー・OCR・画像Embedding |
+| PDF | 長辺1600pxのページプレビュー、長辺512pxの解析サムネイル | プレビュー・OCR／pHash・タグ・画像Embedding |
+
+画像のタグ・画像Embeddingは保存済みの `thumbnail-v1` を使う。PDFは初回解析時にページプレビュー `pdf.page-{page}-v1` と解析サムネイル `pdf.thumbnail-{page}-v1` を暗号化保存し、pHash・タグ・画像Embeddingで同じ縮小画像を使う。本文は全ページを一度に抽出し、改ページ区切りから白紙ページを含むページ番号を保持する。描画は最大8ページずつ実行し、OCRには1600pxプレビューを使う。プレビューは各ページの処理後に削除し、一時領域に全ページを保持しない。既存PDFに解析サムネイルがない場合は保存済みプレビューを512pxへ縮小し、元PDFを再描画しない。動画のpHash・タグ・Embeddingはそれぞれの時間サンプリングを維持し、縮小フレームを使う。元ファイルの完全一致判定用SHA-256は変更しない。
+
+Workerは派生画像を `GET /internal/blobs/{sourceBlobId}/content?rendition={outputBlobId}` でTransferから取得する。Transferは復号前に `POST /internal/jobs/{jobId}/authorize` へ `blob_id`・`lease_token` と任意の `rendition_blob_id` を送り、Workerは実行中Jobの対象Blob・リース・期限と、その元Blobに属する派生Blobであることを確認する。Workerに鍵・S3資格情報は渡さない。テーブル変更・既存Jobの自動再実行は伴わない。
 
 **HLSプレイリスト、HLSセグメント、ABRは実装しない。** MP4は`moov` atomを先頭に配置し、HTTP Rangeでシークする。Codecやコンテナがブラウザ非対応の場合は標準MP4派生ファイルを作る。
 

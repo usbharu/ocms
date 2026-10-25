@@ -15,7 +15,7 @@ func stringID(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 func (s *Service) authorizeJob(w http.ResponseWriter, r *http.Request) bool {
-	in := map[string]string{"blob_id": r.PathValue("id"), "lease_token": r.Header.Get("X-Job-Lease")}
+	in := map[string]string{"blob_id": r.PathValue("id"), "lease_token": r.Header.Get("X-Job-Lease"), "rendition_blob_id": r.URL.Query().Get("rendition")}
 	if err := platform.Call(r.Context(), "POST", os.Getenv("MEDIA_URL")+"/internal/jobs/"+r.Header.Get("X-Job-ID")+"/authorize", "", in, nil); err != nil {
 		platform.Error(w, 403, "JOB_FORBIDDEN")
 		return false
@@ -27,6 +27,9 @@ func (s *Service) workerRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blob := r.PathValue("id")
+	if rendition := r.URL.Query().Get("rendition"); rendition != "" {
+		blob = rendition
+	}
 	s.serveBlob(w, r, catalog.Asset{ID: blob, BlobID: &blob, MIME: "application/octet-stream"}, "media-worker")
 }
 func (s *Service) derivative(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +41,7 @@ func (s *Service) derivative(w http.ResponseWriter, r *http.Request) {
 	switch profile {
 	case "image.webp-v1", "thumbnail-v1", "video.mp4-v1", "audio.opus-v1", "pdf.page-1-v1":
 	default:
-		if !validPDFProfile(profile) {
+		if !validPDFProfile(profile) && !validPDFThumbnailProfile(profile) {
 			platform.Error(w, 400, "PROFILE_UNSUPPORTED")
 			return
 		}
@@ -102,4 +105,8 @@ func validPDFProfile(profile string) bool {
 	}
 	n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(profile, prefix), suffix))
 	return err == nil && n >= 1 && n <= platform.PDFPageLimit()
+}
+
+func validPDFThumbnailProfile(profile string) bool {
+	return strings.HasPrefix(profile, "pdf.thumbnail-") && validPDFProfile(strings.Replace(profile, "pdf.thumbnail-", "pdf.page-", 1))
 }
