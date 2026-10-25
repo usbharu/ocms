@@ -80,7 +80,7 @@ func TestRecommendationsUseSearchAndSessionPrincipal(t *testing.T) {
 	calls := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.URL.Path != "/api/v1/assets/source/recommendations" || r.Header.Get("X-Principal") != "reader" || r.Header.Get("Cookie") != "" {
+		if (r.URL.Path != "/api/v1/assets/source/recommendations" && r.URL.Path != "/api/v1/recommendations") || r.Header.Get("X-Principal") != "reader" || r.Header.Get("Cookie") != "" {
 			t.Error("recommendation proxy did not enforce session boundary")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -94,23 +94,25 @@ func TestRecommendationsUseSearchAndSessionPrincipal(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.sessions["session"] = session{Principal: "reader", Expiry: time.Now().Add(time.Hour)}
-	for _, authenticated := range []bool{false, true} {
-		req := httptest.NewRequest("GET", "/api/v1/assets/source/recommendations", nil)
-		req.Header.Set("X-Principal", "forged")
-		if authenticated {
-			req.AddCookie(&http.Cookie{Name: "ocms_session", Value: "session"})
-		}
-		response := httptest.NewRecorder()
-		s.Handler(fstest.MapFS{}).ServeHTTP(response, req)
-		expected := 401
-		if authenticated {
-			expected = 200
-		}
-		if response.Code != expected {
-			t.Fatalf("status %d, expected %d", response.Code, expected)
+	for _, path := range []string{"/api/v1/assets/source/recommendations", "/api/v1/recommendations"} {
+		for _, authenticated := range []bool{false, true} {
+			req := httptest.NewRequest("GET", path, nil)
+			req.Header.Set("X-Principal", "forged")
+			if authenticated {
+				req.AddCookie(&http.Cookie{Name: "ocms_session", Value: "session"})
+			}
+			response := httptest.NewRecorder()
+			s.Handler(fstest.MapFS{}).ServeHTTP(response, req)
+			expected := 401
+			if authenticated {
+				expected = 200
+			}
+			if response.Code != expected {
+				t.Fatalf("status %d, expected %d", response.Code, expected)
+			}
 		}
 	}
-	if calls != 1 {
+	if calls != 2 {
 		t.Fatal("anonymous request reached Search")
 	}
 }

@@ -84,6 +84,7 @@ flowchart TB
     WORK --> SRCH
     WORK --> INF[推論Runtime / Embedding・ASR・WD14]
     SRCH --> INF
+    SRCH --> REC[推薦エンジン / TF-IDF]
 ```
 
 ### 3.1 サービス責務
@@ -93,7 +94,8 @@ flowchart TB
 | **BFF / Auth** | OIDC Code Flow、セッションCookie、CSRF、フロントエンド向けAPI、内部への認証主体伝搬 | S3 I/O、暗号鍵操作 |
 | **Catalog Service** | 論理Asset、所有者・ACL、アップロード状態、AssetとBlobの参照、重複結果へのアクセス制御、Asset別メタデータの認可済み推薦候補 | 暗号化・復号、モデル推論 |
 | **Transfer Service** | マスターキー読み込み、DEK生成/ラップ、AES-CTR暗号化・復号、S3 I/O、SHA-256計算、HTTP Range、Blob登録 | OCR、全文検索 |
-| **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、関連コンテンツの評価・推薦、Catalog経由の一括認可 | 平文ファイル保存 |
+| **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、関連コンテンツ・個人向け推薦の統合、抽選・キャッシュ・履歴・セッション、Catalog経由の一括認可 | 平文ファイル保存 |
+| **推薦エンジン** | 認可済みタグ・キャラクターのTF-IDF学習と類似度計算。Python Runtimeと同じイメージの独立プロセス | DB・S3接続、ACL判断、メディア推論モデルの読み込み |
 | **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成、WD14タグ集約 | ユーザー直接認証、マスターキー参照 |
 | **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ・キャラクター・レーティング推論API | 検索DB操作、ACL判断 |
 
@@ -144,7 +146,7 @@ erDiagram
 | `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results`, `wd14_rating_results`, `asset_favorites` | Catalog |
 | `storage` | `blobs`, `upload_objects` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
-| `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings` | Search |
+| `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings`, `recommendation_cache`, `recommendation_sessions`, `recommendation_history` | Search |
 | `public` | `schema_migrations` | DB移行管理者（golang-migrate） |
 
 ### 4.3 主要DDL（設計ベースライン）
@@ -597,6 +599,7 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `GET` | `/api/v1/assets/{assetId}/duplicates` | 同一バイナリのAsset一覧（閲覧可能分のみ） |
 | `GET` | `/api/v1/assets/{assetId}/similar` | 知覚的類似ファイル検索 |
 | `GET` | `/api/v1/assets/{assetId}/recommendations` | キャラクター・タグ・知覚類似による推薦（最大200件） |
+| `GET` | `/api/v1/recommendations` | お気に入りからの個人向け推薦。セッション付き24件ページング |
 | `POST` | `/api/v1/search` | キーワード・意味・ハイブリッド検索 |
 | `POST` | `/api/v1/search/by-media` | 画像/音声などを入力とする検索 |
 | `POST` | `/api/v1/assets/{assetId}/renditions` | 再エンコード要求 |
@@ -715,6 +718,37 @@ sequenceDiagram
 {"source_asset_id":"00000000-0000-4000-8000-000000000001","hash_status":"pending","assets":[]}
 ```
 
+### 10.4 お気に入りをもとにした個人向け推薦
+
+Catalogの `GET /internal/recommendation-dataset?fingerprint=...` は、要求主体が現在閲覧できるAssetのID・Blob ID・タグ・キャラクター・お気に入り状態・MIME・レーティングを、Asset ID順の一つのSQLスナップショットから取得する。特徴の配列を名前順に整列したJSONのSHA-256を `fingerprint` とする。同じ指紋なら `unchanged: true` とし、メタデータを再送しない。削除・権限喪失後のお気に入りは学習対象に含めない。
+
+独立した推薦サービス `recommender` の `POST /recommend` は、内部認証付きの `{assets: [...]}` を受け取り、scikit-learn 1.9.1のTF-IDFを使う。タグ・キャラクターの名前全体を種類別の特徴として扱い、分割・小文字化せず、出現はbinary、IDFとL2正規化を適用する。閲覧可能な全Assetで特徴空間を学習し、お気に入りの平均ベクトルをL2正規化してコサイン類似度を求める。両種類の特徴は同等に扱う。他主体の嗜好や閲覧履歴、本文、知覚ハッシュは使わない。
+
+特徴付きのお気に入りがなければ `status: insufficient_information` とする。1件でも好みのベクトルを作れれば `ready` とし、お気に入り自身と同じBlobのAssetを除外した正の類似度上位1,000件を、同点はAsset ID順で返す。応答は `{engine_version: "tfidf-v1", status, candidates: [{asset_id, score}]}`。モデルは永続化せず、Searchが候補計算結果を保存する。
+
+| Searchの保存先 | 内容と有効期間 |
+|---|---|
+| `recommendation_cache` | 主体ごとの入力指紋、エンジン版、認可済み特徴スナップショット、状態、候補IDと類似度。24時間 |
+| `recommendation_sessions` | 主体、入力指紋、エンジン版、種類・レーティング条件、状態、抽選済みIDとスコア。30分 |
+| `recommendation_history` | 推薦応答の先頭24件。過去24時間の直近3回を抽選に利用 |
+
+マイグレーション009でこれらのテーブルと索引を追加し、書き込みは `search_app` に限定する。キャッシュは指紋・エンジン版・期限が一致する場合だけ再利用する。キャッシュ利用でもCatalogの指紋確認とページごとの再認可を行う。期限切れセッションと古い表示履歴は、その主体の次回正常要求で回収する。キャッシュは主体ごとに1行を更新する。
+
+Searchは種類・レーティング条件を適用してから最大200件を重複なしで順次抽選する。選択重みは `類似度² × max(0.1, 1 − 選択済み候補との最大Jaccard係数)` とし、直近3回の先頭24件に含まれるAssetはさらに0.25倍にする。Jaccard係数は種類を区別したタグ・キャラクターの集合で計算する。要求ごとに暗号学的乱数で抽選器を初期化し、候補が24件以上で直前と先頭24件の並びが同じ場合は、最大3回の抽選で確定する。候補不足による再表示は許容する。表示順は抽選順とし、類似度順に戻さない。
+
+```http
+GET /api/v1/recommendations?kind=image&ratings=general,sensitive
+GET /api/v1/recommendations?kind=image&ratings=general,sensitive&session_id=<session-id>&page=2
+```
+
+```json
+{"status":"ready","session_id":"<session-id>","page":1,"total":30,"assets":[{"asset_id":"<asset-id>","score":82.1,"common_tags":["landscape"],"common_characters":[]}]}
+```
+
+各結果は通常のAsset項目も含む。`score` はコサイン類似度の100倍であり、確率ではない。新規要求は必ず新しいセッションを作り、`session_id` 付き要求は保存した並びの24件単位のページを返す。`page` は1〜9、セッション省略時は1のみ。種類は `all`（既定）・`image`・`video`・`audio`・`document`。レーティングは既存の省略・空・不正値の規則を適用し、学習対象には影響させない。候補上位1,000件を超えた全ライブラリの順位や推薦品質は保証しない。
+
+他主体・期限切れのセッションは409 `RECOMMENDATION_SESSION_EXPIRED`、条件・特徴・お気に入り・閲覧可能範囲・エンジン版が変わったセッションは409 `RECOMMENDATION_SESSION_STALE` とし、再生成を求める。応答前に指紋を再確認し、取得中の変更でも古い件数や理由を返さない。依存障害は503で、情報不足・候補0件と区別する。Searchは要求全体を30秒で打ち切り、同一主体の競合要求は503とする。推薦エンジンの計算は同時1件で、実行中の追加計算要求は503とする。タグ・入力指紋・推薦セッションID・プロファイルはログやTraceへ記録しない。
+
 ## 11. OpenTelemetry・ログ
 
 ### 11.1 基本方針
@@ -727,7 +761,7 @@ sequenceDiagram
 
 ### 11.2 主要Span
 
-`bff.http_request`、`catalog.create_upload`、`transfer.encrypt_stream`、`transfer.s3_upload`、`transfer.decrypt_range`、`transfer.deduplicate`、`media.transcode`、`media.ocr`、`media.transcribe`、`search.keyword`、`search.semantic`、`embedding.encode`。
+`bff.http_request`、`catalog.create_upload`、`transfer.encrypt_stream`、`transfer.s3_upload`、`transfer.decrypt_range`、`transfer.deduplicate`、`media.transcode`、`media.ocr`、`media.transcribe`、`search.keyword`、`search.semantic`、`embedding.encode`、`search.personal_recommendations`、`recommendation.rank`。
 
 ### 11.3 主要Metric
 
@@ -790,6 +824,12 @@ Catalogは `catalog.asset_favorites(principal_id, asset_id, created_at)` を保�
 
 SPAのナビゲーションはライブラリ・タグ・キャラクター・お気に入りの順とする。3種類の一覧表示、詳細パネル、閲覧ダイアログに登録・解除ボタンを設ける。星の輪郭と黄色の塗りつぶし、アクセシブルな状態で登録済みかを示す。お気に入り一覧は検索・種類・表示切り替え・ページ送りに対応し、検索時は関連度順とする。検索解除・類似・完全一致比較でも範囲を維持する。
 
+### 12.2 個人向けおすすめ
+
+ヘッダーの「お気に入り」の隣に「おすすめ」を追加する。開き直すたび・更新時に推薦を生成し、種類・レーティング変更でも新しいセッションにする。詳細グリッドに共通タグ・キャラクターと評価値を表示し、24件ずつページ移動する。詳細・閲覧・関連コンテンツ探索から戻る間はセッションと並びを維持する。お気に入り・特徴編集後は再取得する。遅れて届いた応答は別画面や新しい要求を上書きしない。
+
+学習不成立では「情報が足りません」と「お気に入りを開く」、学習成立後の候補0件では「おすすめがありません」を表示する。読み込み・取得失敗と再試行・セッション失効による更新案内を区別する。
+
 ## 13. 処理品質・エラー要件
 
 - ファイルサイズ、同時処理数、Jobタイムアウト、検索件数、動画変換プロファイルは設定値とし、具体的な上限は負荷試験後に決める。
@@ -825,6 +865,7 @@ SPAのナビゲーションはライブラリ・タグ・キャラクター・�
 | AC-20 | 関連コンテンツ | キャラクター・タグ・知覚類似の固定重みで推薦し、完全一致除外・Asset別メタデータ・ACL・理由表示・探索からの復帰を保つ |
 | AC-21 | お気に入り | ユーザー別・Asset別に永続保存し、共有・ACL分離、3表示と詳細の状態同期、お気に入り内検索、登録順とページングが動作する |
 | AC-22 | コンテンツレーティング | WD14のレーティングを独立保存し、自動判定・手動設定保持・各段階の検索切替・3表示のR-18表示・ACL分離を保つ |
+| AC-23 | 個人向け推薦 | お気に入りの特徴によるTF-IDF推薦、情報不足の区別、関連度・多様性・表示履歴による抽選、キャッシュ・セッションの永続化、変更時失効、ACL分離、探索からの復帰を保つ |
 
 ## 15. 実装順序
 

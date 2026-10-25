@@ -29,6 +29,7 @@ func New(db *pgxpool.Pool) *Service {
 }
 func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
+	m.HandleFunc("GET /api/v1/recommendations", s.personalRecommendations)
 	m.HandleFunc("POST /api/v1/search", s.search)
 	m.HandleFunc("GET /api/v1/assets/{id}/similar", s.similar)
 	m.HandleFunc("GET /api/v1/assets/{id}/recommendations", s.recommendations)

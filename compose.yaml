@@ -95,6 +95,7 @@ services:
       DATABASE_URL: postgres://search_app:${APP_DB_PASSWORD}@postgres:5432/ocms?sslmode=disable
       MEDIA_URL: http://worker:8080
       RUNTIME_URL: http://runtime:8080
+      RECOMMENDATION_URL: http://recommender:8080
     depends_on:
       catalog: {condition: service_healthy}
   runtime:
@@ -114,6 +115,28 @@ services:
       interval: 10s
       timeout: 5s
       retries: 60
+  recommender:
+    image: ocms-runtime:local
+    build:
+      context: .
+      dockerfile: runtime/Dockerfile
+    command: [uvicorn, recommendation_server:app, --host, 0.0.0.0, --port, '8080', --no-access-log]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Run python3 scripts/dev-init.py}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+    tmpfs: ["/tmp:rw,size=64m,mode=1777"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
   worker:
     <<: *app
     environment:
