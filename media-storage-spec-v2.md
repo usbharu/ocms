@@ -73,6 +73,8 @@ flowchart TB
     BFF --> SRCH[Search Service]
 
     CAT --> PG[(PostgreSQL)]
+    MIG[DB移行 / golang-migrate] --> PG
+    MIG -. 正常終了後に起動 .-> CAT
     XFER --> PG
     SRCH --> PG
     XFER <--> S3[(S3)]
@@ -139,6 +141,7 @@ erDiagram
 | `storage` | `blobs`, `upload_objects` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings` | Search |
+| `public` | `schema_migrations` | DB移行管理者（golang-migrate） |
 
 ### 4.3 主要DDL（設計ベースライン）
 
@@ -319,6 +322,15 @@ CREATE INDEX idx_embeddings_blob ON search.embeddings(blob_id);
 - Assetが参照するBlob、および有効なRenditionで参照される派生Blobは削除しない。GCでは参照追加と`deleting`への遷移を競合なく排他制御し、猶予期間後に再確認して削除する。
 - Outboxイベントはat-least-once配送、Worker処理は冪等とする。`FOR UPDATE SKIP LOCKED`等でJobを取得し、リース切れJobを再実行できるようにする。
 - Blob共有に伴う処理結果（OCR、ASR、Embedding、再エンコード）はBlobごとに再利用する。Asset固有情報（ファイル名、タグ、ACL）は再利用・混同しない。
+
+### 4.5 DBマイグレーション
+
+- `migrate` はgolang-migrate v4.19.1を呼び出す起動前の保守プロセスとする。番号順の適用、排他ロック、`public.schema_migrations` のバージョン・dirty状態の管理は同ツールが担う。
+- SQLはアプリ共通イメージの `/app/migrations` に `NNN_name.up.sql` として同梱する。ファイルごとに `BEGIN` / `COMMIT` で原子性を保ち、適用済みSQLの変更は新規マイグレーションで行う。
+- 新規DBも既存DBも未適用分だけを実行する。履歴のない既存DBは自動推測せず、管理者が適用済み番号を一度だけ `baseline` で宣言する。SQLを再実行せず、既存データを保持する。
+- Catalogと検証用OIDC BFFは `migrate` の正常終了を起動条件にする。他のGoサービスはCatalogへの依存を経由して待つ。既存プロセスは更新前に停止する。失敗時はアプリを起動せず、dirty状態の確認・修復後に管理者が `force` で履歴を訂正して再実行する。
+- DB管理資格情報を持つのはPostgreSQLと `migrate` に限定し、各サービスのスキーマ・ロール分離を維持する。移行失敗のログにはSQL・接続URL・資格情報・データ値を出さず、固定のエラーコードを記録する。
+- 状態確認は `ocms migrate version`、通常適用は `ocms migrate up`、既存DBの引き継ぎは `ocms migrate baseline N`、確認済みの障害復旧は `ocms migrate force N` とする。自動ダウングレードは行わない。
 
 ## 5. 暗号化と鍵管理
 

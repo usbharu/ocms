@@ -31,13 +31,23 @@ services:
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/dev-init.py}
     volumes:
       - postgres:/var/lib/postgresql/data
-      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/001-init.sh:ro
-      - ./migrations:/migrations:ro
     healthcheck:
       test: [CMD-SHELL, pg_isready -U ocms -d ocms]
       interval: 3s
       timeout: 3s
       retries: 30
+  migrate:
+    <<: *app
+    restart: "no"
+    command: [migrate, up]
+    healthcheck:
+      disable: true
+    environment:
+      DATABASE_URL: postgres://ocms:${POSTGRES_PASSWORD}@postgres:5432/ocms?sslmode=disable
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/dev-init.py}
+      MIGRATIONS_DIR: /app/migrations
+    depends_on:
+      postgres: {condition: service_healthy}
   s3:
     image: chrislusf/seaweedfs:4.48
     command: mini -dir=/data -ip=s3
@@ -60,6 +70,7 @@ services:
       DATABASE_URL: postgres://catalog_app:${APP_DB_PASSWORD}@postgres:5432/ocms?sslmode=disable
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
   transfer:
     <<: *app
     environment:
