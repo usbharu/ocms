@@ -88,6 +88,11 @@ test('library graph supports selection, zoom and keyboard navigation', async ({
   await expect(graph).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('combobox', { name: 'タグを選択' }).selectOption('旅行');
   await expect(page.getByText('20件のファイル · 関連タグ 1件')).toBeVisible();
+  // Selection animates the viewport; establish 100% before checking relative zoom.
+  await page.getByRole('button', { name: '全体を表示' }).click();
+  await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
+    '100%',
+  );
   await page.getByRole('button', { name: '拡大', exact: true }).click();
   await expect(page.getByRole('button', { name: '全体を表示' })).toHaveText(
     '150%',
