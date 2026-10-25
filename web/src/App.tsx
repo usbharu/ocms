@@ -31,6 +31,7 @@ import {
   type SearchContext,
   type View,
 } from './lib/assets';
+import { type UploadTask, uploadFile } from './lib/uploads';
 
 type ExplorationSnapshot = {
   assets: Asset[];
@@ -95,6 +96,8 @@ export function App() {
   const related = context.mode === 'recommendation';
   const [searching, setSearching] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
+  const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
+  const uploadRunning = useRef(false);
   const uploadInput = useRef<HTMLInputElement>(null);
   const detailTitle = useRef<HTMLHeadingElement>(null);
   const fileList = useRef<HTMLElement>(null);
@@ -263,49 +266,60 @@ export function App() {
     };
   }, [selected?.asset_id, me]);
 
-  async function upload(file: File) {
-    if (!me) return;
+  async function processUploads(tasks: UploadTask[]) {
+    if (!me || uploadRunning.current) return;
+    uploadRunning.current = true;
     setError('');
     setProgress(0);
+    const update = () => setUploadTasks((current) => [...current]);
+    let lastAsset: string | undefined;
     try {
-      const u = await request('/api/v1/uploads', {
-        method: 'POST',
-        body: JSON.stringify({
-          filename: file.name,
-          mime_type: file.type || 'application/octet-stream',
-          size_bytes: file.size,
-        }),
-      });
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('PUT', `/api/v1/uploads/${u.upload_id}/content`);
-        xhr.setRequestHeader('X-CSRF-Token', me.csrf_token);
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable)
-            setProgress(Math.round((e.loaded / e.total) * 100));
-        };
-        xhr.onload = () =>
-          xhr.status >= 200 && xhr.status < 300
-            ? resolve()
-            : reject(
-                new Error(
-                  'アップロードに失敗しました。ファイルを選び直してください。',
-                ),
-              );
-        xhr.onerror = () => reject(new Error('通信に失敗しました'));
-        xhr.send(file);
-      });
-      const a = await request(`/api/v1/assets/${u.asset_id}`);
-      setSelected(a);
-      setQuery('');
-      setMode('keyword');
-      setKind('all');
-      await refresh(allFiles, 1, 'all');
+      for (const task of tasks) {
+        task.state = 'uploading';
+        update();
+        try {
+          lastAsset = await uploadFile(
+            task,
+            me.csrf_token,
+            request,
+            (value) => {
+              task.progress = value;
+              setProgress(value);
+              update();
+            },
+          );
+          task.state = 'completed';
+        } catch {
+          task.state = 'failed';
+        }
+        update();
+      }
+      if (lastAsset) {
+        const asset = await request(`/api/v1/assets/${lastAsset}`);
+        setSelected(asset);
+        setQuery('');
+        setMode('keyword');
+        setKind('all');
+        await refresh(allFiles, 1, 'all');
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      uploadRunning.current = false;
       setProgress(null);
     }
+  }
+
+  function upload(files: File[]) {
+    if (uploadRunning.current) return;
+    const tasks: UploadTask[] = files.map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      state: 'waiting',
+      progress: 0,
+    }));
+    setUploadTasks(tasks);
+    void processUploads(tasks);
   }
 
   const run = (action: () => Promise<unknown>) =>
@@ -716,7 +730,14 @@ export function App() {
                 {section === 'favorites' ? 'お気に入り' : 'ライブラリ'}
               </h1>
             )}
-            {progress !== null && <UploadProgress value={progress} />}
+            {uploadTasks.length > 0 && (
+              <UploadProgress
+                value={progress ?? 0}
+                tasks={uploadTasks}
+                busy={progress !== null}
+                onRetry={(task) => void processUploads([task])}
+              />
+            )}
             <div className={`library ${selected ? 'has-selection' : ''}`}>
               <div className="collection">
                 {related && context.source ? (
