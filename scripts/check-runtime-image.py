@@ -31,3 +31,13 @@ assert server.health()['status'] == 'ok'
 assert server.health()['inference_backend'] == 'onnxruntime'
 assert server.model is None and server.whisper is None
 print(f'Runtime {variant}: single ONNX engine, native operation and app import passed; no models downloaded')
+
+# Verify the dedicated app in a fresh interpreter: no media model modules.
+import subprocess
+subprocess.run([sys.executable, '-c',
+    "import recommendation_server,sys; assert recommendation_server.health()['status']=='ok'; "
+    "assert 'embedding_onnx' not in sys.modules; assert 'whisper_onnx' not in sys.modules; "
+    "assert 'tagger' not in sys.modules"], check=True)
+from recommendation_engine import recommend
+assert recommend([{'asset_id': 'f', 'tags': ['x'], 'is_favorite': True},
+                  {'asset_id': 'c', 'tags': ['x']}])['candidates'][0]['asset_id'] == 'c'

@@ -9,9 +9,14 @@ export function AppHeader({
   onSectionChange,
 }: {
   children?: ReactNode;
-  section?: 'library' | 'tags' | 'characters' | 'favorites';
+  section?: 'library' | 'tags' | 'characters' | 'favorites' | 'recommendations';
   onSectionChange?: (
-    section: 'library' | 'tags' | 'characters' | 'favorites',
+    section:
+      | 'library'
+      | 'tags'
+      | 'characters'
+      | 'favorites'
+      | 'recommendations',
   ) => void;
   authenticated: boolean;
   onLogout: () => void;
@@ -51,6 +56,13 @@ export function AppHeader({
             onClick={() => onSectionChange?.('favorites')}
           >
             お気に入り
+          </Button>
+          <Button
+            variant="ghost"
+            aria-current={section === 'recommendations' ? 'page' : undefined}
+            onClick={() => onSectionChange?.('recommendations')}
+          >
+            おすすめ
           </Button>
         </nav>
       )}

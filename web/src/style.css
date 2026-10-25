@@ -1386,6 +1386,15 @@ summary .count {
   }
 }
 
+@media (max-width: 360px) {
+  .workspace-nav {
+    gap: 0;
+  }
+  .workspace-nav .ui-button {
+    padding-inline: 2px;
+  }
+}
+
 .recommendations-header {
   display: flex;
   align-items: center;

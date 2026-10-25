@@ -60,7 +60,7 @@ function savedView(): View {
 
 export function App() {
   const [section, setSection] = useState<
-    'library' | 'tags' | 'characters' | 'favorites'
+    'library' | 'tags' | 'characters' | 'favorites' | 'recommendations'
   >('library');
   const [favoriteBusy, setFavoriteBusy] = useState<ReadonlySet<string>>(
     new Set(),
@@ -94,6 +94,7 @@ export function App() {
   const [hashStatus, setHashStatus] = useState<HashStatus | null>(null);
   const [exploration, setExploration] = useState<ExplorationSnapshot[]>([]);
   const related = context.mode === 'recommendation';
+  const personal = Boolean(context.personalized && !context.source);
   const [searching, setSearching] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
@@ -124,10 +125,17 @@ export function App() {
         ...init.headers,
       },
     });
-    if (!res.ok)
+    if (!res.ok) {
+      const code = (await res.json().catch(() => ({}))).error;
       throw new Error(
-        (await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`,
+        code === 'RECOMMENDATION_SESSION_EXPIRED' ||
+          code === 'RECOMMENDATION_SESSION_STALE'
+          ? 'おすすめの情報が更新されました。更新ボタンで取得し直してください。'
+          : path.startsWith('/api/v1/recommendations')
+            ? 'おすすめを取得できませんでした。時間をおいて再試行してください。'
+            : (code ?? `HTTP ${res.status}`),
       );
+    }
     return res.status === 204 ? null : res.json();
   }
 
@@ -135,6 +143,7 @@ export function App() {
     next: SearchContext = context,
     nextPage = page,
     nextKind: Kind = kind,
+    preserveSession = false,
   ): Promise<Asset[] | undefined> {
     collectionRef.current = { context: next, page: nextPage, kind: nextKind };
     const version = ++requestVersion.current;
@@ -142,8 +151,28 @@ export function App() {
     setSearching(true);
     setRecommendationFailed(false);
     try {
-      let res: { assets: Asset[]; total?: number; hash_status?: HashStatus };
-      if (next.source) {
+      let res: {
+        assets: Asset[];
+        total?: number;
+        hash_status?: HashStatus;
+        session_id?: string;
+        status?: 'ready' | 'insufficient_information';
+      };
+      if (next.personalized && !next.source) {
+        const reuse = preserveSession && next.sessionId;
+        if (!reuse) nextPage = 1;
+        const params = new URLSearchParams({
+          kind: nextKind,
+          ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
+          ...(reuse ? { session_id: reuse, page: String(nextPage) } : {}),
+        });
+        res = await request(`/api/v1/recommendations?${params}`);
+        next = {
+          ...next,
+          sessionId: res.session_id,
+          recommendationStatus: res.status,
+        };
+      } else if (next.source) {
         const params = new URLSearchParams({
           ...(next.favorites ? { favorites: 'true' } : {}),
           ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
@@ -193,11 +222,24 @@ export function App() {
         setPage(nextPage);
         setKind(nextKind);
         setContext(next);
+        collectionRef.current = {
+          context: next,
+          page: nextPage,
+          kind: nextKind,
+        };
         return res.assets;
       }
     } catch (error) {
       if (version === requestVersion.current) {
-        setRecommendationFailed(next.mode === 'recommendation');
+        setRecommendationFailed(
+          next.mode === 'recommendation' || Boolean(next.personalized),
+        );
+        if (next.personalized) {
+          setAssets([]);
+          setTotal(null);
+          setSelected(null);
+          setPage(1);
+        }
         throw error;
       }
     } finally {
@@ -399,8 +441,9 @@ export function App() {
       page: previous.page,
       kind: previous.kind,
     };
-    if (previous.context.favorites) {
-      run(() => refresh(previous.context, previous.page, previous.kind));
+    if (previous.context.favorites || previous.context.personalized) {
+      if (previous.context.personalized) setAssets([]);
+      run(() => refresh(previous.context, previous.page, previous.kind, true));
     }
     window.requestAnimationFrame(() =>
       detailTitle.current?.focus({ preventScroll: true }),
@@ -433,7 +476,7 @@ export function App() {
 
   function changePage(nextPage: number) {
     if (!isResult && total !== null) {
-      run(() => refresh(context, nextPage));
+      run(() => refresh(context, nextPage, kind, true));
     } else {
       setPage(nextPage);
     }
@@ -460,7 +503,7 @@ export function App() {
     setViewerMoving(true);
     try {
       if (!isResult && total !== null) {
-        const items = await refresh(context, nextPage);
+        const items = await refresh(context, nextPage, kind, true);
         if (items?.length)
           setSelected(direction > 0 ? items[0] : items[items.length - 1]);
       } else {
@@ -565,11 +608,17 @@ export function App() {
       setExploration((stack) =>
         stack.map((snapshot) => ({
           ...snapshot,
+          context: snapshot.context.personalized
+            ? { ...snapshot.context, sessionId: undefined }
+            : snapshot.context,
           assets: snapshot.assets.map(update),
           selected: snapshot.selected ? update(snapshot.selected) : null,
         })),
       );
-      if (sectionRef.current === 'favorites') {
+      if (
+        sectionRef.current === 'favorites' ||
+        sectionRef.current === 'recommendations'
+      ) {
         try {
           const latest = collectionRef.current;
           await refresh(latest.context, latest.page, latest.kind);
@@ -608,6 +657,14 @@ export function App() {
     );
     setAssets((current) =>
       current.map((a) => (a.asset_id === assetId ? { ...a, ...metadata } : a)),
+    );
+    setExploration((stack) =>
+      stack.map((snapshot) => ({
+        ...snapshot,
+        context: snapshot.context.personalized
+          ? { ...snapshot.context, sessionId: undefined }
+          : snapshot.context,
+      })),
     );
     setContext((current) =>
       current.source?.asset_id === assetId
@@ -666,17 +723,24 @@ export function App() {
           setSection(next);
           setViewerOpen(false);
           setExploration([]);
-          if (next === 'library' || next === 'favorites') {
+          if (
+            next === 'library' ||
+            next === 'favorites' ||
+            next === 'recommendations'
+          ) {
             setSelected(null);
             setQuery('');
             setMode('keyword');
-            run(() =>
-              refresh(
-                { ...allFiles, favorites: next === 'favorites' },
-                1,
-                'all',
-              ),
-            );
+            const nextContext = {
+              ...allFiles,
+              favorites: next === 'favorites',
+              personalized: next === 'recommendations',
+            };
+            setContext(nextContext);
+            setAssets([]);
+            setTotal(null);
+            setKind('all');
+            run(() => refresh(nextContext, 1, 'all'));
           } else {
             ++requestVersion.current;
             setSearching(false);
@@ -727,7 +791,11 @@ export function App() {
           <>
             {!related && (
               <h1 className="visually-hidden">
-                {section === 'favorites' ? 'お気に入り' : 'ライブラリ'}
+                {personal
+                  ? 'おすすめ'
+                  : section === 'favorites'
+                    ? 'お気に入り'
+                    : 'ライブラリ'}
               </h1>
             )}
             {uploadTasks.length > 0 && (
@@ -746,7 +814,7 @@ export function App() {
                     hashStatus={hashStatus}
                     onBack={backFromRecommendations}
                   />
-                ) : (
+                ) : personal ? null : (
                   <SearchForm
                     query={query}
                     mode={mode}
@@ -756,7 +824,7 @@ export function App() {
                     onSearch={search}
                   />
                 )}
-                {related ? (
+                {related || personal ? (
                   <div className="library-toolbar">
                     <label
                       htmlFor="recommendation-kind"
@@ -765,7 +833,9 @@ export function App() {
                       種類{' '}
                       <NativeSelect
                         id="recommendation-kind"
-                        aria-label="関連コンテンツの種類"
+                        aria-label={
+                          personal ? 'おすすめの種類' : '関連コンテンツの種類'
+                        }
                         disabled={searching}
                         value={kind}
                         onChange={(event) =>
@@ -830,21 +900,23 @@ export function App() {
                 </fieldset>
                 <div className="result-heading" aria-live="polite">
                   <h2>
-                    {context.source
-                      ? related
-                        ? 'おすすめ'
-                        : `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}`
-                      : context.character
-                        ? `キャラクター：${context.character}`
-                        : context.tag
-                          ? `タグ：${context.tag}`
-                          : context.query
-                            ? `「${context.query}」の検索結果`
-                            : kind === 'all'
-                              ? section === 'favorites'
-                                ? 'お気に入り'
-                                : 'すべてのファイル'
-                              : kinds.find((k) => k.id === kind)?.label}
+                    {personal
+                      ? 'おすすめ'
+                      : context.source
+                        ? related
+                          ? 'おすすめ'
+                          : `${context.mode === 'perceptual' ? '類似ファイル' : '完全一致ファイル'}：${context.source.filename}`
+                        : context.character
+                          ? `キャラクター：${context.character}`
+                          : context.tag
+                            ? `タグ：${context.tag}`
+                            : context.query
+                              ? `「${context.query}」の検索結果`
+                              : kind === 'all'
+                                ? section === 'favorites'
+                                  ? 'お気に入り'
+                                  : 'すべてのファイル'
+                                : kinds.find((k) => k.id === kind)?.label}
                   </h2>
                   <span className="count">
                     {searching
@@ -863,9 +935,13 @@ export function App() {
                       </Button>
                     )}
                 </div>
-                {related && recommendationFailed ? (
+                {(related || personal) && recommendationFailed ? (
                   <div className="empty" role="alert">
-                    関連コンテンツを取得できません。
+                    <p>
+                      {personal
+                        ? 'おすすめを取得できません。'
+                        : '関連コンテンツを取得できません。'}
+                    </p>
                     <Button
                       variant="outline"
                       onClick={() => run(() => refresh())}
@@ -873,6 +949,31 @@ export function App() {
                       再試行
                     </Button>
                   </div>
+                ) : personal &&
+                  !searching &&
+                  context.recommendationStatus ===
+                    'insufficient_information' ? (
+                  <div className="empty" role="status">
+                    <p>情報が足りません</p>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setSection('favorites');
+                        setSelected(null);
+                        setExploration([]);
+                        setContext({ ...allFiles, favorites: true });
+                        setAssets([]);
+                        setTotal(null);
+                        run(() =>
+                          refresh({ ...allFiles, favorites: true }, 1, 'all'),
+                        );
+                      }}
+                    >
+                      お気に入りを開く
+                    </Button>
+                  </div>
+                ) : personal && !searching && visibleAssets.length === 0 ? (
+                  <div className="empty">おすすめがありません</div>
                 ) : related && !searching && visibleAssets.length === 0 ? (
                   <div className="empty">関連コンテンツがありません。</div>
                 ) : (
@@ -889,9 +990,11 @@ export function App() {
                     }}
                     assets={pageAssets}
                     selectedId={selected?.asset_id}
-                    view={related ? 'detailed-grid' : view}
+                    view={related || personal ? 'detailed-grid' : view}
                     recommendations={
-                      related ? (pageAssets as Recommendation[]) : undefined
+                      related || personal
+                        ? (pageAssets as Recommendation[])
+                        : undefined
                     }
                     kind={kind}
                     searching={searching}

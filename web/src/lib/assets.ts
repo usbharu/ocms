@@ -51,6 +51,9 @@ export type Mode =
   | 'exact_duplicate'
   | 'recommendation';
 export type SearchContext = {
+  personalized?: boolean;
+  sessionId?: string;
+  recommendationStatus?: 'ready' | 'insufficient_information';
   favorites?: boolean;
   mode: Mode;
   query: string;

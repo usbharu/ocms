@@ -18,8 +18,8 @@ from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExp
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 
 
-def instrument(app):
-    resource = Resource.create({'service.name': 'embedding-runtime', 'service.version': '0.2.0',
+def instrument(app, service_name='embedding-runtime'):
+    resource = Resource.create({'service.name': service_name, 'service.version': '0.2.0',
         'deployment.environment.name': os.environ.get('DEPLOYMENT_ENVIRONMENT', 'development')})
     tp, lp = TracerProvider(resource=resource), LoggerProvider(resource=resource)
     readers = []
@@ -34,21 +34,21 @@ def instrument(app):
     meter = metrics.get_meter('ocms.runtime')
     duration = meter.create_histogram('media.embedding.duration', unit='s')
     requests = meter.create_counter('runtime.requests')
-    logger = logging.getLogger('ocms.runtime')
+    logger = logging.getLogger('ocms.' + service_name)
     logger.setLevel(logging.INFO); logger.propagate = False
     if enabled:
         logger.addHandler(LoggingHandler(logger_provider=lp))
     class SafeJSON(logging.Handler):
         def emit(self, record):
             sc = trace.get_current_span().get_span_context()
-            print(json.dumps({'service.name': 'embedding-runtime', 'event': record.getMessage(),
+            print(json.dumps({'service.name': service_name, 'event': record.getMessage(),
                 'trace_id': format(sc.trace_id, '032x'), 'span_id': format(sc.span_id, '016x')}), flush=True)
     logger.addHandler(SafeJSON())
     @app.middleware('http')
     async def telemetry(request, call_next):
         if request.url.path == '/healthz':
             return await call_next(request)
-        operation = {'/encode': 'embedding.encode', '/transcribe': 'media.transcribe', '/tag': 'media.tag'}.get(request.url.path, 'inference.request')
+        operation = {'/encode': 'embedding.encode', '/transcribe': 'media.transcribe', '/tag': 'media.tag', '/recommend': 'recommendation.rank'}.get(request.url.path, 'inference.request')
         with tracer.start_as_current_span(operation, context=extract(dict(request.headers)), kind=trace.SpanKind.SERVER, record_exception=False, set_status_on_exception=False) as span:
             started = time.monotonic()
             try:

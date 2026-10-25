@@ -66,6 +66,40 @@ python3 scripts/recommendations-integration.py
 実コーデック・モデルによる知覚類似の回帰は、別途 `python3 scripts/media-integration.py` で確認します。
 その生成メディアを推薦APIでも確認する場合は、続いて `python3 scripts/recommendations-integration.py --media` を実行します。
 
+## おすすめ
+
+ヘッダーの「おすすめ」は、自分のお気に入りのタグ・キャラクターから好みに近いコンテンツを表示します。関連度に加えてタグ・キャラクターの多様性と直近3回の表示を考慮し、開き直すたび・更新時に内容を選び直します。ページ送りや詳細・関連コンテンツから戻る間は並びを維持します。種類・レーティング変更時は選び直します。
+
+特徴付きのお気に入りがなければ「情報が足りません」と表示します。特徴付き1件から推薦でき、学習成立後に候補がなければ「おすすめがありません」と表示します。登録済みのAssetと同じBlobのAsset、削除済み・未許可のAssetは推薦しません。スコアは確率ではありません。
+
+専用の `recommender` はPython Runtimeのイメージを共用する独立コンテナです。TF-IDFを実行し、Embedding・ASR・WD14のモデルを読み込まず、DB・S3資格情報も持ちません。モデルのダウンロードは不要です。Searchは計算済み候補を24時間、推薦セッションを30分、直近3回の表示履歴を24時間の範囲でPostgreSQLへ保存します。変更指紋が同じなら学習を省き、抽選だけを実行します。入力変更や権限変更、期限切れ時は更新を案内します。
+
+009のマイグレーションが必要です。既存環境の更新は「DBマイグレーションと更新」に従い、履歴のないDBは適用済み番号を確認してbaselineしてください。新規環境は通常の起動手順で009まで適用します。
+
+```sh
+python3 scripts/dev-init.py
+docker compose build
+docker compose up -d --wait
+```
+
+APIは `GET /api/v1/recommendations` です。`kind`・`ratings` に対応し、返された `session_id` と同じ条件に `page=2` を付けると次の24件を取得できます。セッション省略時は新しく生成します。入力変更・期限切れは409、サービス障害・計算競合・30秒の要求期限超過は503です。正の類似度上位1,000件から最大200件を選びます。全ライブラリの厳密な順位・大規模環境の性能・実利用の推薦品質は未評価です。詳細は仕様§10.4・§12.2を参照してください。
+
+画面例：[PC](docs/personal-recommendations-1440.png)、[モバイル](docs/personal-recommendations-375.png)、[320px幅](docs/personal-recommendations-320.png)。
+
+単体・UI検証は既存のGo・Runtime・SPA検証コマンドに含まれます。推薦サービスだけの起動は `docker compose up -d --build --wait recommender`、Python単体テストは次のとおりです。
+
+```sh
+docker compose run --rm --no-deps -v "$PWD/runtime:/test:ro" -w /test recommender \
+  python -m unittest discover -s /test -p 'test_*.py'
+```
+
+実DBの回帰テストは、全マイグレーションを適用した**使い捨てDB**を `OCMS_TEST_DATABASE_URL` に指定して実行します。テスト自身が `catalog_app`・`search_app` に切り替えて権限分離を確認するため、接続はテスト用の管理ロールが必要です。`OCMS_TEST_RECOMMENDATION_URL` を実推薦サービスのURLに指定すると実scikit-learnを呼び、同じ `INTERNAL_TOKEN` を使います。省略時はエンジン応答のスタブを使います。実行中のサービスや既存メディアのあるDBは指定しないでください。
+
+```sh
+go test -race ./internal/search -run TestPersonalRecommendationsDatabase -v
+python3 scripts/migration-integration.py
+```
+
 ## CIとReleaseイメージ
 
 GitHub Actionsの `CI` は、ブランチへのpushとPull Requestで次を実行します。

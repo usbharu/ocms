@@ -7,3 +7,4 @@ pillow==13.0.0
 soundfile==0.14.0
 opentelemetry-sdk==1.44.0
 opentelemetry-exporter-otlp-proto-http==1.44.0
+scikit-learn==1.9.1
