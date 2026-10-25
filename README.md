@@ -289,6 +289,16 @@ docker compose up -d --wait
 
 アプリ側は `OTEL_EXPORTER_OTLP_ENDPOINT` が設定されていればOTLP/HTTPでTrace / Metric / Logを送信します。GoはOTel SDKとslogブリッジ、RuntimeはPython SDKを使います。URL・クエリ・Cookie・リクエスト本文・生の例外メッセージを属性へ渡さず、HTTP計測は許可した属性だけを出力します。既定では外部Exporterを使わず、構造化ログを標準出力へ書きます。
 
+## お気に入り
+
+ヘッダーの「お気に入り」から、自分が登録したファイルを確認できます。一覧の各行・カードの星、詳細パネル、閲覧画面から登録・解除できます。同じBlobを参照する別Assetや、共有相手のお気に入りには影響しません。閲覧権限のある共有ファイルも登録できます。
+
+お気に入り一覧は登録が新しい順です。キーワード・意味・ハイブリッド検索、種類フィルター、表示切り替え、ページ送りを利用でき、検索結果は関連度順になります。検索解除・更新・類似比較・完全一致比較でもお気に入りの範囲を維持します。削除済み・閲覧権限を失ったファイルは件数と結果に含めません。権限が戻ると、保存済みのお気に入りが再表示されます。
+
+007は `007_favorites.up.sql` としてgolang-migrateで適用します。既存環境は「DBマイグレーションと更新」に従い、履歴がなければ適用済み番号を一度だけbaselineへ登録してください。006まで適用済みなら `baseline 6` の後に `up` を実行します。旧方式で007を手動適用済みなら `baseline 7` で引き継ぎ、007を再実行しません。更新後は `python3 scripts/favorites-integration.py` で検証します。
+
+登録は `PUT /api/v1/assets/{assetId}/favorite`、解除は同じURLへの `DELETE`（いずれも204）です。`GET /api/v1/assets?favorites=true` で自分のお気に入りに限定し、検索では `POST /api/v1/search` のJSONへ `"favorites": true` を追加します。Asset応答の `is_favorite` は要求ユーザー自身の状態を返します。
+
 ## DBマイグレーションと更新
 
 [golang-migrate](https://github.com/golang-migrate/migrate/tree/v4.19.1) v4.19.1をGoライブラリとして利用します。`migrate` サービスが `ocms migrate up` を実行し、`public.schema_migrations` にバージョンとdirty状態を管理します。番号順の実行、DBロック、適用済みの判定、dirty状態はgolang-migrateが担当します。アプリ側のコードは環境変数・既存DBの初回登録・ログの秘匿処理を接続します。管理接続にはロール・拡張の作成と、接続単位のログ設定を変更できる権限が必要です。

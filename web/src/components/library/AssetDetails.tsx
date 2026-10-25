@@ -10,6 +10,7 @@ import {
 } from '../../lib/assets';
 import { Button } from '../ui/button';
 import { AssetMetadataEditor } from './AssetMetadataEditor';
+import { FavoriteButton } from './FavoriteButton';
 import { Status } from './Status';
 
 export function AssetDetails({
@@ -19,6 +20,8 @@ export function AssetDetails({
   searching,
   notice,
   detailTitle,
+  onFavorite,
+  favoriteBusy,
   onClose,
   onOpen,
   onSaveMetadata,
@@ -38,6 +41,8 @@ export function AssetDetails({
   searching: boolean;
   notice: string;
   detailTitle?: Ref<HTMLHeadingElement>;
+  onFavorite?: (asset: Asset) => void;
+  favoriteBusy?: boolean;
   onClose: () => void;
   onOpen?: () => void;
   onSaveMetadata: (changes: AssetChanges) => Promise<Asset>;
@@ -70,6 +75,11 @@ export function AssetDetails({
         <h2 ref={detailTitle} tabIndex={-1}>
           {selected.filename}
         </h2>
+        <FavoriteButton
+          asset={selected}
+          busy={favoriteBusy}
+          onToggle={onFavorite}
+        />
         <Button
           variant="ghost"
           type="button"

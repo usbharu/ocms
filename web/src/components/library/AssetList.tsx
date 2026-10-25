@@ -10,11 +10,16 @@ import {
   type View,
 } from '../../lib/assets';
 import { Button } from '../ui/button';
+import { FavoriteButton } from './FavoriteButton';
 import { RecommendationSummary } from './RecommendationSummary';
 import { Status } from './Status';
 import { Thumbnail } from './Thumbnail';
 
 export function AssetList({
+  favorites,
+  favoriteBusy,
+  onFavorite,
+  onLibrary,
   assets,
   recommendations,
   selectedId,
@@ -33,6 +38,10 @@ export function AssetList({
   onUpload,
   onPageChange,
 }: {
+  favorites?: boolean;
+  favoriteBusy?: ReadonlySet<string>;
+  onFavorite?: (asset: Asset) => void;
+  onLibrary?: () => void;
   assets: Asset[];
   recommendations?: Recommendation[];
   selectedId?: string;
@@ -71,12 +80,18 @@ export function AssetList({
                 ? '検索結果がありません'
                 : kind !== 'all'
                   ? 'この種類のファイルはありません'
-                  : 'ファイルはまだありません'}
+                  : favorites
+                    ? 'お気に入りはまだありません'
+                    : 'ファイルはまだありません'}
           </h3>
           {!searching &&
             (isResult || kind !== 'all' ? (
               <Button variant="outline" type="button" onClick={onReset}>
                 すべてのファイル
+              </Button>
+            ) : favorites ? (
+              <Button variant="outline" onClick={onLibrary}>
+                ライブラリを開く
               </Button>
             ) : (
               <Button
@@ -103,58 +118,67 @@ export function AssetList({
                 (item) => item.asset_id === a.asset_id,
               );
               return (
-                <Button
-                  variant="outline"
-                  type="button"
-                  className={`file ${selectedId === a.asset_id ? 'active' : ''}`}
-                  aria-label={a.filename}
-                  aria-describedby={
-                    recommendation ? `recommendation-${a.asset_id}` : undefined
-                  }
-                  title={a.filename}
-                  aria-pressed={selectedId === a.asset_id}
-                  key={a.asset_id}
-                  disabled={searching}
-                  onClick={() => {
-                    if (selectedId === a.asset_id && onOpen) onOpen(a);
-                    else onSelect(a);
-                  }}
-                  onDoubleClick={() => onOpen?.(a)}
-                >
-                  <Thumbnail
-                    key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`}
-                    asset={a}
-                  />
-                  <span
-                    className={`file-info${view === 'grid' ? ' visually-hidden' : ''}`}
+                <div className="file-entry" key={a.asset_id}>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    className={`file ${selectedId === a.asset_id ? 'active' : ''}`}
+                    aria-label={a.filename}
+                    aria-describedby={
+                      recommendation
+                        ? `recommendation-${a.asset_id}`
+                        : undefined
+                    }
+                    title={a.filename}
+                    aria-pressed={selectedId === a.asset_id}
+                    key={a.asset_id}
+                    disabled={searching}
+                    onClick={() => {
+                      if (selectedId === a.asset_id && onOpen) onOpen(a);
+                      else onSelect(a);
+                    }}
+                    onDoubleClick={() => onOpen?.(a)}
                   >
-                    <b>{a.filename}</b>
-                    {recommendation && (
-                      <RecommendationSummary item={recommendation} />
-                    )}
-                    {view === 'list' && (
-                      <>
-                        <span className="file-meta">
-                          {kinds.find((k) => k.id === kindOf(a))?.label}
-                          {a.tags.length > 0 && (
-                            <span className="file-tags">
-                              {a.tags.join(' · ')}
+                    <Thumbnail
+                      key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`}
+                      asset={a}
+                    />
+                    <span
+                      className={`file-info${view === 'grid' ? ' visually-hidden' : ''}`}
+                    >
+                      <b>{a.filename}</b>
+                      {recommendation && (
+                        <RecommendationSummary item={recommendation} />
+                      )}
+                      {view === 'list' && (
+                        <>
+                          <span className="file-meta">
+                            {kinds.find((k) => k.id === kindOf(a))?.label}
+                            {a.tags.length > 0 && (
+                              <span className="file-tags">
+                                {a.tags.join(' · ')}
+                              </span>
+                            )}
+                          </span>
+                          {a.snippet && (
+                            <span className="snippet">{a.snippet}</span>
+                          )}
+                          {locationOf(a) && (
+                            <span className="match-location">
+                              {locationOf(a)}
                             </span>
                           )}
-                        </span>
-                        {a.snippet && (
-                          <span className="snippet">{a.snippet}</span>
-                        )}
-                        {locationOf(a) && (
-                          <span className="match-location">
-                            {locationOf(a)}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </span>
-                  {view === 'list' && <Status value={a.status} />}
-                </Button>
+                        </>
+                      )}
+                    </span>
+                    {view === 'list' && <Status value={a.status} />}
+                  </Button>
+                  <FavoriteButton
+                    asset={a}
+                    busy={favoriteBusy?.has(a.asset_id)}
+                    onToggle={onFavorite}
+                  />
+                </div>
               );
             })}
           </div>
