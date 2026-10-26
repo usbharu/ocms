@@ -95,6 +95,21 @@ test('offline launch, retry, and cache isolation', async ({
     );
   });
   expect(unavailable).toEqual([true, true, true]);
+  for (const path of [
+    '/',
+    '/library?q=synthetic',
+    '/tags',
+    '/characters',
+    '/favorites',
+    '/recommendations',
+    '/assets/synthetic',
+    '/assets/synthetic/view?from=favorites',
+  ]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole('heading', { name: 'オフラインです' }),
+    ).toBeVisible();
+  }
   if (process.env.UI_SCREENSHOTS) {
     await page.screenshot({
       path: `${process.env.UI_SCREENSHOTS}/pwa-offline.png`,

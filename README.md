@@ -41,11 +41,21 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 
 Service WorkerとインストールにはHTTPSが必要です。ローカル確認には `http://localhost:8080` も使えます。別端末からLAN内のHTTPアドレスへアクセスする場合は、HTTPSを用意してください。ブラウザごとの要件は [MDNのインストールガイド](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) を参照してください。
 
-一度オンラインで開いた後、通信できない状態でホームを開くと「オフラインです」と再読み込みのリンクを表示します。オフラインでのファイル閲覧・検索・アップロードは提供しません。Service WorkerのCache Storageには公開のオフライン案内HTMLとCSSだけを保存し、API応答、認証情報、検索結果、メディアを保存しません。通信中のHTTPエラーは元の応答を維持します。
+一度オンラインで開いた後、通信できない状態でホームや既知の画面URLを開くと「オフラインです」と再読み込みのリンクを表示します。オフラインでのファイル閲覧・検索・アップロードは提供しません。Service WorkerのCache Storageには公開のオフライン案内HTMLとCSSだけを保存し、API応答、認証情報、検索結果、メディアを保存しません。通信中のHTTPエラーは元の応答を維持します。
 
 オフライン画面かWorkerの更新でキャッシュ名が変わり、新しいWorkerの有効化時に古いOCMS用キャッシュを削除します。更新は既存のタブやアプリをすべて閉じてから開き直すと反映されます。Vite開発サーバーとStorybookはWorkerを登録しません。
 
 回帰検証は `web/` で `npm run build` の後に `npx playwright test tests/pwa.spec.ts` を実行します。
+
+## 画面のURL
+
+SPAの画面は `/library`（ライブラリ）、`/tags`（タグ）、`/characters`（キャラクター）、`/favorites`（お気に入り）、`/recommendations`（個人向けおすすめ）で開けます。`/` は `/library` へ移動します。BFFはこれらのパスへSPAを配信するため、URLの直接入力や再読み込みにも対応します。
+
+ファイル詳細は `/assets/{asset_id}`、全画面閲覧は `/assets/{asset_id}/view` です。`from=favorites` または `from=recommendations` で元の一覧を指定でき、省略時はライブラリを表示します。検索条件は `q`・`mode`・`tag`・`character`・`kind`・`ratings`・`page`、比較元は `source` に保持します。例：`/assets/{asset_id}?from=favorites&page=2`。既定値は省略し、レーティングをすべて外した場合は `ratings=none` になります。タグ・キャラクター画面は `q` と `view=list|graph`（省略時はワードクラウド）を使います。
+
+ブラウザの戻る・進むで条件と選択を復元します。個人向けおすすめは同じタブの履歴では推薦セッションを再利用し、新しいタブや再読み込みでは先頭ページから再取得します。ファイルの直接URLでは、選択を保持したまま背景のおすすめ一覧を先頭ページへ戻します。推薦セッションはURLに含めません。未送信の入力やアップロードの処理状態はURLへ保存せず、一覧の表示方法は既存のブラウザ設定を使います。
+
+未認証の場合は同じURLでログイン画面を表示し、ログイン後に元の画面を開きます。OIDCの `/auth/login?return_to=...` は既知のアプリ内パスだけを受け付けます。アプリのログ・TraceへURLのクエリや復帰先は出力しません。
 
 ## 意味検索の無効化
 
@@ -273,6 +283,18 @@ npm run test:storybook
 
 ### SPAの画面回帰テスト
 
+ルーティング・推薦の主要シナリオをChromium・Firefox・WebKitと、Android／iPhone相当のブラウザ構成で検証する場合は、次を `web/` で実行します。モバイル構成は実機ではなくブラウザのエミュレーションです。
+
+```sh
+npx playwright install chromium firefox webkit
+npm run test:routing
+# 同じシナリオを各構成で2回検証する場合
+npm run test:routing -- --repeat-each=2
+```
+
+実BFF・Catalog・Transfer・Hydraを使うブラウザ試験は、通常のモックAPI試験と分けています。「Hydra OIDC・OTLPの実接続検証」に従って開発・OIDC検証スタックを最新イメージで起動し、`scripts/media-integration.py` で `.cache/fixtures/car.png` を生成してから、`web/` で `npm run test:live` を実行してください。`localhost:8080` と `localhost:8081` を使い、開発ログイン、OIDCのユーザー選択・同意、元URLへの復帰、プレビュー配信、検索条件、別ユーザーのACLを確認します。合成画像のAssetを作成するため、専用の開発環境で実行してください。生成データはDBとS3に残ります。
+
+
 画面の回帰テストはPlaywrightとChromiumを使います。上記のビルド後、`web/` で実行します。
 
 ```sh
@@ -490,6 +512,10 @@ OCMS_TEST_DATABASE_URL='postgres://<user>:<password>@127.0.0.1:<port>/<test-db>?
 003まで適用済みのDBは、履歴がなければ `baseline 3` で引き継いでから `up` を実行し、004以降を適用します。推論チェックポイントを利用する前に更新を完了してください。
 
 PDFの任意ページは `/api/v1/assets/{assetId}/preview?page=2` で取得できます。再エンコード要求・一覧は `/api/v1/assets/{assetId}/renditions`、Job一覧は `/api/v1/assets/{assetId}/jobs`、個別状態は `/api/v1/jobs/{jobId}` です。派生ファイルも元Assetの最新ACLを確認して配信します。
+
+静的ファイルは内容ハッシュ付きの `/assets/` を1年間キャッシュし、HTMLやPDF.jsの固定URLはETagで毎回再検証します。静的ビルドはBFFの起動中に書き換えず、配備時にBFFを再作成してください。元ファイル・プレビュー・派生メディアは `private, no-cache` と `Vary: Cookie` でブラウザ内のキャッシュを許可します。再利用前に認証・最新ACLを確認し、ETagが一致すれば304を返して本文の再送・S3読み出し・復号を省きます。再検証の通信は毎回必要で、共有キャッシュとエラー応答の保存は許可しません。取得済み平文がブラウザに残ることはあります。詳細は仕様§5.6を参照してください。
+
+開発スタックで `python3 scripts/cache-integration.py` を実行すると、静的HTML・Viteの生成ファイルと、元ファイル・プレビュー・派生メディアのETag、Range、セッション・ACL失効・削除後の再検証を確認できます。生成したバイト列とDBに登録した派生レコードを使うため、コーデックや推論は検証しません。生成データをDB/S3へ残すので、初期設定の開発用環境で実行してください。
 
 Searchはファイル名・タグに加えて抽出本文をPGroongaで検索します。意味検索はnativeの画像・動画・音声ベクトルと抽出テキストのベクトルを使います。ハイブリッド検索はRRFで順位を統合します。候補生成後にCatalogへ一括認可を問い合わせ、ファイル名やタグはAsset単位で照合します。結果上限は200件、候補上限は1000 Blobです。大規模データのページング・再現率は別途評価が必要です。
 

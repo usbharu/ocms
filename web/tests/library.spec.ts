@@ -425,7 +425,7 @@ test('login offers only the configured authentication method', async ({
   await page.reload();
   await expect(
     page.getByRole('link', { name: 'SSOでログイン' }),
-  ).toHaveAttribute('href', '/auth/login');
+  ).toHaveAttribute('href', '/auth/login?return_to=%2Flibrary');
   const ssoLogin = page.getByRole('link', { name: 'SSOでログイン' });
   await expect(ssoLogin).toHaveCSS('color', 'rgb(255, 255, 255)');
   await expect(ssoLogin).toHaveCSS('background-color', 'rgb(21, 128, 61)');
@@ -813,6 +813,13 @@ test('search and comparison results paginate and filters reset the page', async 
     filename: `結果 ${i + 1}`,
     page_number: 2,
   }));
+  await page.route('**/api/v1/assets/result-*', (route) =>
+    route.fulfill({
+      json: results.find((asset) =>
+        new URL(route.request().url()).pathname.endsWith(`/${asset.asset_id}`),
+      ),
+    }),
+  );
   await page.route('**/api/v1/search', (route) =>
     route.fulfill({ json: { assets: results } }),
   );
@@ -1424,6 +1431,9 @@ for (const width of [1440, 390, 320]) {
     await page.route('**/api/v1/assets*', (route) =>
       route.fulfill({ json: { assets: [asset] } }),
     );
+    await page.route('**/api/v1/assets/image', (route) =>
+      route.fulfill({ json: asset }),
+    );
     await page.reload();
     await page.locator('.file').click();
     await expect(page.locator('.tag-chip')).toHaveCount(30);
@@ -1558,6 +1568,15 @@ for (const [field, label] of [
         tags: [tag],
         characters: [tag],
       }));
+      await page.route('**/api/v1/assets/tag-*', (route) =>
+        route.fulfill({
+          json: assets.find((asset) =>
+            new URL(route.request().url()).pathname.endsWith(
+              `/${asset.asset_id}`,
+            ),
+          ),
+        }),
+      );
       await page.route('**/api/v1/assets?**', (route) => {
         const params = new URL(route.request().url()).searchParams;
         const offset = Number(params.get('offset'));
@@ -1662,7 +1681,7 @@ test('detail tag deletion does not search and keyboard opens tag results', async
   await expect(
     page.getByRole('heading', { name: 'タグ：風景', exact: true }),
   ).toBeVisible();
-  expect(requests).toHaveLength(1);
+  await expect.poll(() => requests.length).toBe(1);
 });
 
 test('detail character deletion stays separate and long names support keyboard search', async ({
@@ -1727,7 +1746,7 @@ test('detail character deletion stays separate and long names support keyboard s
   await expect(page.getByRole('region', { name: 'ファイル詳細' })).toHaveCount(
     0,
   );
-  expect(requests).toHaveLength(1);
+  await expect.poll(() => requests.length).toBe(1);
   const params = new URL(requests[0]).searchParams;
   expect(Object.fromEntries(params)).toEqual({
     character,

@@ -31,7 +31,11 @@ export function LoginPanel({
         </>
       ) : (
         <Button asChild>
-          <a href="/auth/login">SSOでログイン</a>
+          <a
+            href={`/auth/login?${new URLSearchParams({ return_to: window.location.pathname + window.location.search })}`}
+          >
+            SSOでログイン
+          </a>
         </Button>
       )}
     </section>

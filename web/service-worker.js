@@ -2,6 +2,21 @@ const cachePrefix = 'ocms-offline-';
 const cacheName = `${cachePrefix}__VERSION__`;
 const offlinePaths = ['/offline.html', '/offline.css'];
 
+// Keep this allowlist aligned with BFF's spaPath; API/auth and unknown URLs
+// must retain their network errors rather than receive an HTML fallback.
+function isAppPath(pathname) {
+  return (
+    [
+      '/',
+      '/library',
+      '/tags',
+      '/characters',
+      '/favorites',
+      '/recommendations',
+    ].includes(pathname) || /^\/assets\/[^/]+(?:\/view)?$/.test(pathname)
+  );
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
@@ -46,7 +61,7 @@ self.addEventListener('fetch', (event) => {
           async (cache) => (await cache.match(url.pathname)) || fetch(request),
         ),
     );
-  } else if (request.mode === 'navigate' && url.pathname === '/') {
+  } else if (request.mode === 'navigate' && isAppPath(url.pathname)) {
     event.respondWith(
       fetch(request).catch(async () => {
         const cache = await caches.open(cacheName);
