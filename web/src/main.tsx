@@ -10,3 +10,14 @@ createRoot(root).render(
     <App />
   </BrowserRouter>,
 );
+
+// Development and Storybook must not install a worker on their origins.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker
+      .register('/sw.js', { updateViaCache: 'none' })
+      .catch(() => {
+        // A failed registration must not prevent normal online use.
+      });
+  });
+}
