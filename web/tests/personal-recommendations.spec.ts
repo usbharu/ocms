@@ -19,6 +19,7 @@ const preview =
 for (const width of [1440, 375, 320]) {
   test(`personal recommendations preserve pages and exploration at ${width}px`, async ({
     page,
+    browserName,
   }) => {
     await page.setViewportSize({ width, height: 1000 });
     let generation = 0;
@@ -187,7 +188,8 @@ for (const width of [1440, 375, 320]) {
         .first(),
     ).toBeVisible();
     await nav.getByRole('link', { name: 'ライブラリ', exact: true }).focus();
-    await page.keyboard.press('Tab');
+    // Safari's native keyboard preference uses Option+Tab to include links.
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
     await expect(
       nav.getByRole('link', { name: 'タグ', exact: true }),
     ).toBeFocused();

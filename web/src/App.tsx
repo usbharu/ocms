@@ -81,6 +81,7 @@ export function App() {
   const snapshots = useRef(new Map<string, ExplorationSnapshot>());
   const loadedCollection = useRef('');
   const readyRoute = useRef('');
+  const capturedSnapshot = useRef<string | null>(null);
   const focusAfterClose = useRef<string | null>(null);
   const focusViewerTrigger = useRef(false);
   const historyEntries = useRef<string[]>([location.key]);
@@ -267,12 +268,28 @@ export function App() {
           return result;
         }
       }
+      let correctedResultPage = false;
+      if (next.source || (next.query && !next.tag && !next.character)) {
+        const count = res.assets.filter(
+          (asset) =>
+            (nextKind === 'all' || kindOf(asset) === nextKind) &&
+            (!next.ratings || next.ratings.includes(asset.rating ?? 'unrated')),
+        ).length;
+        const lastPage = Math.max(1, Math.ceil(count / pageSize));
+        if (nextPage > lastPage) {
+          nextPage = lastPage;
+          correctedResultPage = true;
+        }
+      }
       if (version === requestVersion.current) {
         setAssets(res.assets);
         setHashStatus(res.hash_status ?? null);
         setTotal(res.total ?? null);
         setPage(nextPage);
-        if (route.page !== nextPage && next.personalized) {
+        if (
+          route.page !== nextPage &&
+          (next.personalized || correctedResultPage)
+        ) {
           navigate(
             route.assetId
               ? assetURL(
@@ -350,8 +367,9 @@ export function App() {
   useLayoutEffect(() => {
     const key = location.key;
     return () => {
-      if (!snapshots.current.has(key))
+      if (capturedSnapshot.current !== key)
         snapshots.current.set(key, liveSnapshot.current);
+      if (capturedSnapshot.current === key) capturedSnapshot.current = null;
     };
   }, [location.key]);
 
@@ -529,6 +547,7 @@ export function App() {
     keepSelection = false,
   ) {
     snapshots.current.set(location.key, liveSnapshot.current);
+    capturedSnapshot.current = location.key;
     setSearching(true);
     if (next.mode === 'recommendation' || next.personalized) {
       setAssets([]);
@@ -568,6 +587,7 @@ export function App() {
     nextPage = page,
   ) {
     snapshots.current.set(location.key, liveSnapshot.current);
+    capturedSnapshot.current = location.key;
     const parent = location.pathname + location.search;
     navigate(
       assetURL(asset.asset_id, viewer, section, context, nextPage, kind),
@@ -632,16 +652,28 @@ export function App() {
         );
       }
     };
-    update().catch((e) => {
+    const handleFailure = (
+      error: Error & { status?: number },
+      initial = false,
+    ) => {
       if (!active) return;
-      if (e.status === 404 || e.status === 403) {
+      if (error.status === 404 || error.status === 403) {
+        snapshots.current.clear();
         setSelected(null);
         setViewerOpen(false);
         setAssetMissing(true);
-      } else if (!['pending', 'uploading'].includes(selected.status))
-        setError(e.message);
-    });
-    const timer = window.setInterval(() => update().catch(() => {}), 5000);
+      } else if (
+        initial &&
+        !['pending', 'uploading'].includes(selected.status)
+      ) {
+        setError(error.message);
+      }
+    };
+    update().catch((error) => handleFailure(error, true));
+    const timer = window.setInterval(
+      () => update().catch((error) => handleFailure(error)),
+      5000,
+    );
     return () => {
       active = false;
       clearInterval(timer);

@@ -172,3 +172,28 @@ func TestOIDCCallbackReturnsToOriginalRoute(t *testing.T) {
 		t.Fatal("callback replay accepted")
 	}
 }
+
+func FuzzReturnTargetStaysLocal(f *testing.F) {
+	for _, seed := range []string{"/", "/library?q=sample", "/assets/id/view?from=favorites", "//outside.example", "/%5coutside", "/assets/%00", "/tags?q=%E6%97%85%E8%A1%8C"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		target, ok := returnTarget(raw)
+		if !ok {
+			return
+		}
+		parsed, err := url.Parse(target)
+		if err != nil || parsed.IsAbs() || parsed.Host != "" || !spaPath(parsed.Path) || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
+			t.Fatal("accepted return target escaped application routes")
+		}
+		for _, c := range target {
+			if c < 32 || c == 127 || c == '\\' {
+				t.Fatal("accepted return target contained a control character")
+			}
+		}
+		again, accepted := returnTarget(target)
+		if !accepted || again != target {
+			t.Fatal("return target is not stable under normalization")
+		}
+	})
+}

@@ -271,6 +271,18 @@ npm run test:storybook
 
 ### SPAの画面回帰テスト
 
+ルーティング・推薦の主要シナリオをChromium・Firefox・WebKitと、Android／iPhone相当のブラウザ構成で検証する場合は、次を `web/` で実行します。モバイル構成は実機ではなくブラウザのエミュレーションです。
+
+```sh
+npx playwright install chromium firefox webkit
+npm run test:routing
+# 同じシナリオを各構成で2回検証する場合
+npm run test:routing -- --repeat-each=2
+```
+
+実BFF・Catalog・Transfer・Hydraを使うブラウザ試験は、通常のモックAPI試験と分けています。「Hydra OIDC・OTLPの実接続検証」に従って開発・OIDC検証スタックを最新イメージで起動し、`scripts/media-integration.py` で `.cache/fixtures/car.png` を生成してから、`web/` で `npm run test:live` を実行してください。`localhost:8080` と `localhost:8081` を使い、開発ログイン、OIDCのユーザー選択・同意、元URLへの復帰、プレビュー配信、検索条件、別ユーザーのACLを確認します。合成画像のAssetを作成するため、専用の開発環境で実行してください。生成データはDBとS3に残ります。
+
+
 画面の回帰テストはPlaywrightとChromiumを使います。上記のビルド後、`web/` で実行します。
 
 ```sh

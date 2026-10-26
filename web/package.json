@@ -15,7 +15,9 @@
     "check:staged": "lint-staged --cwd .",
     "storybook": "storybook dev -p 6006 --host 127.0.0.1 --no-open --disable-telemetry",
     "build-storybook": "storybook build --disable-telemetry",
-    "test:storybook": "vitest run --config vitest.storybook.config.ts"
+    "test:storybook": "vitest run --config vitest.storybook.config.ts",
+    "test:routing": "playwright test --config playwright.routing.config.ts",
+    "test:live": "playwright test --config playwright.live.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-label": "2.1.17",
