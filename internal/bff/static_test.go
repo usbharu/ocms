@@ -17,6 +17,13 @@ func TestStaticCaching(t *testing.T) {
 	handler := s.Handler(files)
 	for _, tc := range []struct{ path, policy string }{
 		{"/", "public, no-cache"},
+		{"/library?q=sample&page=2", "public, no-cache"},
+		{"/tags", "public, no-cache"},
+		{"/characters", "public, no-cache"},
+		{"/favorites", "public, no-cache"},
+		{"/recommendations", "public, no-cache"},
+		{"/assets/id", "public, no-cache"},
+		{"/assets/id/view?from=favorites", "public, no-cache"},
 		{"/assets/index-Ab12_cd3.js", "public, max-age=31536000, immutable"},
 		{"/assets/index.js", "public, no-cache"},
 		{"/pdfjs/wasm/decoder.wasm", "public, no-cache"},
@@ -55,5 +62,25 @@ func TestStaticCaching(t *testing.T) {
 	s.Handler(files).ServeHTTP(w, r)
 	if w.Code != 200 || w.Body.String() != "<html>v2</html>" || w.Header().Get("ETag") == old.Header().Get("ETag") {
 		t.Fatal("new build did not invalidate HTML")
+	}
+}
+
+func TestUnknownSPARouteDoesNotReuseHTMLValidator(t *testing.T) {
+	handler := (&Service{}).Handler(fstest.MapFS{
+		"index.html": {Data: []byte("<html>application</html>")},
+	})
+	root := httptest.NewRecorder()
+	handler.ServeHTTP(root, httptest.NewRequest("GET", "/", nil))
+	for _, method := range []string{"GET", "HEAD"} {
+		request := httptest.NewRequest(method, "/missing-page", nil)
+		request.Header.Set("If-None-Match", root.Header().Get("ETag"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != 404 || response.Header().Get("Cache-Control") != "private, no-store" || response.Header().Get("ETag") != "" {
+			t.Fatalf("unknown page reused HTML cache: %d %v", response.Code, response.Header())
+		}
+		if method == "HEAD" && response.Body.Len() != 0 {
+			t.Fatal("unknown page HEAD included a body")
+		}
 	}
 }

@@ -1,6 +1,7 @@
 import type { Preview } from '@storybook/react-vite';
 import { setupWorker } from 'msw/browser';
 import { mswLoader } from 'msw-storybook-addon/csf3';
+import { MemoryRouter } from 'react-router';
 import { mediaHandlers } from '../src/stories/fixtures';
 import '../src/style.css';
 
@@ -34,11 +35,13 @@ const preview: Preview = {
   },
   decorators: [
     (Story) => (
-      <div className="shell">
-        <main>
-          <Story />
-        </main>
-      </div>
+      <MemoryRouter useTransitions={false}>
+        <div className="shell">
+          <main>
+            <Story />
+          </main>
+        </div>
+      </MemoryRouter>
     ),
   ],
 };

@@ -19,6 +19,7 @@ const preview =
 for (const width of [1440, 375, 320]) {
   test(`personal recommendations preserve pages and exploration at ${width}px`, async ({
     page,
+    browserName,
   }) => {
     await page.setViewportSize({ width, height: 1000 });
     let generation = 0;
@@ -93,7 +94,7 @@ for (const width of [1440, 375, 320]) {
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'ワークスペース' });
     state.failed = true;
-    await nav.getByRole('button', { name: 'おすすめ', exact: true }).click();
+    await nav.getByRole('link', { name: 'おすすめ', exact: true }).click();
     await expect(
       page.getByText('おすすめを取得できません。', { exact: true }),
     ).toBeVisible();
@@ -145,8 +146,8 @@ for (const width of [1440, 375, 320]) {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    await nav.getByRole('button', { name: 'ライブラリ', exact: true }).click();
-    await nav.getByRole('button', { name: 'おすすめ', exact: true }).click();
+    await nav.getByRole('link', { name: 'ライブラリ', exact: true }).click();
+    await nav.getByRole('link', { name: 'おすすめ', exact: true }).click();
     await expect.poll(() => generation).toBe(6);
     state.failed = true;
     await page.getByRole('button', { name: '更新', exact: true }).click();
@@ -163,11 +164,11 @@ for (const width of [1440, 375, 320]) {
       .getByRole('button', { name: 'お気に入りを開く', exact: true })
       .click();
     await expect(
-      nav.getByRole('button', { name: 'お気に入り', exact: true }),
+      nav.getByRole('link', { name: 'お気に入り', exact: true }),
     ).toHaveAttribute('aria-current', 'page');
     state.insufficient = false;
     state.empty = true;
-    await nav.getByRole('button', { name: 'おすすめ', exact: true }).click();
+    await nav.getByRole('link', { name: 'おすすめ', exact: true }).click();
     await expect(
       page.getByText('おすすめがありません', { exact: true }),
     ).toBeVisible();
@@ -186,10 +187,11 @@ for (const width of [1440, 375, 320]) {
         .getByRole('button', { name: /おすすめ\d+\.png$/, exact: true })
         .first(),
     ).toBeVisible();
-    await nav.getByRole('button', { name: 'ライブラリ', exact: true }).focus();
-    await page.keyboard.press('Tab');
+    await nav.getByRole('link', { name: 'ライブラリ', exact: true }).focus();
+    // Safari's native keyboard preference uses Option+Tab to include links.
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
     await expect(
-      nav.getByRole('button', { name: 'タグ', exact: true }),
+      nav.getByRole('link', { name: 'タグ', exact: true }),
     ).toBeFocused();
   });
 }

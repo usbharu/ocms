@@ -35,6 +35,16 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 
 グラフは [cytoscape-cola](https://github.com/cytoscape/cytoscape.js-cola) の重なり回避と継続シミュレーションを使います。タグが付いたファイル数に応じてノードを大きくし、ラベルを含めた間隔を確保します。ドラッグすると周囲も追従し、選択したタグへ表示が寄ります。「再配置」で配置をやり直し、「動きを停止」「動きを再開」で動きを切り替えられます。画面外ではシミュレーションを停止します。OSの動きを減らす設定では静止状態から始めます。
 
+## 画面のURL
+
+SPAの画面は `/library`（ライブラリ）、`/tags`（タグ）、`/characters`（キャラクター）、`/favorites`（お気に入り）、`/recommendations`（個人向けおすすめ）で開けます。`/` は `/library` へ移動します。BFFはこれらのパスへSPAを配信するため、URLの直接入力や再読み込みにも対応します。
+
+ファイル詳細は `/assets/{asset_id}`、全画面閲覧は `/assets/{asset_id}/view` です。`from=favorites` または `from=recommendations` で元の一覧を指定でき、省略時はライブラリを表示します。検索条件は `q`・`mode`・`tag`・`character`・`kind`・`ratings`・`page`、比較元は `source` に保持します。例：`/assets/{asset_id}?from=favorites&page=2`。既定値は省略し、レーティングをすべて外した場合は `ratings=none` になります。タグ・キャラクター画面は `q` と `view=list|graph`（省略時はワードクラウド）を使います。
+
+ブラウザの戻る・進むで条件と選択を復元します。個人向けおすすめは同じタブの履歴では推薦セッションを再利用し、新しいタブや再読み込みでは先頭ページから再取得します。ファイルの直接URLでは、選択を保持したまま背景のおすすめ一覧を先頭ページへ戻します。推薦セッションはURLに含めません。未送信の入力やアップロードの処理状態はURLへ保存せず、一覧の表示方法は既存のブラウザ設定を使います。
+
+未認証の場合は同じURLでログイン画面を表示し、ログイン後に元の画面を開きます。OIDCの `/auth/login?return_to=...` は既知のアプリ内パスだけを受け付けます。アプリのログ・TraceへURLのクエリや復帰先は出力しません。
+
 ## 意味検索の無効化
 
 `.env` に `SEMANTIC_SEARCH_ENABLED=false` を設定すると、意味検索とハイブリッド検索、WorkerのEmbedding生成を停止します。未設定時は `true`（有効）です。変更後はSearchとWorkerを再作成してください。初回導入時は、先に `docker compose build` でアプリイメージを更新します。
@@ -260,6 +270,18 @@ npm run test:storybook
 ![生成データを表示したStorybook](docs/storybook-components.png)
 
 ### SPAの画面回帰テスト
+
+ルーティング・推薦の主要シナリオをChromium・Firefox・WebKitと、Android／iPhone相当のブラウザ構成で検証する場合は、次を `web/` で実行します。モバイル構成は実機ではなくブラウザのエミュレーションです。
+
+```sh
+npx playwright install chromium firefox webkit
+npm run test:routing
+# 同じシナリオを各構成で2回検証する場合
+npm run test:routing -- --repeat-each=2
+```
+
+実BFF・Catalog・Transfer・Hydraを使うブラウザ試験は、通常のモックAPI試験と分けています。「Hydra OIDC・OTLPの実接続検証」に従って開発・OIDC検証スタックを最新イメージで起動し、`scripts/media-integration.py` で `.cache/fixtures/car.png` を生成してから、`web/` で `npm run test:live` を実行してください。`localhost:8080` と `localhost:8081` を使い、開発ログイン、OIDCのユーザー選択・同意、元URLへの復帰、プレビュー配信、検索条件、別ユーザーのACLを確認します。合成画像のAssetを作成するため、専用の開発環境で実行してください。生成データはDBとS3に残ります。
+
 
 画面の回帰テストはPlaywrightとChromiumを使います。上記のビルド後、`web/` で実行します。
 
