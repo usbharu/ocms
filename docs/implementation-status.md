@@ -681,3 +681,11 @@ PDF描画は最大8ページずつ行い、保存・抽出後に各画像を削�
 - DBで別Blob・不正リース・期限切れ・完了済みJobからの派生画像取得を拒否し、正しいJobと派生Blobの組み合わせを許可した。
 
 この作業ツリーには開発スタックの初期設定がないため、`scripts/media-integration.py`・`scripts/tagging-integration.py`・`scripts/job-recovery.py` は未実行。実モデルによる検索・タグ・キャラクター・レーティングの精度、縮小方法変更によるPDFのpHash差、実データでの全体処理時間・大規模PDFの資源使用量は未評価。完了済みのベクトル・タグ・pHashは保持し、既存の検証済みACを今回の実装で再検証済みとは扱わない。
+
+## PWA対応（2026-10-27）
+
+本番SPAにWeb App Manifest、ホーム画面用PNGアイコン、standalone表示、Service Workerを追加した。通信失敗時はホームでオフライン案内と再読み込み操作を表示する。保存対象は公開の案内HTMLとCSSに限定し、API・認証・メディアはサーバーへの要求を維持する。オフライン閲覧・検索・アップロードは対象外。仕様§12に挙動を追記し、既存の認証・ACL契約（AC-01・AC-15）を維持する。
+
+`npm ci --cache ../.cache/npm`、`npm run check`、`npm run build` は成功。ChromiumのPWA回帰試験3件で、マニフェスト・アイコンの寸法、オフライン起動・スタイル・再接続、API・認証・Range・検索POSTの非保存、旧キャッシュ回収と他キャッシュの保持、320px幅での表示を確認した。`npm run test:ui` も全84件成功。npmのprepareでHuskyのGit設定書き込みが権限制限により失敗したが、依存パッケージのインストールは成功した。
+
+実機でのiOSホーム画面追加・各ブラウザのインストールUI、実OIDCとDocker配信を組み合わせたPWA検証は未実施。GoサービスやDBの変更はなく、Go試験とDB/S3・メディア結合試験は今回実行していない。

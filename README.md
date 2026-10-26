@@ -35,6 +35,18 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 
 グラフは [cytoscape-cola](https://github.com/cytoscape/cytoscape.js-cola) の重なり回避と継続シミュレーションを使います。タグが付いたファイル数に応じてノードを大きくし、ラベルを含めた間隔を確保します。ドラッグすると周囲も追従し、選択したタグへ表示が寄ります。「再配置」で配置をやり直し、「動きを停止」「動きを再開」で動きを切り替えられます。画面外ではシミュレーションを停止します。OSの動きを減らす設定では静止状態から始めます。
 
+## PWAとして使う
+
+本番ビルドのSPAは、対応ブラウザの「アプリをインストール」や「ホーム画面に追加」からインストールできます。通常の `npm run build` とDockerイメージのビルドに、マニフェスト・アイコン・Service Workerの生成を含みます。追加のパッケージや起動コマンドは不要です。
+
+Service WorkerとインストールにはHTTPSが必要です。ローカル確認には `http://localhost:8080` も使えます。別端末からLAN内のHTTPアドレスへアクセスする場合は、HTTPSを用意してください。ブラウザごとの要件は [MDNのインストールガイド](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) を参照してください。
+
+一度オンラインで開いた後、通信できない状態でホームを開くと「オフラインです」と再読み込みのリンクを表示します。オフラインでのファイル閲覧・検索・アップロードは提供しません。Service WorkerのCache Storageには公開のオフライン案内HTMLとCSSだけを保存し、API応答、認証情報、検索結果、メディアを保存しません。通信中のHTTPエラーは元の応答を維持します。
+
+オフライン画面かWorkerの更新でキャッシュ名が変わり、新しいWorkerの有効化時に古いOCMS用キャッシュを削除します。更新は既存のタブやアプリをすべて閉じてから開き直すと反映されます。Vite開発サーバーとStorybookはWorkerを登録しません。
+
+回帰検証は `web/` で `npm run build` の後に `npx playwright test tests/pwa.spec.ts` を実行します。
+
 ## 意味検索の無効化
 
 `.env` に `SEMANTIC_SEARCH_ENABLED=false` を設定すると、意味検索とハイブリッド検索、WorkerのEmbedding生成を停止します。未設定時は `true`（有効）です。変更後はSearchとWorkerを再作成してください。初回導入時は、先に `docker compose build` でアプリイメージを更新します。
