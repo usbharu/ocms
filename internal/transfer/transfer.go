@@ -179,6 +179,15 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 		return
 	}
 	etag := `"` + hex.EncodeToString(sha) + `"`
+	// Catalog (and, for derived content, rendition membership) was checked
+	// before reaching this point. Revalidation never bypasses authorization.
+	cacheable := strings.HasPrefix(r.URL.Path, "/api/v1/assets/")
+	w.Header().Set("ETag", etag)
+	if cacheable && notModified(r, etag) {
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	value := r.Header.Get("Range")
 	if v := r.Header.Get("If-Range"); v != "" && v != etag {
 		value = ""
@@ -188,7 +197,6 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 	}
 	start, end, partial, err := ParseRange(value, size)
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("ETag", etag)
 	if err != nil {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 		platform.Error(w, 416, "RANGE_NOT_SATISFIABLE")
@@ -199,6 +207,9 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 		length = end - start + 1
 	}
 	if r.Method == "HEAD" {
+		if cacheable {
+			w.Header().Set("Cache-Control", "private, no-cache")
+		}
 		w.Header().Set("Content-Type", a.MIME)
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 		return
@@ -238,6 +249,9 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 	}
 	w.Header().Set("Content-Type", a.MIME)
 	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+	if cacheable {
+		w.Header().Set("Cache-Control", "private, no-cache")
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if partial {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
