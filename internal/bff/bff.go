@@ -275,6 +275,20 @@ func (s *Service) proxy(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("X-Service-Token", os.Getenv("INTERNAL_TOKEN"))
 		req.Header.Del("X-CSRF-Token")
 	}
+	proxy.ModifyResponse = func(response *http.Response) error {
+		// ReverseProxy adds upstream headers to the default no-store header.
+		// Only successful media responses may replace that default.
+		if strings.HasPrefix(path, "/api/v1/assets/") && (strings.HasSuffix(path, "/content") || strings.HasSuffix(path, "/preview")) &&
+			(r.Method == "GET" || r.Method == "HEAD") &&
+			(response.StatusCode == 200 || response.StatusCode == 206 || response.StatusCode == 304) &&
+			response.Header.Get("Cache-Control") == "private, no-cache" {
+			w.Header().Del("Cache-Control")
+			response.Header.Add("Vary", "Cookie")
+		} else {
+			response.Header.Del("Cache-Control")
+		}
+		return nil
+	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) { platform.Error(w, 503, "SERVICE_UNAVAILABLE") }
 	proxy.ServeHTTP(w, r)
 }

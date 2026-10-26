@@ -44,7 +44,7 @@ func returnTarget(raw string) (string, bool) {
 }
 
 func spaHandler(assets fs.FS) http.Handler {
-	files := http.FileServer(http.FS(assets))
+	files := staticFiles(assets)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if p == "/api" || strings.HasPrefix(p, "/api/") || p == "/auth" || strings.HasPrefix(p, "/auth/") {
@@ -69,10 +69,16 @@ func spaHandler(assets fs.FS) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if !spaPath(p) {
-			w.WriteHeader(http.StatusNotFound)
+		if spaPath(p) {
+			// Serve the app shell with the same validators as the root HTML.
+			request := r.Clone(r.Context())
+			request.URL.Path = "/"
+			request.URL.RawPath = ""
+			files.ServeHTTP(w, request)
+			return
 		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
 		if r.Method == "GET" {
 			_, _ = w.Write(data)
 		}
