@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+} from 'react-router';
 import { AppHeader } from './components/library/AppHeader';
 import { AssetDetails } from './components/library/AssetDetails';
 import { AssetList } from './components/library/AssetList';
@@ -31,6 +37,12 @@ import {
   type SearchContext,
   type View,
 } from './lib/assets';
+import {
+  assetURL,
+  collectionURL,
+  parseRoute,
+  type Section,
+} from './lib/routes';
 import { type UploadTask, uploadFile } from './lib/uploads';
 
 type ExplorationSnapshot = {
@@ -59,9 +71,34 @@ function savedView(): View {
 }
 
 export function App() {
-  const [section, setSection] = useState<
-    'library' | 'tags' | 'characters' | 'favorites' | 'recommendations'
-  >('library');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const navigationType = useNavigationType();
+  const route = parseRoute(location.pathname, location.search);
+  const [section, setSection] = useState<Section>(route.section);
+  const [assetMissing, setAssetMissing] = useState(false);
+  const [assetLoadFailed, setAssetLoadFailed] = useState(false);
+  const snapshots = useRef(new Map<string, ExplorationSnapshot>());
+  const loadedCollection = useRef('');
+  const readyRoute = useRef('');
+  const focusAfterClose = useRef<string | null>(null);
+  const focusViewerTrigger = useRef(false);
+  const historyEntries = useRef<string[]>([location.key]);
+  const historyPosition = useRef(0);
+  useLayoutEffect(() => {
+    const entries = historyEntries.current;
+    const found = entries.indexOf(location.key);
+    if (found >= 0) historyPosition.current = found;
+    else if (navigationType === 'REPLACE')
+      entries[historyPosition.current] = location.key;
+    else {
+      entries.splice(historyPosition.current + 1);
+      entries.push(location.key);
+      historyPosition.current = entries.length - 1;
+    }
+  }, [location.key, navigationType]);
+  const lastPrincipal = useRef<string | undefined>(undefined);
+
   const [favoriteBusy, setFavoriteBusy] = useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -92,7 +129,6 @@ export function App() {
   const [notice, setNotice] = useState('');
   const [recommendationFailed, setRecommendationFailed] = useState(false);
   const [hashStatus, setHashStatus] = useState<HashStatus | null>(null);
-  const [exploration, setExploration] = useState<ExplorationSnapshot[]>([]);
   const related = context.mode === 'recommendation';
   const personal = Boolean(context.personalized && !context.source);
   const [searching, setSearching] = useState(false);
@@ -127,13 +163,16 @@ export function App() {
     });
     if (!res.ok) {
       const code = (await res.json().catch(() => ({}))).error;
-      throw new Error(
-        code === 'RECOMMENDATION_SESSION_EXPIRED' ||
-          code === 'RECOMMENDATION_SESSION_STALE'
-          ? 'おすすめの情報が更新されました。更新ボタンで取得し直してください。'
-          : path.startsWith('/api/v1/recommendations')
-            ? 'おすすめを取得できませんでした。時間をおいて再試行してください。'
-            : (code ?? `HTTP ${res.status}`),
+      throw Object.assign(
+        new Error(
+          code === 'RECOMMENDATION_SESSION_EXPIRED' ||
+            code === 'RECOMMENDATION_SESSION_STALE'
+            ? 'おすすめの情報が更新されました。更新ボタンで取得し直してください。'
+            : path.startsWith('/api/v1/recommendations')
+              ? 'おすすめを取得できませんでした。時間をおいて再試行してください。'
+              : (code ?? `HTTP ${res.status}`),
+        ),
+        { status: res.status },
       );
     }
     return res.status === 204 ? null : res.json();
@@ -208,11 +247,24 @@ export function App() {
           nextPage > 1 &&
           res.total <= (nextPage - 1) * pageSize
         ) {
-          return await refresh(
-            next,
-            Math.max(1, Math.ceil(res.total / pageSize)),
-            nextKind,
-          );
+          const correctedPage = Math.max(1, Math.ceil(res.total / pageSize));
+          const result = await refresh(next, correctedPage, nextKind);
+          if (version + 1 === requestVersion.current) {
+            navigate(
+              route.assetId
+                ? assetURL(
+                    route.assetId,
+                    route.viewer,
+                    section,
+                    next,
+                    correctedPage,
+                    nextKind,
+                  )
+                : collectionURL(section, next, correctedPage, nextKind),
+              { replace: true, state: location.state },
+            );
+          }
+          return result;
         }
       }
       if (version === requestVersion.current) {
@@ -220,6 +272,21 @@ export function App() {
         setHashStatus(res.hash_status ?? null);
         setTotal(res.total ?? null);
         setPage(nextPage);
+        if (route.page !== nextPage && next.personalized) {
+          navigate(
+            route.assetId
+              ? assetURL(
+                  route.assetId,
+                  route.viewer,
+                  section,
+                  next,
+                  nextPage,
+                  nextKind,
+                )
+              : collectionURL(section, next, nextPage, nextKind),
+            { replace: true, state: location.state },
+          );
+        }
         setKind(nextKind);
         setContext(next);
         collectionRef.current = {
@@ -257,10 +324,278 @@ export function App() {
       .catch(() => setError('接続できません'))
       .finally(() => setAuthLoading(false));
   }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Reload on authentication changes; refresh also captures the current search.
+  const liveSnapshot = useRef<ExplorationSnapshot>({
+    assets,
+    page,
+    total,
+    selected,
+    context,
+    kind,
+    query,
+    mode,
+    hashStatus,
+  });
+  liveSnapshot.current = {
+    assets,
+    page,
+    total,
+    selected,
+    context,
+    kind,
+    query,
+    mode,
+    hashStatus,
+  };
+
+  useLayoutEffect(() => {
+    const key = location.key;
+    return () => {
+      if (!snapshots.current.has(key))
+        snapshots.current.set(key, liveSnapshot.current);
+    };
+  }, [location.key]);
+
+  // URL transitions own collection loading. Ordinary refreshes keep the current URL.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Run once per navigation or authenticated principal, not on fetched state updates.
   useEffect(() => {
-    if (me) refresh(allFiles, 1, 'all').catch((e) => setError(e.message));
-  }, [me]);
+    const principal = me?.principal_id;
+    if (lastPrincipal.current !== principal) {
+      snapshots.current.clear();
+      loadedCollection.current = '';
+      lastPrincipal.current = principal;
+    }
+    if (location.pathname === '/') {
+      navigate(`/library${location.search}`, { replace: true });
+      return;
+    }
+    ++requestVersion.current;
+    readyRoute.current = '';
+    setSearching(true);
+    setError('');
+    setAssetMissing(false);
+    setAssetLoadFailed(false);
+    setSection(route.section);
+    setViewerOpen(false);
+    setSelected(null);
+    if (!me || !route.known) {
+      setSearching(false);
+      return;
+    }
+    if (route.section === 'tags' || route.section === 'characters') {
+      loadedCollection.current = '';
+      setSearching(false);
+      return;
+    }
+    let active = true;
+    const isActive = () => active;
+    const cached =
+      navigationType === 'POP'
+        ? snapshots.current.get(location.key)
+        : undefined;
+    setQuery(cached?.query ?? route.context.query);
+    setMode(
+      cached?.mode ??
+        (route.context.mode === 'recommendation'
+          ? 'keyword'
+          : route.context.mode),
+    );
+    const load = async () => {
+      let next = {
+        ...route.context,
+        ...(route.context.personalized && cached?.context.personalized
+          ? {
+              sessionId: cached.context.sessionId,
+              recommendationStatus: cached.context.recommendationStatus,
+            }
+          : {}),
+      };
+      const previous =
+        snapshots.current.get(location.state?.previousKey) ??
+        liveSnapshot.current;
+      if (
+        !cached &&
+        next.personalized &&
+        previous.context.personalized &&
+        previous.kind === route.kind &&
+        JSON.stringify(previous.context.ratings) ===
+          JSON.stringify(next.ratings)
+      ) {
+        next = { ...next, sessionId: previous.context.sessionId };
+      }
+      if (route.sourceId) {
+        try {
+          const source = await request(
+            `/api/v1/assets/${encodeURIComponent(route.sourceId)}`,
+          );
+          if (!active) return;
+          next = { ...next, source };
+        } catch (error) {
+          if (active) {
+            const status = (error as { status?: number }).status;
+            setAssetMissing(status === 404 || status === 403);
+            setAssetLoadFailed(status !== 404 && status !== 403);
+            setSearching(false);
+          }
+          return;
+        }
+      }
+      const collectionKey = collectionURL(
+        route.section,
+        next,
+        route.page,
+        route.kind,
+      );
+      const canonical = route.assetId
+        ? assetURL(
+            route.assetId,
+            route.viewer,
+            route.section,
+            next,
+            route.page,
+            route.kind,
+          )
+        : collectionKey;
+      if (canonical !== location.pathname + location.search) {
+        navigate(canonical, { replace: true, state: location.state });
+        return;
+      }
+      setContext(next);
+      setKind(route.kind);
+      setPage(route.page);
+      if (cached) {
+        setAssets(cached.assets);
+        setTotal(cached.total);
+        setHashStatus(cached.hashStatus);
+        setPage(route.page);
+        setKind(route.kind);
+        setContext(next);
+      }
+      if (loadedCollection.current !== collectionKey || cached) {
+        if (!cached && (next.mode === 'recommendation' || next.personalized)) {
+          setAssets([]);
+          setTotal(null);
+          setHashStatus(null);
+        }
+        loadedCollection.current = collectionKey;
+        const result = await refresh(
+          next,
+          route.page,
+          route.kind,
+          Boolean(next.sessionId),
+        );
+        if (!active || !result) return;
+      }
+      readyRoute.current = location.key;
+      setSearching(false);
+      if (route.assetId) {
+        try {
+          const asset = await request(
+            `/api/v1/assets/${encodeURIComponent(route.assetId)}`,
+          );
+          if (!active) return;
+          const match = liveSnapshot.current.assets.find(
+            (item) => item.asset_id === route.assetId,
+          );
+          setSelected({ ...match, ...asset });
+          setViewerOpen(route.viewer);
+        } catch (error) {
+          if (active) {
+            const status = (error as { status?: number }).status;
+            setAssetMissing(status === 404 || status === 403);
+            setAssetLoadFailed(status !== 404 && status !== 403);
+            setSearching(false);
+          }
+        }
+      }
+    };
+    void load().catch((error: Error) => {
+      if (isActive()) {
+        loadedCollection.current = '';
+        setError(error.message);
+      }
+    });
+    // The request version invalidates old collection responses immediately on navigation.
+    return () => {
+      active = false;
+      ++requestVersion.current;
+    };
+  }, [location.key, me?.principal_id]);
+
+  function goCollection(
+    next: SearchContext,
+    nextPage = 1,
+    nextKind: Kind = 'all',
+    nextSection: Section = section,
+    keepSelection = false,
+  ) {
+    snapshots.current.set(location.key, liveSnapshot.current);
+    setSearching(true);
+    if (next.mode === 'recommendation' || next.personalized) {
+      setAssets([]);
+      setTotal(null);
+    }
+    const explorationReturn =
+      next.source && next.source.asset_id !== context.source?.asset_id
+        ? { url: location.pathname + location.search, key: location.key }
+        : location.state?.explorationReturn;
+    navigate(
+      keepSelection && selected
+        ? assetURL(
+            selected.asset_id,
+            false,
+            nextSection,
+            next,
+            nextPage,
+            nextKind,
+          )
+        : collectionURL(nextSection, next, nextPage, nextKind),
+      {
+        state: {
+          closeTo: keepSelection
+            ? undefined
+            : location.pathname + location.search,
+          explorationReturn,
+          previousKey: location.key,
+        },
+      },
+    );
+  }
+
+  function goAsset(
+    asset: Asset,
+    viewer = false,
+    replace = false,
+    nextPage = page,
+  ) {
+    snapshots.current.set(location.key, liveSnapshot.current);
+    const parent = location.pathname + location.search;
+    navigate(
+      assetURL(asset.asset_id, viewer, section, context, nextPage, kind),
+      {
+        replace,
+        state: {
+          closeTo: replace ? location.state?.closeTo : parent,
+          explorationReturn: location.state?.explorationReturn,
+          viewerMoved: replace,
+        },
+      },
+    );
+  }
+
+  function closeAsset(viewer = false) {
+    if (viewer) focusViewerTrigger.current = true;
+    const fallback =
+      viewer && selected
+        ? assetURL(selected.asset_id, false, section, context, page, kind)
+        : collectionURL(section, context, page, kind);
+    const parent = location.state?.closeTo;
+    if (parent && !location.state?.viewerMoved) navigate(-1);
+    else
+      navigate(fallback, {
+        replace: true,
+        state: { explorationReturn: location.state?.explorationReturn },
+      });
+  }
   // biome-ignore lint/correctness/useExhaustiveDependencies: Focus only when the selected asset changes, not on polling updates.
   useEffect(() => {
     if (selected && !viewerOpen && window.innerWidth <= 800)
@@ -298,7 +633,12 @@ export function App() {
       }
     };
     update().catch((e) => {
-      if (active && !['pending', 'uploading'].includes(selected.status))
+      if (!active) return;
+      if (e.status === 404 || e.status === 403) {
+        setSelected(null);
+        setViewerOpen(false);
+        setAssetMissing(true);
+      } else if (!['pending', 'uploading'].includes(selected.status))
         setError(e.message);
     });
     const timer = window.setInterval(() => update().catch(() => {}), 5000);
@@ -342,11 +682,10 @@ export function App() {
         .find((task) => task.state === 'completed')?.session?.asset_id;
       if (lastAsset) {
         const asset = await request(`/api/v1/assets/${lastAsset}`);
-        setSelected(asset);
-        setQuery('');
-        setMode('keyword');
-        setKind('all');
-        await refresh(allFiles, 1, 'all');
+        loadedCollection.current = '';
+        navigate(
+          assetURL(asset.asset_id, false, 'library', allFiles, 1, 'all'),
+        );
       }
     } catch (e) {
       setError((e as Error).message);
@@ -372,86 +711,51 @@ export function App() {
     action().catch((e) => setError(e.message));
 
   const reset = () => {
-    setQuery('');
-    setMode('keyword');
-    setKind('all');
-    setSelected(null);
-    run(() =>
-      refresh({ ...allFiles, favorites: section === 'favorites' }, 1, 'all'),
-    );
+    goCollection({ ...allFiles, favorites: section === 'favorites' });
   };
 
   const compare = (comparison: Mode) => {
     if (!selected) return;
-    setKind('all');
-    run(() =>
-      refresh(
-        {
-          mode: comparison,
-          query: '',
-          source: selected,
-          ratings: context.ratings,
-          favorites: context.favorites,
-        },
-        1,
-        'all',
-      ),
+    goCollection(
+      {
+        mode: comparison,
+        query: '',
+        source: selected,
+        ratings: context.ratings,
+        favorites: context.favorites,
+      },
+      1,
+      'all',
+      section,
+      true,
     );
   };
 
   function openRecommendations() {
     if (!selected) return;
-    setExploration((stack) => [
-      ...stack,
-      { assets, page, total, selected, context, kind, query, mode, hashStatus },
-    ]);
-    const next: SearchContext = {
+    goCollection({
       mode: 'recommendation',
-      ratings: context.ratings,
       query: '',
       source: selected,
-    };
-    setContext(next);
-    setAssets([]);
-    setTotal(null);
-    setHashStatus(null);
-    setSelected(null);
-    setPage(1);
-    setKind('all');
-    setViewerOpen(false);
-    run(() => refresh(next, 1, 'all'));
+      ratings: context.ratings,
+    });
   }
 
   function backFromRecommendations() {
-    const previous = exploration[exploration.length - 1];
-    if (!previous) return;
-    ++requestVersion.current;
-    setSearching(false);
-    setRecommendationFailed(false);
-    setError('');
-    setViewerOpen(false);
-    setAssets(previous.assets);
-    setPage(previous.page);
-    setTotal(previous.total);
-    setSelected(previous.selected);
-    setContext(previous.context);
-    setKind(previous.kind);
-    setQuery(previous.query);
-    setMode(previous.mode);
-    setHashStatus(previous.hashStatus);
-    setExploration((stack) => stack.slice(0, -1));
-    collectionRef.current = {
-      context: previous.context,
-      page: previous.page,
-      kind: previous.kind,
-    };
-    if (previous.context.favorites || previous.context.personalized) {
-      if (previous.context.personalized) setAssets([]);
-      run(() => refresh(previous.context, previous.page, previous.kind, true));
-    }
-    window.requestAnimationFrame(() =>
-      detailTitle.current?.focus({ preventScroll: true }),
-    );
+    const target = location.state?.explorationReturn;
+    const index = target ? historyEntries.current.indexOf(target.key) : -1;
+    if (index >= 0 && index < historyPosition.current)
+      navigate(index - historyPosition.current);
+    else if (target) navigate(target.url, { replace: true });
+    else
+      navigate(
+        collectionURL(section, {
+          ...allFiles,
+          favorites: context.favorites,
+          personalized: section === 'recommendations',
+        }),
+        { replace: true },
+      );
   }
 
   const visibleAssets = assets.filter(
@@ -479,19 +783,13 @@ export function App() {
   );
 
   function changePage(nextPage: number) {
-    if (!isResult && total !== null) {
-      run(() => refresh(context, nextPage, kind, true));
-    } else {
-      setPage(nextPage);
-    }
+    goCollection(context, nextPage, kind, section, true);
     fileList.current?.scrollIntoView({ block: 'start' });
     fileList.current?.focus({ preventScroll: true });
   }
 
   function openViewer(asset: Asset) {
-    setError('');
-    setSelected(asset);
-    setViewerOpen(true);
+    goAsset(asset, true);
   }
 
   async function moveViewer(direction: number) {
@@ -499,7 +797,7 @@ export function App() {
     const index = selectedIndex;
     const next = pageAssets[index + direction];
     if (next) {
-      setSelected(next);
+      goAsset(next, true, true);
       return;
     }
     const nextPage = currentPage + direction;
@@ -509,14 +807,23 @@ export function App() {
       if (!isResult && total !== null) {
         const items = await refresh(context, nextPage, kind, true);
         if (items?.length)
-          setSelected(direction > 0 ? items[0] : items[items.length - 1]);
+          goAsset(
+            direction > 0 ? items[0] : items[items.length - 1],
+            true,
+            true,
+            nextPage,
+          );
       } else {
         const items = visibleAssets.slice(
           (nextPage - 1) * pageSize,
           nextPage * pageSize,
         );
-        setPage(nextPage);
-        setSelected(direction > 0 ? items[0] : items[items.length - 1]);
+        goAsset(
+          direction > 0 ? items[0] : items[items.length - 1],
+          true,
+          true,
+          nextPage,
+        );
       }
     } catch {
       setError('次のファイルを読み込めません。再度お試しください。');
@@ -531,12 +838,13 @@ export function App() {
       ++requestVersion.current;
       setMe(null);
       setSection('library');
-      setExploration([]);
       setAssets([]);
       setSelected(null);
       setContext(allFiles);
       setQuery('');
       setNotice('');
+      snapshots.current.clear();
+      navigate('/library', { replace: true });
     });
   }
 
@@ -548,51 +856,58 @@ export function App() {
         body: JSON.stringify({ user }),
       });
       if (!response.ok) throw new Error('ログインに失敗しました');
-      location.reload();
+      window.location.reload();
     });
   }
 
   function search() {
-    setSelected(null);
-    setKind('all');
-    run(() =>
-      refresh(
-        {
-          mode,
-          query: query.trim(),
-          favorites: section === 'favorites',
-          ratings: context.ratings,
-        },
-        1,
-        'all',
-      ),
-    );
+    goCollection({
+      mode,
+      query: query.trim(),
+      favorites: section === 'favorites',
+      ratings: context.ratings,
+    });
   }
 
   function openMetadataFilter(field: 'tag' | 'character', name: string) {
-    setExploration([]);
-    setSection('library');
-    setSelected(null);
-    setQuery('');
-    setMode('keyword');
-    run(() => refresh({ mode: 'keyword', query: '', [field]: name }, 1, 'all'));
+    goCollection(
+      { mode: 'keyword', query: '', [field]: name },
+      1,
+      'all',
+      'library',
+    );
   }
 
   function changeKind(nextKind: Kind) {
-    if (!isResult && total !== null) run(() => refresh(context, 1, nextKind));
-    else {
-      setKind(nextKind);
-      setPage(1);
-    }
+    goCollection(context, 1, nextKind, section, true);
   }
 
+  useEffect(() => {
+    if (
+      searching ||
+      route.assetId ||
+      !focusAfterClose.current ||
+      readyRoute.current !== location.key
+    )
+      return;
+    const id = focusAfterClose.current;
+    const index = pageAssets.findIndex((asset) => asset.asset_id === id);
+    fileList.current
+      ?.querySelectorAll<HTMLButtonElement>('.file')
+      [Math.max(0, index)]?.focus();
+    focusAfterClose.current = null;
+  }, [searching, route.assetId, pageAssets, location.key]);
+
+  useEffect(() => {
+    if (!viewerOpen && selected && focusViewerTrigger.current) {
+      document.querySelector<HTMLButtonElement>('button.preview')?.focus();
+      focusViewerTrigger.current = false;
+    }
+  }, [viewerOpen, selected]);
+
   function closeDetail() {
-    (
-      fileList.current?.querySelector<HTMLButtonElement>('.file.active') ??
-      fileList.current?.querySelector<HTMLButtonElement>('.file') ??
-      fileList.current
-    )?.focus();
-    setSelected(null);
+    focusAfterClose.current = selected?.asset_id ?? null;
+    closeAsset();
   }
 
   async function toggleFavorite(asset: Asset) {
@@ -605,20 +920,11 @@ export function App() {
       await request(`/api/v1/assets/${id}/favorite`, {
         method: asset.is_favorite ? 'DELETE' : 'PUT',
       });
+      snapshots.current.clear();
       const update = (a: Asset) =>
         a.asset_id === id ? { ...a, is_favorite: !asset.is_favorite } : a;
       setAssets((current) => current.map(update));
       setSelected((current) => (current ? update(current) : current));
-      setExploration((stack) =>
-        stack.map((snapshot) => ({
-          ...snapshot,
-          context: snapshot.context.personalized
-            ? { ...snapshot.context, sessionId: undefined }
-            : snapshot.context,
-          assets: snapshot.assets.map(update),
-          selected: snapshot.selected ? update(snapshot.selected) : null,
-        })),
-      );
       if (
         sectionRef.current === 'favorites' ||
         sectionRef.current === 'recommendations'
@@ -650,6 +956,7 @@ export function App() {
       body: JSON.stringify(changes),
     });
     ++metadataVersion.current;
+    snapshots.current.clear();
     const metadata = {
       filename: updated.filename,
       tags: updated.tags,
@@ -661,14 +968,6 @@ export function App() {
     );
     setAssets((current) =>
       current.map((a) => (a.asset_id === assetId ? { ...a, ...metadata } : a)),
-    );
-    setExploration((stack) =>
-      stack.map((snapshot) => ({
-        ...snapshot,
-        context: snapshot.context.personalized
-          ? { ...snapshot.context, sessionId: undefined }
-          : snapshot.context,
-      })),
     );
     setContext((current) =>
       current.source?.asset_id === assetId
@@ -709,10 +1008,18 @@ export function App() {
         method: 'DELETE',
       });
       setSelected(null);
-      await refresh(
-        context.source?.asset_id === selected.asset_id
-          ? { ...allFiles, favorites: context.favorites }
-          : context,
+      snapshots.current.clear();
+      loadedCollection.current = '';
+      navigate(
+        collectionURL(
+          section,
+          context.source?.asset_id === selected.asset_id
+            ? { ...allFiles, favorites: context.favorites }
+            : context,
+          page,
+          kind,
+        ),
+        { replace: true },
       );
     });
   }
@@ -723,33 +1030,6 @@ export function App() {
         authenticated={Boolean(me)}
         onLogout={logout}
         section={section}
-        onSectionChange={(next) => {
-          setSection(next);
-          setViewerOpen(false);
-          setExploration([]);
-          if (
-            next === 'library' ||
-            next === 'favorites' ||
-            next === 'recommendations'
-          ) {
-            setSelected(null);
-            setQuery('');
-            setMode('keyword');
-            const nextContext = {
-              ...allFiles,
-              favorites: next === 'favorites',
-              personalized: next === 'recommendations',
-            };
-            setContext(nextContext);
-            setAssets([]);
-            setTotal(null);
-            setKind('all');
-            run(() => refresh(nextContext, 1, 'all'));
-          } else {
-            ++requestVersion.current;
-            setSearching(false);
-          }
-        }}
       >
         {me && section === 'library' && !related && (
           <UploadControl
@@ -774,12 +1054,43 @@ export function App() {
             </Button>
           </div>
         )}
-        {authLoading ? (
+        {!route.known ? (
+          <section className="empty">
+            <h1>ページが見つかりません</h1>
+            <Link to="/library">ライブラリを開く</Link>
+          </section>
+        ) : authLoading ? (
           <div className="empty" role="status">
             読み込み中…
           </div>
         ) : !me ? (
           <LoginPanel development={dev} onDevLogin={devLogin} />
+        ) : assetLoadFailed ? (
+          <section className="empty" role="alert">
+            <h1>ファイルを読み込めません</h1>
+            <Button
+              onClick={() =>
+                navigate(location.pathname + location.search, {
+                  replace: true,
+                  state: location.state,
+                })
+              }
+            >
+              再試行
+            </Button>
+          </section>
+        ) : assetMissing ? (
+          <section className="empty" role="alert">
+            <h1>ファイルが見つかりません</h1>
+            <Link
+              to={collectionURL(section, {
+                ...allFiles,
+                favorites: section === 'favorites',
+              })}
+            >
+              一覧に戻る
+            </Link>
+          </section>
         ) : section === 'tags' || section === 'characters' ? (
           <TagsPage
             key={section}
@@ -890,12 +1201,8 @@ export function App() {
                                 (value) => value !== rating,
                               );
                           const next = { ...context, ratings: nextRatings };
+                          goCollection(next, 1, kind);
                           setContext(next);
-                          setSelected(null);
-                          setAssets([]);
-                          setTotal(null);
-                          setPage(1);
-                          run(() => refresh(next, 1));
                         }}
                       />
                       {ratingLabel(rating)}
@@ -962,15 +1269,7 @@ export function App() {
                     <Button
                       variant="outline"
                       onClick={() => {
-                        setSection('favorites');
-                        setSelected(null);
-                        setExploration([]);
-                        setContext({ ...allFiles, favorites: true });
-                        setAssets([]);
-                        setTotal(null);
-                        run(() =>
-                          refresh({ ...allFiles, favorites: true }, 1, 'all'),
-                        );
+                        navigate('/favorites');
                       }}
                     >
                       お気に入りを開く
@@ -988,9 +1287,7 @@ export function App() {
                       void toggleFavorite(asset);
                     }}
                     onLibrary={() => {
-                      setSection('library');
-                      setSelected(null);
-                      run(() => refresh(allFiles, 1, 'all'));
+                      navigate('/library');
                     }}
                     assets={pageAssets}
                     selectedId={selected?.asset_id}
@@ -1009,8 +1306,7 @@ export function App() {
                     resultCount={resultCount}
                     fileList={fileList}
                     onSelect={(asset) => {
-                      setError('');
-                      setSelected(asset);
+                      goAsset(asset);
                     }}
                     onOpen={openViewer}
                     onReset={reset}
@@ -1071,7 +1367,7 @@ export function App() {
           onNavigate={(direction) => {
             void moveViewer(direction);
           }}
-          onClose={() => setViewerOpen(false)}
+          onClose={() => closeAsset(true)}
         />
       )}
     </div>

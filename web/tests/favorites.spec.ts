@@ -61,7 +61,7 @@ for (const section of ['library', 'favorites']) {
     if (section === 'favorites')
       await page
         .getByRole('navigation', { name: 'ワークスペース' })
-        .getByRole('button', { name: 'お気に入り', exact: true })
+        .getByRole('link', { name: 'お気に入り', exact: true })
         .click();
     await page.getByRole('button', { name: '元.png', exact: true }).click();
     await page
@@ -171,7 +171,7 @@ for (const view of ['list', 'grid', 'detailed-grid']) {
     ).toBeVisible();
     await page
       .getByRole('navigation', { name: 'ワークスペース' })
-      .getByRole('button', { name: 'お気に入り', exact: true })
+      .getByRole('link', { name: 'お気に入り', exact: true })
       .click();
     for (const mode of ['keyword', 'semantic', 'hybrid']) {
       await page.getByRole('searchbox').fill('風景');
@@ -245,6 +245,7 @@ test('removing the last favorite on a page corrects pagination and keeps detail 
     status: 'ready',
     is_favorite: true,
   }));
+  const allItems = [...items];
   await page.route('**/auth/config', (r) => r.fulfill({ json: {} }));
   await page.route('**/api/v1/**', async (r) => {
     const url = new URL(r.request().url());
@@ -260,12 +261,23 @@ test('removing the last favorite on a page corrects pagination and keeps detail 
         json: { assets: items.slice(offset, offset + 24), total: items.length },
       });
     }
-    return r.fulfill({ json: { ...items[0], renditions: [], jobs: [] } });
+    return r.fulfill({
+      json: {
+        ...(allItems.find((asset) =>
+          url.pathname.endsWith(`/${asset.asset_id}`),
+        ) ?? items[0]),
+        is_favorite: items.some((asset) =>
+          url.pathname.endsWith(`/${asset.asset_id}`),
+        ),
+        renditions: [],
+        jobs: [],
+      },
+    });
   });
   await page.goto('/');
   await page
     .getByRole('navigation', { name: 'ワークスペース' })
-    .getByRole('button', { name: 'お気に入り', exact: true })
+    .getByRole('link', { name: 'お気に入り', exact: true })
     .click();
   await page.getByRole('button', { name: '次へ' }).click();
   await page.getByRole('button', { name: 'file-24.png', exact: true }).click();

@@ -39,7 +39,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page
     .getByRole('navigation')
-    .getByRole('button', { name: 'キャラクター', exact: true })
+    .getByRole('link', { name: 'キャラクター', exact: true })
     .click();
 });
 
@@ -130,7 +130,7 @@ test('characters can be edited separately from tags', async ({ page }) => {
   });
   await page
     .getByRole('navigation')
-    .getByRole('button', { name: 'ライブラリ' })
+    .getByRole('link', { name: 'ライブラリ' })
     .click();
   await page.getByRole('button', { name: '更新', exact: true }).click();
   await page.getByText('generated.png', { exact: true }).first().click();
