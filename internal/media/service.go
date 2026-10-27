@@ -22,6 +22,7 @@ import (
 
 type Service struct {
 	SemanticSearchDisabled             bool
+	ImageOCREnabled                    bool
 	Concurrency, PDFPageConcurrency    int
 	pollMu, stateMu                    sync.Mutex
 	DB                                 *pgxpool.Pool

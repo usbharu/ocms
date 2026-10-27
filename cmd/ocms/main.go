@@ -113,6 +113,10 @@ func run() error {
 		defer db.Close()
 		s := media.New(db)
 		s.SemanticSearchDisabled = !semanticSearchEnabled
+		s.ImageOCREnabled, e = strconv.ParseBool(platform.Env("MEDIA_IMAGE_OCR_ENABLED", "false"))
+		if e != nil {
+			return errors.New("invalid MEDIA_IMAGE_OCR_ENABLED: expected boolean")
+		}
 		s.Concurrency, e = media.WorkerConcurrency()
 		if e != nil {
 			return e

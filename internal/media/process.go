@@ -266,7 +266,7 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 				return e
 			}
 			index.Hashes = append(index.Hashes, contracts.Hash{Kind: "image", Hash: h})
-			text, e := ocr(ctx, frame)
+			text, e := s.imageOCR(ctx, frame)
 			if e != nil {
 				return e
 			}
@@ -328,6 +328,13 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 	}
 	return platform.Call(ctx, "POST", s.Search+"/internal/index", "", index, nil)
 }
+func (s *Service) imageOCR(ctx context.Context, path string) (string, error) {
+	if !s.ImageOCREnabled {
+		return "", nil
+	}
+	return ocr(ctx, path)
+}
+
 func ocr(ctx context.Context, path string) (string, error) {
 	ctx, end := platform.Span(ctx, "media.ocr")
 	defer end()

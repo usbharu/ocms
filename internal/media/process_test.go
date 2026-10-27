@@ -179,3 +179,39 @@ func TestPDFBatchUsesConfiguredConcurrency(t *testing.T) {
 		})
 	}
 }
+
+func TestImageOCROptIn(t *testing.T) {
+	// A default worker must not even start Tesseract for ordinary images.
+	t.Setenv("PATH", t.TempDir())
+	s := &Service{}
+	text, err := s.imageOCR(context.Background(), "missing-image.png")
+	if err != nil || text != "" {
+		t.Fatalf("disabled image OCR invoked a tool: %v", err)
+	}
+
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "tesseract")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf 'generated OCR text\\n'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	s.ImageOCREnabled = true
+	text, err = s.imageOCR(context.Background(), "generated-image.png")
+	if err != nil || text != "generated OCR text" {
+		t.Fatalf("opt-in image OCR did not return extracted text: %v", err)
+	}
+
+	// PDF uses ocr directly and must keep working when image OCR is disabled.
+	s.ImageOCREnabled = false
+	text, err = ocr(context.Background(), "generated-page.png")
+	if err != nil || text != "generated OCR text" {
+		t.Fatalf("PDF OCR was disabled by the image policy: %v", err)
+	}
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.ImageOCREnabled = true
+	if _, err := s.imageOCR(context.Background(), "generated-image.png"); err == nil {
+		t.Fatal("enabled image OCR hid a tool failure")
+	}
+}
