@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_call:
 
 permissions:
@@ -132,3 +133,15 @@ jobs:
           build-args: ${{ matrix.build_args }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  ci-status:
+    name: CI Status
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: [go, web, runtime, migrations, images]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check all jobs succeeded
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS" | jq -e 'all(.[]; . == "success")'
