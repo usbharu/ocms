@@ -425,7 +425,7 @@ test('login offers only the configured authentication method', async ({
   await page.reload();
   await expect(
     page.getByRole('link', { name: 'SSOでログイン' }),
-  ).toHaveAttribute('href', '/auth/login');
+  ).toHaveAttribute('href', '/auth/login?return_to=%2Flibrary');
   const ssoLogin = page.getByRole('link', { name: 'SSOでログイン' });
   await expect(ssoLogin).toHaveCSS('color', 'rgb(255, 255, 255)');
   await expect(ssoLogin).toHaveCSS('background-color', 'rgb(21, 128, 61)');
@@ -489,7 +489,7 @@ test('view menu follows refresh and list rows use authenticated thumbnails', asy
     page
       .getByRole('button', { name: '展示会ガイド.pdf', exact: true })
       .locator('.thumbnail img'),
-  ).toHaveAttribute('src', '/api/v1/assets/pdf/preview');
+  ).toHaveAttribute('src', '/api/v1/assets/pdf/preview?thumbnail=1');
   await expect(
     page
       .getByRole('button', { name: 'インタビュー.ogg', exact: true })
@@ -502,7 +502,7 @@ test('square grids show only thumbnails or a contained thumbnail with title', as
   page,
 }) => {
   // Portrait and landscape sources catch accidental image stretching.
-  await page.route('**/api/v1/assets/pdf/preview', (route) =>
+  await page.route('**/api/v1/assets/pdf/preview?thumbnail=1', (route) =>
     route.fulfill({
       contentType: 'image/svg+xml',
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="600"><rect width="300" height="600" fill="#dbe3ed"/><rect x="30" y="50" width="240" height="10" fill="#6f849a"/></svg>',
@@ -650,7 +650,7 @@ test('PDF search thumbnails use the matched page in every view', async ({
     await page.getByLabel('表示方法').selectOption(view);
     await expect(page.locator('.file .thumbnail img')).toHaveAttribute(
       'src',
-      '/api/v1/assets/pdf/preview?page=2',
+      '/api/v1/assets/pdf/preview?thumbnail=1&page=2',
     );
   }
 });
@@ -765,39 +765,37 @@ test('paginates beyond 200 files, preserves selection and resets filters', async
 }) => {
   await mockPaginatedLibrary(page);
   const nav = page.getByRole('navigation', { name: 'ページネーション' });
-  await expect(page.locator('.file')).toHaveCount(24);
-  await expect(nav).toContainText('1–24 / 217 件');
+  await expect(page.locator('.file')).toHaveCount(200);
+  await expect(nav).toContainText('1–200 / 217 件');
   await expect(nav.getByRole('button', { name: '前へ' })).toBeDisabled();
   await page.getByRole('button', { name: 'ファイル 1', exact: true }).click();
   await nav.getByRole('button', { name: '次へ' }).click();
-  await expect(nav).toContainText('25–48 / 217 件');
+  await expect(nav).toContainText('201–217 / 217 件');
   await expect(
     page.getByRole('region', { name: 'ファイル詳細' }),
   ).toContainText('ファイル 1');
   await page.getByLabel('表示方法').selectOption('detailed-grid');
-  for (let i = 2; i < 10; i++) {
-    await nav.getByRole('button', { name: '次へ' }).click();
-    await expect(nav).toContainText(`${i + 1} / 10 ページ`);
-  }
-  await expect(page.locator('.file')).toHaveCount(1);
+  await expect(nav).toContainText('2 / 2 ページ');
+  await expect(page.locator('.file')).toHaveCount(17);
   await expect(
     page.getByRole('button', { name: 'ファイル 217', exact: true }),
   ).toBeVisible();
   await expect(nav.getByRole('button', { name: '次へ' })).toBeDisabled();
   await page.getByRole('button', { name: '画像', exact: true }).click();
-  await expect(nav).toContainText('1–24 / 55 件');
+  await expect(nav).toBeHidden();
+  await expect(page.locator('.file')).toHaveCount(55);
 });
 
 test('deleting the last file on the last page returns to an existing page', async ({
   page,
 }) => {
-  await mockPaginatedLibrary(page, 25);
+  await mockPaginatedLibrary(page, 201);
   const nav = page.getByRole('navigation', { name: 'ページネーション' });
   await nav.getByRole('button', { name: '次へ' }).click();
-  await page.getByRole('button', { name: 'ファイル 25', exact: true }).click();
+  await page.getByRole('button', { name: 'ファイル 201', exact: true }).click();
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'ファイルを削除' }).click();
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
   await expect(nav).toBeHidden();
   await expect(
     page.getByRole('button', { name: 'ファイル 1', exact: true }),
@@ -807,12 +805,19 @@ test('deleting the last file on the last page returns to an existing page', asyn
 test('search and comparison results paginate and filters reset the page', async ({
   page,
 }) => {
-  const results = Array.from({ length: 49 }, (_, i) => ({
+  const results = Array.from({ length: 201 }, (_, i) => ({
     ...fixtures[i % 4],
     asset_id: `result-${i}`,
     filename: `結果 ${i + 1}`,
     page_number: 2,
   }));
+  await page.route('**/api/v1/assets/result-*', (route) =>
+    route.fulfill({
+      json: results.find((asset) =>
+        new URL(route.request().url()).pathname.endsWith(`/${asset.asset_id}`),
+      ),
+    }),
+  );
   await page.route('**/api/v1/search', (route) =>
     route.fulfill({ json: { assets: results } }),
   );
@@ -822,23 +827,23 @@ test('search and comparison results paginate and filters reset the page', async 
   await page.getByRole('searchbox').fill('pdf');
   await page.getByRole('button', { name: '検索', exact: true }).click();
   const nav = page.getByRole('navigation', { name: 'ページネーション' });
-  await expect(nav).toContainText('1–24 / 49 件');
+  await expect(nav).toContainText('1–200 / 201 件');
   await nav.getByRole('button', { name: '次へ' }).click();
   await expect(
-    page.getByRole('button', { name: '結果 25', exact: true }),
+    page.getByRole('button', { name: '結果 201', exact: true }),
   ).toBeVisible();
   await nav.getByRole('button', { name: '前へ' }).click();
-  await expect(nav).toContainText('1–24 / 49 件');
+  await expect(nav).toContainText('1–200 / 201 件');
   await nav.getByRole('button', { name: '次へ' }).click();
   await page.getByRole('button', { name: '画像', exact: true }).click();
-  await expect(page.locator('.file')).toHaveCount(13);
+  await expect(page.locator('.file')).toHaveCount(51);
   await page.getByRole('button', { name: '結果 1', exact: true }).click();
   await page
     .getByRole('button', { name: '完全一致ファイル', exact: true })
     .click();
-  await expect(nav).toContainText('1–24 / 49 件');
+  await expect(nav).toContainText('1–200 / 201 件');
   await nav.getByRole('button', { name: '次へ' }).click();
-  await expect(nav).toContainText('25–48 / 49 件');
+  await expect(nav).toContainText('201–201 / 201 件');
 });
 
 test('desktop details stay in the viewport and scroll independently', async ({
@@ -1078,11 +1083,11 @@ test('PDF renders real pages under the BFF CSP, zooms and navigates files', asyn
 test('viewer crosses API page boundaries and keeps the displayed page on return', async ({
   page,
 }) => {
-  await mockPaginatedLibrary(page, 25);
+  await mockPaginatedLibrary(page, 201);
   let failNextPage = true;
   await page.route('**/api/v1/assets?**', (route) => {
     if (
-      new URL(route.request().url()).searchParams.get('offset') === '24' &&
+      new URL(route.request().url()).searchParams.get('offset') === '200' &&
       failNextPage
     ) {
       failNextPage = false;
@@ -1091,7 +1096,7 @@ test('viewer crosses API page boundaries and keeps the displayed page on return'
     return route.fallback();
   });
   await page
-    .getByRole('button', { name: 'ファイル 24', exact: true })
+    .getByRole('button', { name: 'ファイル 200', exact: true })
     .dblclick();
   const viewer = page.getByRole('dialog');
   await viewer.getByRole('button', { name: '次のファイル' }).click();
@@ -1100,18 +1105,18 @@ test('viewer crosses API page boundaries and keeps the displayed page on return'
       .getByRole('alert')
       .filter({ hasText: '次のファイルを読み込めません' }),
   ).toBeVisible();
-  await expect(viewer.getByRole('heading')).toHaveText('ファイル 24');
+  await expect(viewer.getByRole('heading')).toHaveText('ファイル 200');
   await viewer.getByRole('button', { name: '次のファイル' }).click();
-  await expect(viewer.getByRole('heading')).toHaveText('ファイル 25');
+  await expect(viewer.getByRole('heading')).toHaveText('ファイル 201');
   await expect(
     viewer.getByRole('button', { name: '次のファイル' }),
   ).toBeDisabled();
   await swipeViewer(page, 1);
-  await expect(viewer.getByRole('heading')).toHaveText('ファイル 24');
+  await expect(viewer.getByRole('heading')).toHaveText('ファイル 200');
   await page.keyboard.press('Escape');
   await expect(
     page.getByRole('navigation', { name: 'ページネーション' }),
-  ).toContainText('1–24 / 25 件');
+  ).toContainText('1–200 / 201 件');
 });
 
 test('unsupported and broken files retain navigation and original links', async ({
@@ -1162,6 +1167,8 @@ test('pinch zoom does not accidentally navigate, then a touch swipe changes file
     .getByRole('button', { name: 'ファイルを閲覧', exact: true })
     .click();
   const viewer = page.getByRole('dialog');
+  await expect(viewer).toBeVisible();
+  await expect(viewer.locator('.viewer-content img')).toBeVisible();
   const session = await page.context().newCDPSession(page);
   await session.send('Input.dispatchTouchEvent', {
     type: 'touchStart',
@@ -1424,6 +1431,9 @@ for (const width of [1440, 390, 320]) {
     await page.route('**/api/v1/assets*', (route) =>
       route.fulfill({ json: { assets: [asset] } }),
     );
+    await page.route('**/api/v1/assets/image', (route) =>
+      route.fulfill({ json: asset }),
+    );
     await page.reload();
     await page.locator('.file').click();
     await expect(page.locator('.tag-chip')).toHaveCount(30);
@@ -1551,19 +1561,28 @@ for (const [field, label] of [
       page,
     }) => {
       const tag = '旅行, 日本語 & + #?';
-      const assets = Array.from({ length: 49 }, (_, i) => ({
+      const assets = Array.from({ length: 201 }, (_, i) => ({
         ...fixtures[0],
         asset_id: `tag-${i}`,
         filename: `タグ検索 ${i + 1}`,
         tags: [tag],
         characters: [tag],
       }));
+      await page.route('**/api/v1/assets/tag-*', (route) =>
+        route.fulfill({
+          json: assets.find((asset) =>
+            new URL(route.request().url()).pathname.endsWith(
+              `/${asset.asset_id}`,
+            ),
+          ),
+        }),
+      );
       await page.route('**/api/v1/assets?**', (route) => {
         const params = new URL(route.request().url()).searchParams;
         const offset = Number(params.get('offset'));
         return route.fulfill({
           json: {
-            assets: assets.slice(offset, offset + 24),
+            assets: assets.slice(offset, offset + 200),
             total: assets.length,
           },
         });
@@ -1594,10 +1613,10 @@ for (const [field, label] of [
         .getByRole('button', { name: '次へ' })
         .click();
       await expect(
-        page.getByRole('button', { name: 'タグ検索 25', exact: true }),
+        page.getByRole('button', { name: 'タグ検索 201', exact: true }),
       ).toBeVisible();
       await page
-        .getByRole('button', { name: 'タグ検索 25', exact: true })
+        .getByRole('button', { name: 'タグ検索 201', exact: true })
         .click();
       const request = page.waitForRequest((r) =>
         new URL(r.url()).searchParams.has(field),
@@ -1608,7 +1627,7 @@ for (const [field, label] of [
       const params = new URL((await request).url()).searchParams;
       expect(Object.fromEntries(params)).toEqual({
         [field]: tag,
-        limit: '24',
+        limit: '200',
         offset: '0',
       });
       await expect(
@@ -1628,7 +1647,7 @@ for (const [field, label] of [
       ).toHaveAttribute('aria-pressed', 'true');
       await expect(
         page.getByRole('navigation', { name: 'ページネーション' }),
-      ).toContainText('1–24 / 49 件');
+      ).toContainText('1–200 / 201 件');
     });
   }
 }
@@ -1662,7 +1681,7 @@ test('detail tag deletion does not search and keyboard opens tag results', async
   await expect(
     page.getByRole('heading', { name: 'タグ：風景', exact: true }),
   ).toBeVisible();
-  expect(requests).toHaveLength(1);
+  await expect.poll(() => requests.length).toBe(1);
 });
 
 test('detail character deletion stays separate and long names support keyboard search', async ({
@@ -1727,11 +1746,11 @@ test('detail character deletion stays separate and long names support keyboard s
   await expect(page.getByRole('region', { name: 'ファイル詳細' })).toHaveCount(
     0,
   );
-  expect(requests).toHaveLength(1);
+  await expect.poll(() => requests.length).toBe(1);
   const params = new URL(requests[0]).searchParams;
   expect(Object.fromEntries(params)).toEqual({
     character,
-    limit: '24',
+    limit: '200',
     offset: '0',
   });
 });
