@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -129,5 +130,136 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 	}
 	if state() != "ready" {
 		t.Fatalf("completed embeddings not ready: %s", state())
+	}
+}
+
+func TestConcurrentClaimsDatabase(t *testing.T) {
+	dsn := os.Getenv("OCMS_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("requires disposable migrated OCMS_TEST_DATABASE_URL")
+	}
+	ctx := context.Background()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var blobs []string
+	defer func() {
+		_, _ = db.Exec(ctx, `DELETE FROM media.processing_jobs WHERE source_blob_id::text=ANY($1)`, blobs)
+	}()
+	for range 4 {
+		var blob string
+		if err := db.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&blob); err != nil {
+			t.Fatal(err)
+		}
+		blobs = append(blobs, blob)
+		if _, err := db.Exec(ctx, `INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type) VALUES(gen_random_uuid(),$1,'media.process')`, blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := Service{DB: db}
+	var wg sync.WaitGroup
+	jobs := make(chan string, 4)
+	errs := make(chan error, 4)
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			j, err := s.claim(ctx)
+			if err != nil {
+				errs <- err
+				return
+			}
+			jobs <- j.ID
+		}()
+	}
+	wg.Wait()
+	close(jobs)
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	seen := map[string]bool{}
+	for id := range jobs {
+		if seen[id] {
+			t.Fatal("job claimed twice")
+		}
+		seen[id] = true
+	}
+	if len(seen) != 4 {
+		t.Fatalf("claimed %d jobs, expected 4", len(seen))
+	}
+}
+
+func TestConcurrentWorkersDatabase(t *testing.T) {
+	dsn := os.Getenv("OCMS_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("requires disposable migrated OCMS_TEST_DATABASE_URL")
+	}
+	ctx := context.Background()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var blobs []string
+	for range 2 {
+		var blob string
+		if err := db.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&blob); err != nil {
+			t.Fatal(err)
+		}
+		blobs = append(blobs, blob)
+		if _, err := db.Exec(ctx, `INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type,attempts) VALUES(gen_random_uuid(),$1,'media.process',3)`, blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer db.Exec(ctx, `DELETE FROM media.processing_jobs WHERE source_blob_id::text=ANY($1)`, blobs)
+	t.Setenv("INTERNAL_TOKEN", strings.Repeat("t", 32))
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/events" {
+			w.Write([]byte(`{"events":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer catalog.Close()
+	started := make(chan string, 2)
+	transfer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started <- r.URL.Path
+		<-r.Context().Done()
+	}))
+	defer transfer.Close()
+	s := &Service{DB: db, Catalog: catalog.URL, Transfer: transfer.URL, Concurrency: 2}
+	workerCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run(workerCtx) }()
+	defer func() { cancel(); <-done }()
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case path := <-started:
+			if seen[path] {
+				t.Fatal("workers processed the same blob")
+			}
+			seen[path] = true
+		case <-time.After(10 * time.Second):
+			t.Fatal("workers did not start two jobs simultaneously")
+		}
+	}
+	var running int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM media.processing_jobs WHERE source_blob_id::text=ANY($1) AND status='running'`, blobs).Scan(&running); err != nil || running != 2 {
+		t.Fatalf("expected two leased jobs: %d, %v", running, err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("workers did not stop")
+	}
+	var retried int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM media.processing_jobs WHERE source_blob_id::text=ANY($1) AND status='retry' AND locked_until IS NULL AND attempts=3`, blobs).Scan(&retried); err != nil || retried != 2 {
+		t.Fatalf("cancelled jobs were not released for retry: %d, %v", retried, err)
 	}
 }

@@ -95,12 +95,15 @@ func (s *Service) upload(w http.ResponseWriter, r *http.Request) {
 	s.complete(w, r, u, blob)
 }
 func (s *Service) complete(w http.ResponseWriter, r *http.Request, u catalog.Upload, blob string) {
-	err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/uploads/"+u.ID+"/complete", r.Header.Get("X-Principal"), map[string]string{"blob_id": blob}, nil)
+	var result struct {
+		AssetID string `json:"asset_id"`
+	}
+	err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/uploads/"+u.ID+"/complete", r.Header.Get("X-Principal"), map[string]string{"blob_id": blob}, &result)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	platform.JSON(w, 200, map[string]string{"upload_id": u.ID, "asset_id": u.AssetID, "state": "completed"})
+	platform.JSON(w, 200, map[string]string{"upload_id": u.ID, "asset_id": result.AssetID, "state": "completed"})
 }
 
 // ParseRange supports a single byte range. Multipart ranges are ignored per §5.5.
@@ -179,6 +182,15 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 		return
 	}
 	etag := `"` + hex.EncodeToString(sha) + `"`
+	// Catalog (and, for derived content, rendition membership) was checked
+	// before reaching this point. Revalidation never bypasses authorization.
+	cacheable := strings.HasPrefix(r.URL.Path, "/api/v1/assets/")
+	w.Header().Set("ETag", etag)
+	if cacheable && notModified(r, etag) {
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	value := r.Header.Get("Range")
 	if v := r.Header.Get("If-Range"); v != "" && v != etag {
 		value = ""
@@ -188,7 +200,6 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 	}
 	start, end, partial, err := ParseRange(value, size)
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("ETag", etag)
 	if err != nil {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 		platform.Error(w, 416, "RANGE_NOT_SATISFIABLE")
@@ -199,6 +210,9 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 		length = end - start + 1
 	}
 	if r.Method == "HEAD" {
+		if cacheable {
+			w.Header().Set("Cache-Control", "private, no-cache")
+		}
 		w.Header().Set("Content-Type", a.MIME)
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 		return
@@ -238,6 +252,9 @@ func (s *Service) serveBlob(w http.ResponseWriter, r *http.Request, a catalog.As
 	}
 	w.Header().Set("Content-Type", a.MIME)
 	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+	if cacheable {
+		w.Header().Set("Cache-Control", "private, no-cache")
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if partial {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))

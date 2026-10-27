@@ -113,7 +113,18 @@ func run() error {
 		defer db.Close()
 		s := media.New(db)
 		s.SemanticSearchDisabled = !semanticSearchEnabled
-		go s.Run(ctx)
+		s.Concurrency, e = media.WorkerConcurrency()
+		if e != nil {
+			return e
+		}
+		s.PDFPageConcurrency, e = media.PDFPageConcurrency()
+		if e != nil {
+			return e
+		}
+		workerCtx, cancelWorkers := context.WithCancel(ctx)
+		workersDone := make(chan struct{})
+		go func() { defer close(workersDone); s.Run(workerCtx) }()
+		defer func() { cancelWorkers(); <-workersDone }()
 		handler = s.Handler()
 	case "search":
 		db, e := platform.DB(ctx)

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
@@ -6,6 +7,31 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [
     tailwindcss(),
+    {
+      name: 'ocms-offline-worker',
+      apply: 'build',
+      generateBundle() {
+        const worker = readFileSync(
+          new URL('./service-worker.js', import.meta.url),
+          'utf8',
+        );
+        const version = createHash('sha256')
+          .update(worker)
+          .update(
+            readFileSync(new URL('./public/offline.html', import.meta.url)),
+          )
+          .update(
+            readFileSync(new URL('./public/offline.css', import.meta.url)),
+          )
+          .digest('hex')
+          .slice(0, 16);
+        this.emitFile({
+          type: 'asset',
+          fileName: 'sw.js',
+          source: worker.replace('__VERSION__', version),
+        });
+      },
+    },
     {
       name: 'pdfjs-local-assets',
       configureServer(server) {
