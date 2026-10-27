@@ -324,8 +324,8 @@ func (s *Service) personalRecommendations(w http.ResponseWriter, r *http.Request
 		}
 	}
 	// Authorization is performed for each page even on a cached/resumed session.
-	start := min((page-1)*24, len(ids))
-	stop := min(start+24, len(ids))
+	start := min((page-1)*200, len(ids))
+	stop := min(start+200, len(ids))
 	var authorized struct {
 		Assets []catalog.Asset `json:"assets"`
 	}

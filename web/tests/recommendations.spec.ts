@@ -8,7 +8,7 @@ const source = {
   characters: ['キャラクターA'],
   status: 'ready',
 };
-const recommendations = Array.from({ length: 27 }, (_, i) => ({
+const recommendations = Array.from({ length: 201 }, (_, i) => ({
   ...source,
   asset_id: `related-${i}`,
   filename: `関連ファイル${i}.png`,
@@ -117,7 +117,7 @@ test('ranking, keyboard selection, pagination, chained exploration and restorati
   await setup(page);
   await page.getByRole('searchbox').fill('未送信の条件');
   await open(page);
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
   await expect(page.locator('.file').first()).toHaveAttribute(
     'aria-label',
     '関連ファイル0.png',
@@ -130,17 +130,17 @@ test('ranking, keyboard selection, pagination, chained exploration and restorati
   await expect(page.locator('.file').first()).toContainText('見た目が近い');
   await page.getByRole('button', { name: '次へ', exact: true }).click();
   await page
-    .getByRole('button', { name: '関連ファイル24.png', exact: true })
+    .getByRole('button', { name: '関連ファイル200.png', exact: true })
     .focus();
   await page.keyboard.press('Enter');
   await open(page);
   await expect(page.locator('.recommendation-source')).toHaveText(
-    '関連ファイル24.png',
+    '関連ファイル200.png',
   );
   await page.getByRole('button', { name: '戻る', exact: true }).click();
   await expect(page.getByText('2 / 2 ページ')).toBeVisible();
   await expect(
-    page.getByRole('heading', { name: '関連ファイル24.png', exact: true }),
+    page.getByRole('heading', { name: '関連ファイル200.png', exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: '戻る', exact: true }).click();
   await expect(page.getByRole('searchbox')).toHaveValue('未送信の条件');
@@ -160,14 +160,14 @@ test('viewer order across pages and kind filter', async ({ page }) => {
     .getByRole('combobox', { name: '関連コンテンツの種類' })
     .selectOption('image');
   await page
-    .getByRole('button', { name: '関連ファイル23.png', exact: true })
+    .getByRole('button', { name: '関連ファイル199.png', exact: true })
     .click();
   await page
     .getByRole('button', { name: 'ファイルを閲覧', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('dialog')).toContainText('関連ファイル24.png');
+  await expect(page.getByRole('dialog')).toContainText('関連ファイル200.png');
   await page.keyboard.press('Escape');
   await expect(page.getByText('2 / 2 ページ')).toBeVisible();
 });
@@ -187,7 +187,7 @@ test('loading, pending hash, failure retry and empty state', async ({
   state.failure = false;
   await page.getByRole('button', { name: '再試行', exact: true }).click();
   await expect(page.getByText('類似解析待ち')).toBeVisible();
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
   state.empty = true;
   await page.getByRole('button', { name: '更新', exact: true }).click();
   await expect(page.getByText('関連コンテンツがありません。')).toBeVisible();

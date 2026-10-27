@@ -64,7 +64,7 @@ try:
     deadline=time.monotonic()+240
     while time.monotonic()<deadline:
         jobs=a.call('GET',f"/api/v1/assets/{u['asset_id']}/jobs")[2]['jobs']
-        if jobs and jobs[0]['attempts']>=1 and jobs[0]['status'] in ('retry','failed'):
+        if any(j['job_type']=='media.process' and j['attempts']>=1 and j['status'] in ('retry','failed') for j in jobs):
             break
         time.sleep(2)
     else:raise AssertionError('expected media job failure with Search stopped')
@@ -76,7 +76,8 @@ a.call('POST',f"/api/v1/assets/{u['asset_id']}/renditions",{},expected=202)
 deadline=time.monotonic()+240
 while time.monotonic()<deadline:
     jobs=a.call('GET',f"/api/v1/assets/{u['asset_id']}/jobs")[2]['jobs']
-    if len(jobs)==2 and all(j['status']=='completed' for j in jobs):break
+    required={'media.process','embedding.generate'}
+    if required <= {j['job_type'] for j in jobs} and all(j['status']=='completed' for j in jobs):break
     time.sleep(2)
 else:raise AssertionError(jobs)
 assert a.asset(u)['status']=='ready'

@@ -35,7 +35,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page
     .getByRole('navigation', { name: 'ワークスペース' })
-    .getByRole('button', { name: 'タグ', exact: true })
+    .getByRole('link', { name: 'タグ', exact: true })
     .click();
 });
 
@@ -171,7 +171,7 @@ test('tag views fit narrow screens and retain navigation', async ({ page }) => {
     await page.screenshot({ path: '../docs/tags-mobile.png', fullPage: true });
   await page
     .getByRole('navigation')
-    .getByRole('button', { name: 'ライブラリ' })
+    .getByRole('link', { name: 'ライブラリ' })
     .click();
   await expect(
     page.getByRole('heading', { name: 'ライブラリ', exact: true }),
@@ -237,7 +237,7 @@ test('navigation and upload share one header without stacked page headings', asy
   await expect(page.locator('.workspace-heading')).toHaveCount(0);
   await page
     .getByRole('navigation')
-    .getByRole('button', { name: 'ライブラリ' })
+    .getByRole('link', { name: 'ライブラリ' })
     .click();
   await expect(
     page.locator('header').getByRole('button', { name: '＋ アップロード' }),
@@ -373,7 +373,7 @@ test('dense graph separates labels and relaxes after dragging without resetting 
 
   await page
     .getByRole('navigation')
-    .getByRole('button', { name: 'ライブラリ' })
+    .getByRole('link', { name: 'ライブラリ' })
     .click();
   await expect(page.locator('.tag-graph')).toHaveCount(0);
 });

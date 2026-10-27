@@ -71,7 +71,8 @@ while time.monotonic()<deadline:
         u=item['upload']
         jobs=a.call('GET',f"/api/v1/assets/{u['asset_id']}/jobs")[2]['jobs']
         assert not any(j['status']=='failed' for j in jobs), 'media job failed'
-        states.append(len(jobs)==2 and all(j['status']=='completed' for j in jobs))
+        required={'media.process','embedding.generate'}
+        states.append(required <= {j['job_type'] for j in jobs} and all(j['status']=='completed' for j in jobs))
     if all(states):break
     time.sleep(3)
 else:raise AssertionError('media jobs timed out')
