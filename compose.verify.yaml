@@ -2,14 +2,14 @@
 # The login fixture deliberately omits real identity verification; never deploy it.
 services:
   lgtm:
-    image: grafana/otel-lgtm:0.37.0
+    image: grafana/otel-lgtm:0.38.1
     ports: ["127.0.0.1:3000:3000"]
     volumes:
       - verify-telemetry:/data
       - ./infra/verify/grafana-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ocms.yaml:ro
       - ./infra/verify/ocms-dashboard.json:/otel-lgtm/ocms-dashboards/ocms.json:ro
   collector:
-    image: otel/opentelemetry-collector-contrib:0.137.0
+    image: otel/opentelemetry-collector-contrib:0.164.0
     command: [--config=/etc/otelcol/config.yaml]
     volumes:
       - ./infra/verify/collector.yaml:/etc/otelcol/config.yaml:ro

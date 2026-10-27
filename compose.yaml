@@ -49,7 +49,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
   s3:
-    image: chrislusf/seaweedfs:4.48
+    image: chrislusf/seaweedfs:4.51
     command: mini -dir=/data -ip=s3
     environment:
       S3_BUCKET: media
@@ -108,6 +108,7 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
       INFERENCE_DTYPE: ${INFERENCE_DTYPE:-float32}
       INFERENCE_THREADS: ${INFERENCE_THREADS:-4}
+      WEB_CONCURRENCY: ${INFERENCE_WORKERS:-1}
     volumes: [models:/models]
     tmpfs: ["/tmp:rw,size=512m,mode=1777"]
     restart: unless-stopped
@@ -149,9 +150,12 @@ services:
       RUNTIME_URL: http://runtime:8080
       SEMANTIC_SEARCH_ENABLED: ${SEMANTIC_SEARCH_ENABLED:-true}
       MEDIA_JOB_TIMEOUT_SECONDS: ${MEDIA_JOB_TIMEOUT_SECONDS:-7200}
-    tmpfs: ["/tmp:rw,size=768m,mode=1777"]
-    mem_limit: 768m
-    cpus: 1.5
+      MEDIA_IMAGE_OCR_ENABLED: ${MEDIA_IMAGE_OCR_ENABLED:-false}
+      MEDIA_WORKER_CONCURRENCY: ${MEDIA_WORKER_CONCURRENCY:-2}
+      MEDIA_PDF_PAGE_CONCURRENCY: ${MEDIA_PDF_PAGE_CONCURRENCY:-2}
+    tmpfs: ["/tmp:rw,size=${MEDIA_WORKER_TMPFS_SIZE:-1536m},mode=1777"]
+    mem_limit: ${MEDIA_WORKER_MEMORY:-1536m}
+    cpus: ${MEDIA_WORKER_CPUS:-2}
     depends_on:
       postgres: {condition: service_healthy}
       transfer: {condition: service_healthy}

@@ -39,9 +39,9 @@ func (s *Service) derivative(w http.ResponseWriter, r *http.Request) {
 	profile := r.URL.Query().Get("profile")
 	// Versioned fixed profiles prevent caller-controlled reuse of a different transform.
 	switch profile {
-	case "image.webp-v1", "thumbnail-v1", "video.mp4-v1", "audio.opus-v1", "pdf.page-1-v1":
+	case "image.webp-v1", "thumbnail-v1", "thumbnail.display-v1", "video.mp4-v1", "audio.opus-v1", "pdf.page-1-v1":
 	default:
-		if !validPDFProfile(profile) && !validPDFThumbnailProfile(profile) {
+		if !validPDFProfile(profile) && !validPDFThumbnailProfile(profile) && !validPDFDisplayProfile(profile) {
 			platform.Error(w, 400, "PROFILE_UNSUPPORTED")
 			return
 		}
@@ -78,21 +78,22 @@ func (s *Service) derivedContent(w http.ResponseWriter, r *http.Request, preview
 		platform.RespondError(w, err)
 		return
 	}
-	for _, d := range list.Renditions {
-		matched := d.ID == r.PathValue("rendition")
-		if preview {
-			page := r.URL.Query().Get("page")
-			if page == "" {
-				page = "1"
+	var selected *contracts.Rendition
+	if preview {
+		selected = selectPreview(list.Renditions, r.URL.Query().Get("page"), r.URL.Query().Get("thumbnail") == "1")
+	} else {
+		for i := range list.Renditions {
+			if list.Renditions[i].ID == r.PathValue("rendition") {
+				selected = &list.Renditions[i]
+				break
 			}
-			matched = d.Profile == "thumbnail-v1" || d.Profile == "pdf.page-"+page+"-v1"
 		}
-		if matched {
-			a.BlobID = &d.BlobID
-			a.MIME = d.MIME
-			s.serveBlob(w, r, a, user)
-			return
-		}
+	}
+	if selected != nil {
+		a.BlobID = &selected.BlobID
+		a.MIME = selected.MIME
+		s.serveBlob(w, r, a, user)
+		return
 	}
 	platform.Error(w, 404, "PREVIEW_NOT_FOUND")
 }
@@ -109,4 +110,26 @@ func validPDFProfile(profile string) bool {
 
 func validPDFThumbnailProfile(profile string) bool {
 	return strings.HasPrefix(profile, "pdf.thumbnail-") && validPDFProfile(strings.Replace(profile, "pdf.thumbnail-", "pdf.page-", 1))
+}
+
+func validPDFDisplayProfile(profile string) bool {
+	return strings.HasPrefix(profile, "pdf.display-") && validPDFProfile(strings.Replace(profile, "pdf.display-", "pdf.page-", 1))
+}
+
+func selectPreview(renditions []contracts.Rendition, page string, thumbnail bool) *contracts.Rendition {
+	if page == "" {
+		page = "1"
+	}
+	profiles := []string{"thumbnail.display-v1", "thumbnail-v1", "pdf.page-" + page + "-v1"}
+	if thumbnail {
+		profiles = []string{"thumbnail.display-v1", "pdf.display-" + page + "-v1", "thumbnail-v1", "pdf.page-" + page + "-v1"}
+	}
+	for _, profile := range profiles {
+		for i := range renditions {
+			if renditions[i].Profile == profile {
+				return &renditions[i]
+			}
+		}
+	}
+	return nil
 }

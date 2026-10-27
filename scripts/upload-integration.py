@@ -55,6 +55,15 @@ assert bob.asset(copy)['blob_id'] == asset['blob_id']
 bob.call('GET', content, expected=404)
 check('incomplete write recovery, authenticated assembly, exact content, boundary Range, completion retry, part cleanup and cross-user deduplication')
 
+# A second multipart upload with the same owner, name and bytes reuses the Asset.
+duplicate = alice.create('chunk-test.png', body)
+duplicate_base = f"/api/v1/uploads/{duplicate['upload_id']}"
+for number, offset in enumerate(range(0, len(body), part_size)):
+    alice.call('PUT', f"{duplicate_base}/parts/{number}", body[offset:offset + part_size])
+assert alice.call('POST', duplicate_base + '/complete')[2]['asset_id'] == u['asset_id']
+assert alice.call('POST', duplicate_base + '/complete')[2]['asset_id'] == u['asset_id']
+check('multipart exact duplicate and completion retry return the existing Asset')
+
 # Empty and exact boundary uploads also work through the multipart API.
 for data in (b'', body[:part_size]):
     session = alice.create('boundary.png', data)
