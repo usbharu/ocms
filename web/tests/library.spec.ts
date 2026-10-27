@@ -489,7 +489,7 @@ test('view menu follows refresh and list rows use authenticated thumbnails', asy
     page
       .getByRole('button', { name: '展示会ガイド.pdf', exact: true })
       .locator('.thumbnail img'),
-  ).toHaveAttribute('src', '/api/v1/assets/pdf/preview');
+  ).toHaveAttribute('src', '/api/v1/assets/pdf/preview?thumbnail=1');
   await expect(
     page
       .getByRole('button', { name: 'インタビュー.ogg', exact: true })
@@ -502,7 +502,7 @@ test('square grids show only thumbnails or a contained thumbnail with title', as
   page,
 }) => {
   // Portrait and landscape sources catch accidental image stretching.
-  await page.route('**/api/v1/assets/pdf/preview', (route) =>
+  await page.route('**/api/v1/assets/pdf/preview?thumbnail=1', (route) =>
     route.fulfill({
       contentType: 'image/svg+xml',
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="600"><rect width="300" height="600" fill="#dbe3ed"/><rect x="30" y="50" width="240" height="10" fill="#6f849a"/></svg>',
@@ -650,7 +650,7 @@ test('PDF search thumbnails use the matched page in every view', async ({
     await page.getByLabel('表示方法').selectOption(view);
     await expect(page.locator('.file .thumbnail img')).toHaveAttribute(
       'src',
-      '/api/v1/assets/pdf/preview?page=2',
+      '/api/v1/assets/pdf/preview?thumbnail=1&page=2',
     );
   }
 });
