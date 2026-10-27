@@ -82,7 +82,7 @@ export const Loading: Story = {
 };
 export const Refreshing: Story = { args: { searching: true } };
 export const Pagination: Story = {
-  args: { pageCount: 3, resultCount: 52 },
+  args: { pageCount: 3, resultCount: 452 },
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByRole('button', { name: '前へ' })).toBeDisabled();
@@ -92,7 +92,7 @@ export const Pagination: Story = {
   },
 };
 export const LastPage: Story = {
-  args: { currentPage: 3, pageCount: 3, resultCount: 52 },
+  args: { currentPage: 3, pageCount: 3, resultCount: 452 },
 };
 export const LongFilename: Story = {
   args: {
