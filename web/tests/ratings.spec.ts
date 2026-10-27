@@ -75,7 +75,7 @@ for (const section of ['library', 'favorites']) {
     if (section === 'favorites') {
       await page
         .getByRole('navigation', { name: 'ワークスペース' })
-        .getByRole('button', { name: 'お気に入り', exact: true })
+        .getByRole('link', { name: 'お気に入り', exact: true })
         .click();
     }
     await expect(page.locator('.file')).toHaveCount(5);
@@ -107,17 +107,17 @@ for (const section of ['library', 'favorites']) {
       ).toBeEnabled();
     }
     await expect(page.locator('.file')).toHaveCount(2);
-    expect(selectedRatings).toEqual(['general']);
+    await expect.poll(() => selectedRatings).toEqual(['general']);
     await page.getByRole('searchbox').fill('synthetic');
     await page.getByRole('button', { name: '検索', exact: true }).click();
     await expect(page.locator('.file')).toHaveCount(2);
-    expect(selectedRatings).toEqual(['general']);
+    await expect.poll(() => selectedRatings).toEqual(['general']);
     expect(favoritesOnly).toBe(section === 'favorites');
     await page
       .getByRole('checkbox', { name: 'general', exact: true })
       .uncheck();
     await expect(page.locator('.file')).toHaveCount(0);
-    expect(selectedRatings).toEqual([]);
+    await expect.poll(() => selectedRatings).toEqual([]);
     await page.getByRole('checkbox', { name: 'explicit', exact: true }).check();
     await expect(page.locator('.file')).toHaveCount(1);
     await page

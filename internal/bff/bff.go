@@ -28,6 +28,7 @@ type session struct {
 }
 type flow struct {
 	Nonce, Verifier string
+	ReturnTo        string
 	Expiry          time.Time
 }
 type Service struct {
@@ -85,7 +86,7 @@ func (s *Service) cleanup() {
 		}
 	}
 }
-func (s *Service) loginSession(w http.ResponseWriter, r *http.Request, issuer, sub string) {
+func (s *Service) loginSession(w http.ResponseWriter, r *http.Request, issuer, sub, returnTo string) {
 	var out struct {
 		ID string `json:"principal_id"`
 	}
@@ -100,7 +101,7 @@ func (s *Service) loginSession(w http.ResponseWriter, r *http.Request, issuer, s
 	s.mu.Unlock()
 	s.cookie(w, "ocms_session", value, 43200)
 	platform.Audit(r.Context(), "auth.login", out.ID, "")
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo, http.StatusSeeOther)
 }
 func (s *Service) Handler(assets fs.FS) http.Handler {
 	m := http.NewServeMux()
@@ -126,17 +127,22 @@ func (s *Service) Handler(assets fs.FS) http.Handler {
 			platform.Error(w, 400, "INVALID_REQUEST")
 			return
 		}
-		s.loginSession(w, r, "urn:ocms:development", in.User)
+		s.loginSession(w, r, "urn:ocms:development", in.User, "/")
 	})
 	m.HandleFunc("GET /auth/login", func(w http.ResponseWriter, r *http.Request) {
+		target, ok := returnTarget(r.URL.Query().Get("return_to"))
+		if !ok {
+			platform.Error(w, 400, "INVALID_RETURN_TO")
+			return
+		}
 		if s.dev {
-			http.Redirect(w, r, "/", 303)
+			http.Redirect(w, r, target, 303)
 			return
 		}
 		state, nonce, verifier := token(), token(), oauth2.GenerateVerifier()
 		s.mu.Lock()
 		s.cleanup()
-		s.flows[state] = flow{Nonce: nonce, Verifier: verifier, Expiry: time.Now().Add(5 * time.Minute)}
+		s.flows[state] = flow{Nonce: nonce, Verifier: verifier, ReturnTo: target, Expiry: time.Now().Add(5 * time.Minute)}
 		s.mu.Unlock()
 		s.cookie(w, "ocms_state", state, 300)
 		http.Redirect(w, r, s.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), 302)
@@ -176,8 +182,9 @@ func (s *Service) Handler(assets fs.FS) http.Handler {
 			platform.Error(w, 401, "OIDC_TOKEN_INVALID")
 			return
 		}
-		s.loginSession(w, r, identity.Issuer, identity.Subject)
+		s.loginSession(w, r, identity.Issuer, identity.Subject, f.ReturnTo)
 	})
+	m.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	m.Handle("/api/", s.auth(http.HandlerFunc(s.proxy)))
 	m.Handle("POST /auth/logout", s.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, _ := r.Cookie("ocms_session")
@@ -187,8 +194,7 @@ func (s *Service) Handler(assets fs.FS) http.Handler {
 		s.cookie(w, "ocms_session", "", -1)
 		w.WriteHeader(204)
 	})))
-	fileServer := http.FileServer(http.FS(assets))
-	m.Handle("/", fileServer)
+	m.Handle("/", spaHandler(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -268,6 +274,20 @@ func (s *Service) proxy(w http.ResponseWriter, r *http.Request) {
 		original(req)
 		req.Header.Set("X-Service-Token", os.Getenv("INTERNAL_TOKEN"))
 		req.Header.Del("X-CSRF-Token")
+	}
+	proxy.ModifyResponse = func(response *http.Response) error {
+		// ReverseProxy adds upstream headers to the default no-store header.
+		// Only successful media responses may replace that default.
+		if strings.HasPrefix(path, "/api/v1/assets/") && (strings.HasSuffix(path, "/content") || strings.HasSuffix(path, "/preview")) &&
+			(r.Method == "GET" || r.Method == "HEAD") &&
+			(response.StatusCode == 200 || response.StatusCode == 206 || response.StatusCode == 304) &&
+			response.Header.Get("Cache-Control") == "private, no-cache" {
+			w.Header().Del("Cache-Control")
+			response.Header.Add("Vary", "Cookie")
+		} else {
+			response.Header.Del("Cache-Control")
+		}
+		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) { platform.Error(w, 503, "SERVICE_UNAVAILABLE") }
 	proxy.ServeHTTP(w, r)

@@ -35,6 +35,28 @@ S3互換ストレージにはSeaweedFS 4.48の `mini` を使います（[公式�
 
 グラフは [cytoscape-cola](https://github.com/cytoscape/cytoscape.js-cola) の重なり回避と継続シミュレーションを使います。タグが付いたファイル数に応じてノードを大きくし、ラベルを含めた間隔を確保します。ドラッグすると周囲も追従し、選択したタグへ表示が寄ります。「再配置」で配置をやり直し、「動きを停止」「動きを再開」で動きを切り替えられます。画面外ではシミュレーションを停止します。OSの動きを減らす設定では静止状態から始めます。
 
+## PWAとして使う
+
+本番ビルドのSPAは、対応ブラウザの「アプリをインストール」や「ホーム画面に追加」からインストールできます。通常の `npm run build` とDockerイメージのビルドに、マニフェスト・アイコン・Service Workerの生成を含みます。追加のパッケージや起動コマンドは不要です。
+
+Service WorkerとインストールにはHTTPSが必要です。ローカル確認には `http://localhost:8080` も使えます。別端末からLAN内のHTTPアドレスへアクセスする場合は、HTTPSを用意してください。ブラウザごとの要件は [MDNのインストールガイド](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) を参照してください。
+
+一度オンラインで開いた後、通信できない状態でホームや既知の画面URLを開くと「オフラインです」と再読み込みのリンクを表示します。オフラインでのファイル閲覧・検索・アップロードは提供しません。Service WorkerのCache Storageには公開のオフライン案内HTMLとCSSだけを保存し、API応答、認証情報、検索結果、メディアを保存しません。通信中のHTTPエラーは元の応答を維持します。
+
+オフライン画面かWorkerの更新でキャッシュ名が変わり、新しいWorkerの有効化時に古いOCMS用キャッシュを削除します。更新は既存のタブやアプリをすべて閉じてから開き直すと反映されます。Vite開発サーバーとStorybookはWorkerを登録しません。
+
+回帰検証は `web/` で `npm run build` の後に `npx playwright test tests/pwa.spec.ts` を実行します。
+
+## 画面のURL
+
+SPAの画面は `/library`（ライブラリ）、`/tags`（タグ）、`/characters`（キャラクター）、`/favorites`（お気に入り）、`/recommendations`（個人向けおすすめ）で開けます。`/` は `/library` へ移動します。BFFはこれらのパスへSPAを配信するため、URLの直接入力や再読み込みにも対応します。
+
+ファイル詳細は `/assets/{asset_id}`、全画面閲覧は `/assets/{asset_id}/view` です。`from=favorites` または `from=recommendations` で元の一覧を指定でき、省略時はライブラリを表示します。検索条件は `q`・`mode`・`tag`・`character`・`kind`・`ratings`・`page`、比較元は `source` に保持します。例：`/assets/{asset_id}?from=favorites&page=2`。既定値は省略し、レーティングをすべて外した場合は `ratings=none` になります。タグ・キャラクター画面は `q` と `view=list|graph`（省略時はワードクラウド）を使います。
+
+ブラウザの戻る・進むで条件と選択を復元します。個人向けおすすめは同じタブの履歴では推薦セッションを再利用し、新しいタブや再読み込みでは先頭ページから再取得します。ファイルの直接URLでは、選択を保持したまま背景のおすすめ一覧を先頭ページへ戻します。推薦セッションはURLに含めません。未送信の入力やアップロードの処理状態はURLへ保存せず、一覧の表示方法は既存のブラウザ設定を使います。
+
+未認証の場合は同じURLでログイン画面を表示し、ログイン後に元の画面を開きます。OIDCの `/auth/login?return_to=...` は既知のアプリ内パスだけを受け付けます。アプリのログ・TraceへURLのクエリや復帰先は出力しません。
+
 ## 意味検索の無効化
 
 `.env` に `SEMANTIC_SEARCH_ENABLED=false` を設定すると、意味検索とハイブリッド検索、WorkerのEmbedding生成を停止します。未設定時は `true`（有効）です。変更後はSearchとWorkerを再作成してください。初回導入時は、先に `docker compose build` でアプリイメージを更新します。
@@ -53,7 +75,7 @@ RuntimeはASRや自動タグにも使うため、停止しません。フラグ�
 
 ファイル詳細の「関連コンテンツ」で、選んだファイルに関連するコンテンツを評価順に表示します。評価は共通キャラクター50％・共通タグ30％・見た目や音20％の合算です。キャラクターとタグは集合のJaccard係数、見た目はpHash、音は既存の音響フィンガープリントを使います。解析待ちの項目は0点とし、他の項目の重みは変えません。表示値は確率ではありません。
 
-カードで評価値と共通キャラクター・タグ、知覚類似の理由を確認できます。種類で絞り込み、24件ずつ表示します。ファイルを選んで詳細・全画面閲覧で確認し、さらに「関連コンテンツ」を開いて探索を続けられます。「戻る」で前の比較元・ページ・選択へ戻り、最後は元のライブラリ条件を復元します。
+カードで評価値と共通キャラクター・タグ、知覚類似の理由を確認できます。種類で絞り込み、200件ずつ表示します。ファイルを選んで詳細・全画面閲覧で確認し、さらに「関連コンテンツ」を開いて探索を続けられます。「戻る」で前の比較元・ページ・選択へ戻り、最後は元のライブラリ条件を復元します。
 
 比較元自身・同一内容の別ファイル・未許可・削除済みファイルは推薦しません。メタデータ候補は上位1,000 Asset、知覚類似候補は上位1,000 Blobに制限し、認可後の最大200件を返します。種類フィルターもこの200件以内に適用します。全ライブラリの厳密な順位、意味検索、好みの学習は対象外です。追加のマイグレーションや再推論は不要です。API・評価式は仕様書§10.3を参照してください。
 
@@ -82,7 +104,7 @@ docker compose build
 docker compose up -d --wait
 ```
 
-APIは `GET /api/v1/recommendations` です。`kind`・`ratings` に対応し、返された `session_id` と同じ条件に `page=2` を付けると次の24件を取得できます。セッション省略時は新しく生成します。入力変更・期限切れは409、サービス障害・計算競合・30秒の要求期限超過は503です。正の類似度上位1,000件から最大200件を選びます。全ライブラリの厳密な順位・大規模環境の性能・実利用の推薦品質は未評価です。詳細は仕様§10.4・§12.2を参照してください。
+APIは `GET /api/v1/recommendations` です。`kind`・`ratings` に対応し、返された `session_id` と同じ条件に `page` を付けると200件単位で取得できます（推薦結果は最大200件）。セッション省略時は新しく生成します。入力変更・期限切れは409、サービス障害・計算競合・30秒の要求期限超過は503です。正の類似度上位1,000件から最大200件を選びます。全ライブラリの厳密な順位・大規模環境の性能・実利用の推薦品質は未評価です。詳細は仕様§10.4・§12.2を参照してください。
 
 画面例：[PC](docs/personal-recommendations-1440.png)、[モバイル](docs/personal-recommendations-375.png)、[320px幅](docs/personal-recommendations-320.png)。
 
@@ -261,6 +283,18 @@ npm run test:storybook
 
 ### SPAの画面回帰テスト
 
+ルーティング・推薦の主要シナリオをChromium・Firefox・WebKitと、Android／iPhone相当のブラウザ構成で検証する場合は、次を `web/` で実行します。モバイル構成は実機ではなくブラウザのエミュレーションです。
+
+```sh
+npx playwright install chromium firefox webkit
+npm run test:routing
+# 同じシナリオを各構成で2回検証する場合
+npm run test:routing -- --repeat-each=2
+```
+
+実BFF・Catalog・Transfer・Hydraを使うブラウザ試験は、通常のモックAPI試験と分けています。「Hydra OIDC・OTLPの実接続検証」に従って開発・OIDC検証スタックを最新イメージで起動し、`scripts/media-integration.py` で `.cache/fixtures/car.png` を生成してから、`web/` で `npm run test:live` を実行してください。`localhost:8080` と `localhost:8081` を使い、開発ログイン、OIDCのユーザー選択・同意、元URLへの復帰、プレビュー配信、検索条件、別ユーザーのACLを確認します。合成画像のAssetを作成するため、専用の開発環境で実行してください。生成データはDBとS3に残ります。
+
+
 画面の回帰テストはPlaywrightとChromiumを使います。上記のビルド後、`web/` で実行します。
 
 ```sh
@@ -276,7 +310,7 @@ npm run test:ui
 
 `UI_SCREENSHOTS=1 npm run test:ui` は閲覧画面を `docs/library-viewer-mobile.png` と `docs/library-viewer-pdf.png` にも保存します。
 
-通常一覧は1ページ24件で取得します。`GET /api/v1/assets` は `limit`（1〜200、既定200）、`offset`（0以上）、`kind`（`image` / `video` / `audio` / `document`）に対応し、ACLとフィルター適用後の `total` を返します。検索・比較は既存APIが返した結果を24件ずつ表示し、APIの結果上限は維持します。右側の詳細は画面に追従し、長い内容はパネル内でスクロールできます。幅800px以下では一覧の上に表示します。
+通常一覧は1ページ200件で取得します。`GET /api/v1/assets` は `limit`（1〜200、既定200）、`offset`（0以上）、`kind`（`image` / `video` / `audio` / `document`）に対応し、ACLとフィルター適用後の `total` を返します。検索・比較は既存APIが返した結果を200件ずつ表示し、APIの結果上限は維持します。右側の詳細は画面に追従し、長い内容はパネル内でスクロールできます。幅800px以下では一覧の上に表示します。
 
 一覧APIの結合検証は、開発スタックを更新・起動した後に実行します。
 
@@ -414,10 +448,10 @@ go vet ./...
 
 | 入力 | 標準出力・索引 |
 |---|---|
-| 画像 | WebP、PNGサムネイル、OCR、64bit DCT pHash、ネイティブ画像Embedding |
+| 画像 | WebP、共用WebPサムネイル、OCR、64bit DCT pHash、ネイティブ画像Embedding |
 | 動画 | H.264/AAC MP4（faststart）、PNGサムネイル、5秒間隔・最大12枚のフレームpHash、音声ASR・指紋、30秒単位のネイティブ動画Embedding |
 | 音声 | Opus/Ogg、Chromaprint、60秒単位のASRとネイティブ音声Embedding |
-| PDF | 全ページのPNGプレビュー・解析サムネイル、テキストレイヤー一括抽出／文字のないページのOCR、ページpHash・Embedding |
+| PDF | 全ページのPNGプレビュー・共用WebPサムネイル、テキストレイヤー一括抽出／文字のないページのOCR、ページpHash・Embedding |
 
 WorkerはFFprobe / FFmpeg、Poppler、Tesseract（`eng+jpn`）、Chromaprintを使います。Runtimeの推論はONNX Runtimeに統一しています。ASRは多言語Whisper `tiny`のfp32モデルをCPUで実行し、beam幅3でタイムスタンプを生成します。30秒ごとに処理し、未処理の末尾を次の窓へ引き継ぎます。`ASR_MODEL`は`tiny`のみ対応します。従来の任意モデル名・パス指定は使えません。
 
@@ -461,11 +495,33 @@ python3 scripts/media-integration.py
 python3 scripts/tagging-integration.py
 ```
 
-Workerはマスターキー・S3資格情報を持ちません。Transferは実行中JobのID、対象Blob、リーストークン、期限をWorkerに照会してから復号データを渡します。平文作業領域はtmpfs内の0700一時ディレクトリで、処理後に削除します。Jobは既定2時間、PDFは既定500ページで、それぞれ `MEDIA_JOB_TIMEOUT_SECONDS` と `MEDIA_MAX_PDF_PAGES` で変更できます。入力/出力256 MiB、画像約1600万画素、動画10分、音声30分、Workerのメモリ768 MiB・tmpfs 768 MiBという上限も設けています。PDFは最大8ページずつ描画し、ページ画像は保存・抽出後に順次削除します。tmpfsには全ページを保持しません。
+Workerはマスターキー・S3資格情報を持ちません。Transferは実行中JobのID、対象Blob、リーストークン、期限をWorkerに照会してから復号データを渡します。平文作業領域はtmpfs内の0700一時ディレクトリで、処理後に削除します。Jobは既定2時間、PDFは既定500ページで、それぞれ `MEDIA_JOB_TIMEOUT_SECONDS` と `MEDIA_MAX_PDF_PAGES` で変更できます。入力/出力256 MiB、画像約1600万画素、動画10分、音声30分、Workerの既定メモリ1536 MiB・tmpfs 1536 MiBという上限も設けています。PDFは最大8ページずつ描画し、ページ画像は保存・抽出後に順次削除します。tmpfsには全ページを保持しません。
 
-画像のタグ・意味検索は保存済みの512pxサムネイルを使い、元画像を再取得・再変換しません。PDFは1600pxのページプレビューから512pxの解析サムネイルを作成・暗号化保存し、pHash・タグ・画像Embeddingで共用します。OCRは1600pxのプレビューを使い、文字のあるページは一括抽出した本文を使います。抽出本文は全体256 MiB・1ページ2 MiBまでとし、上限超過は切り捨てずJobを失敗させます。タグ・EmbeddingのJobは元PDFを取得・描画しません。既存PDFに解析サムネイルがなければ、保存済みプレビューを縮小します。動画は各処理の時間サンプリングを保って縮小フレームを使います。元ファイルの完全一致判定用SHA-256は変更しません。
+新規の画像・PDFは、一覧表示とpHash・タグ・画像EmbeddingでWebPサムネイルを共用し、解析用PNGは保存しません。解像度は長辺512pxに保ち、80,000バイト未満を目標に画質を段階的に下げます。目標は保証値ではなく、非可逆圧縮のため解析結果が変わる可能性があります。画像のOCRは作業中のPNGを使います。PDFは1600pxのPNGプレビューを保存し、文字のないページのOCRに使います。先頭ページを先に描画・処理し、残りは最大8ページずつ描画して、変換・保存・OCRを既定で最大2ページ並列で実行します。結果はページ順に索引へ追加し、失敗やリース失効時には処理を中断します。PDFは一時的なPPMからPNGプレビューとWebPサムネイルを一度に生成し、画像もOCR用PNGとWebPを同時生成します。PDFのPPMは8ページで最大約61 MBです。抽出本文は全体256 MiB・1ページ2 MiBまでとし、上限超過は切り捨てずJobを失敗させます。既存コンテンツのPNGは引き続き読み取り、既存PDFに解析サムネイルがなければ保存済みプレビューを縮小します。動画は各処理の時間サンプリングを保って縮小フレームを使います。元ファイルの完全一致判定用SHA-256は変更しません。
 
-Worker・Transferを同じコードへ更新すると、新しいJobからこの経路を使います。DBマイグレーションや既存コンテンツの自動再処理はありません。完了済みの検索ベクトル・タグ・pHashは保持します。縮小方法の変更によるPDFの推論結果・pHashの差や、実データでの処理時間・精度は別途評価が必要です。
+Workerは1プロセス内で既定2件のJobを同時に実行します。並列数やリソースはComposeの環境変数で調整できます。設定値は `.env` に追記するか、Compose実行時に環境変数で渡してください。既存の `.env` の資格情報は変更しません。
+
+| 環境変数 | 既定値 | 内容 |
+|---|---:|---|
+| `MEDIA_WORKER_CONCURRENCY` | 2 | 1 Workerで同時実行するJob数。1〜8 |
+| `MEDIA_PDF_PAGE_CONCURRENCY` | 2 | 1 PDF Job内で同時処理するページ数。1〜8 |
+| `INFERENCE_WORKERS` | 1 | 推論Runtimeのプロセス数（正整数）。各プロセスは推論を1件ずつ実行 |
+| `INFERENCE_THREADS` | 4 | 各推論プロセスのスレッド数。1〜32 |
+| `MEDIA_WORKER_CPUS` | 2 | WorkerコンテナのCPU上限 |
+| `MEDIA_WORKER_MEMORY` | `1536m` | Workerコンテナのメモリ上限 |
+| `MEDIA_WORKER_TMPFS_SIZE` | `1536m` | Workerの平文一時領域の上限 |
+
+WorkerとPDFの並列数をともに増やすと、複数のOCR・変換プロセスが同時に動きます。Runtimeはプロセスごとにモデルを別々に読み込むため、`INFERENCE_WORKERS` を増やすとメモリとCPUの使用量が大きくなります。既定1プロセスの推論は引き続き直列で、Workerを増やしても推論が律速になることがあります。環境のCPU・メモリに合わせて段階的に調整し、実データで速度とメモリを確認してください。`INFERENCE_WORKERS` はCompose上でUvicornの `WEB_CONCURRENCY` に渡されます。Workerの並列数が範囲外の場合は起動に失敗します。
+
+変更を反映する例：
+
+```sh
+MEDIA_WORKER_CONCURRENCY=2 MEDIA_PDF_PAGE_CONCURRENCY=2 INFERENCE_WORKERS=1 docker compose up -d --build --wait worker runtime
+```
+
+停止時は実行中のJobをキャンセルし、リースを解放して実行回数を消費せず再試行へ戻します。突然の停止では従来どおりリース期限後に再実行します。処理結果・リース認可・チェックポイントは既存のJob単位で管理します。
+
+Worker・Transferを同じコードへ更新すると、新しいJobからこの経路を使います。DBマイグレーションや既存コンテンツの自動再処理はありません。完了済みの検索ベクトル・タグ・pHashは保持します。WebPへの変更による推論結果・pHashの差や、実データでの処理時間・精度は別途評価が必要です。
 
 解析画像の回帰テストは、全マイグレーションを適用した使い捨てDBで実行できます。PDFの検証にはFFmpeg・Poppler・Tesseract（英語・日本語データ）が必要です。画像の検証ではコーデックを無効にして、保存済みサムネイルだけでタグ・Embeddingが動くことを確認します。推論APIとTransferの保存・配信はテスト用の応答を使い、実モデル・S3の結合検証は既存のメディア試験で行います。
 
@@ -477,7 +533,11 @@ OCMS_TEST_DATABASE_URL='postgres://<user>:<password>@127.0.0.1:<port>/<test-db>?
 
 003まで適用済みのDBは、履歴がなければ `baseline 3` で引き継いでから `up` を実行し、004以降を適用します。推論チェックポイントを利用する前に更新を完了してください。
 
-PDFの任意ページは `/api/v1/assets/{assetId}/preview?page=2` で取得できます。再エンコード要求・一覧は `/api/v1/assets/{assetId}/renditions`、Job一覧は `/api/v1/assets/{assetId}/jobs`、個別状態は `/api/v1/jobs/{jobId}` です。派生ファイルも元Assetの最新ACLを確認して配信します。
+PDFの任意ページは `/api/v1/assets/{assetId}/preview?page=2` で取得できます。一覧用は `thumbnail=1` を付けるとWebPを優先し、未生成の場合はPNGへフォールバックします。再エンコード要求・一覧は `/api/v1/assets/{assetId}/renditions`、Job一覧は `/api/v1/assets/{assetId}/jobs`、個別状態は `/api/v1/jobs/{jobId}` です。派生ファイルも元Assetの最新ACLを確認して配信します。
+
+静的ファイルは内容ハッシュ付きの `/assets/` を1年間キャッシュし、HTMLやPDF.jsの固定URLはETagで毎回再検証します。静的ビルドはBFFの起動中に書き換えず、配備時にBFFを再作成してください。元ファイル・プレビュー・派生メディアは `private, no-cache` と `Vary: Cookie` でブラウザ内のキャッシュを許可します。再利用前に認証・最新ACLを確認し、ETagが一致すれば304を返して本文の再送・S3読み出し・復号を省きます。再検証の通信は毎回必要で、共有キャッシュとエラー応答の保存は許可しません。取得済み平文がブラウザに残ることはあります。詳細は仕様§5.6を参照してください。
+
+開発スタックで `python3 scripts/cache-integration.py` を実行すると、静的HTML・Viteの生成ファイルと、元ファイル・プレビュー・派生メディアのETag、Range、セッション・ACL失効・削除後の再検証を確認できます。生成したバイト列とDBに登録した派生レコードを使うため、コーデックや推論は検証しません。生成データをDB/S3へ残すので、初期設定の開発用環境で実行してください。
 
 Searchはファイル名・タグに加えて抽出本文をPGroongaで検索します。意味検索はnativeの画像・動画・音声ベクトルと抽出テキストのベクトルを使います。ハイブリッド検索はRRFで順位を統合します。候補生成後にCatalogへ一括認可を問い合わせ、ファイル名やタグはAsset単位で照合します。結果上限は200件、候補上限は1000 Blobです。大規模データのページング・再現率は別途評価が必要です。
 

@@ -55,3 +55,30 @@ func TestToolFailuresPreserveCauseWithoutContent(t *testing.T) {
 		t.Fatal("retry policy incorrect")
 	}
 }
+
+func TestConcurrencySettings(t *testing.T) {
+	for _, setting := range []struct {
+		name string
+		read func() (int, error)
+	}{
+		{"MEDIA_WORKER_CONCURRENCY", WorkerConcurrency},
+		{"MEDIA_PDF_PAGE_CONCURRENCY", PDFPageConcurrency},
+	} {
+		t.Setenv(setting.name, "")
+		if n, err := setting.read(); err != nil || n != 2 {
+			t.Fatalf("%s default: %d %v", setting.name, n, err)
+		}
+		for _, value := range []string{"1", "8"} {
+			t.Setenv(setting.name, value)
+			if _, err := setting.read(); err != nil {
+				t.Fatalf("%s valid %s: %v", setting.name, value, err)
+			}
+		}
+		for _, value := range []string{"0", "9", "invalid"} {
+			t.Setenv(setting.name, value)
+			if _, err := setting.read(); err == nil {
+				t.Fatalf("%s accepted %s", setting.name, value)
+			}
+		}
+	}
+}
