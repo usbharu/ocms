@@ -61,13 +61,13 @@ for (const width of [1440, 375, 320]) {
         }
         const ordered =
           state.insufficient || state.empty ? [] : (sessions.get(id) ?? items);
-        const offset = (Number(url.searchParams.get('page') ?? 1) - 1) * 24;
+        const offset = (Number(url.searchParams.get('page') ?? 1) - 1) * 200;
         return route.fulfill({
           json: {
             status: state.insufficient ? 'insufficient_information' : 'ready',
             session_id: id,
             total: ordered.length,
-            assets: ordered.slice(offset, offset + 24),
+            assets: ordered.slice(offset, offset + 200),
           },
         });
       }
@@ -103,11 +103,10 @@ for (const width of [1440, 375, 320]) {
     await expect(
       page.getByRole('button', { name: 'おすすめ1.png', exact: true }),
     ).toBeVisible();
-    await page.getByRole('button', { name: '次へ', exact: true }).click();
     await expect(
       page.getByRole('button', { name: 'おすすめ25.png', exact: true }),
     ).toBeVisible();
-    expect(calls.at(-1)?.searchParams.get('session_id')).toBe('session-1');
+    expect(generation).toBe(1);
     await page
       .getByRole('button', { name: 'おすすめ25.png', exact: true })
       .click();
@@ -118,7 +117,7 @@ for (const width of [1440, 375, 320]) {
     await expect(
       page.getByRole('button', { name: 'おすすめ25.png', exact: true }),
     ).toBeVisible();
-    expect(calls.at(-1)?.searchParams.get('session_id')).toBe('session-1');
+    expect(generation).toBe(1);
     await page.getByRole('button', { name: '更新', exact: true }).click();
     await expect(
       page.getByRole('button', { name: 'おすすめ2.png', exact: true }),
