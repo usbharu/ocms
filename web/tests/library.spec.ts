@@ -1167,6 +1167,8 @@ test('pinch zoom does not accidentally navigate, then a touch swipe changes file
     .getByRole('button', { name: 'ファイルを閲覧', exact: true })
     .click();
   const viewer = page.getByRole('dialog');
+  await expect(viewer).toBeVisible();
+  await expect(viewer.locator('.viewer-content img')).toBeVisible();
   const session = await page.context().newCDPSession(page);
   await session.send('Input.dispatchTouchEvent', {
     type: 'touchStart',
