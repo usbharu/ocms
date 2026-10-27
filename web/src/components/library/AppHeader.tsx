@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router';
 import { Button } from '../ui/button';
 
 export function AppHeader({
@@ -23,47 +24,31 @@ export function AppHeader({
 }) {
   return (
     <header className="app-header">
-      <a className="brand" href="/" aria-label="OCMS ホーム">
+      <Link className="brand" to="/library" aria-label="OCMS ホーム">
         <span aria-hidden="true">◈</span>
         <span className="brand-name">OCMS</span>
-      </a>
+      </Link>
       {authenticated && (
         <nav className="workspace-nav" aria-label="ワークスペース">
-          <Button
-            variant="ghost"
-            aria-current={section === 'library' ? 'page' : undefined}
-            onClick={() => onSectionChange?.('library')}
-          >
-            ライブラリ
-          </Button>
-          <Button
-            variant="ghost"
-            aria-current={section === 'tags' ? 'page' : undefined}
-            onClick={() => onSectionChange?.('tags')}
-          >
-            タグ
-          </Button>
-          <Button
-            variant="ghost"
-            aria-current={section === 'characters' ? 'page' : undefined}
-            onClick={() => onSectionChange?.('characters')}
-          >
-            キャラクター
-          </Button>
-          <Button
-            variant="ghost"
-            aria-current={section === 'favorites' ? 'page' : undefined}
-            onClick={() => onSectionChange?.('favorites')}
-          >
-            お気に入り
-          </Button>
-          <Button
-            variant="ghost"
-            aria-current={section === 'recommendations' ? 'page' : undefined}
-            onClick={() => onSectionChange?.('recommendations')}
-          >
-            おすすめ
-          </Button>
+          {(
+            [
+              ['library', 'ライブラリ'],
+              ['tags', 'タグ'],
+              ['characters', 'キャラクター'],
+              ['favorites', 'お気に入り'],
+              ['recommendations', 'おすすめ'],
+            ] as const
+          ).map(([id, label]) => (
+            <Button key={id} variant="ghost" asChild>
+              <Link
+                to={`/${id}`}
+                aria-current={section === id ? 'page' : undefined}
+                onClick={() => onSectionChange?.(id)}
+              >
+                {label}
+              </Link>
+            </Button>
+          ))}
         </nav>
       )}
       {authenticated && (

@@ -135,13 +135,16 @@ func (s *Service) parts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Keep parts until Catalog confirms completion; retries reuse the stored Blob.
-		if err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/uploads/"+u.ID+"/complete", r.Header.Get("X-Principal"), map[string]string{"blob_id": blob}, nil); err != nil {
+		var result struct {
+			AssetID string `json:"asset_id"`
+		}
+		if err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/uploads/"+u.ID+"/complete", r.Header.Get("X-Principal"), map[string]string{"blob_id": blob}, &result); err != nil {
 			platform.RespondError(w, err)
 			return
 		}
 		s.removeParts(r.Context(), conn, u.ID, parts)
 		platform.Audit(r.Context(), "transfer.stored", r.Header.Get("X-Principal"), u.AssetID)
-		platform.JSON(w, 200, map[string]string{"upload_id": u.ID, "asset_id": u.AssetID, "state": "completed"})
+		platform.JSON(w, 200, map[string]string{"upload_id": u.ID, "asset_id": result.AssetID, "state": "completed"})
 		return
 	}
 	number, err := strconv.Atoi(r.PathValue("part"))

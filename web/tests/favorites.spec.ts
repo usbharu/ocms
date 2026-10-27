@@ -61,7 +61,7 @@ for (const section of ['library', 'favorites']) {
     if (section === 'favorites')
       await page
         .getByRole('navigation', { name: 'ワークスペース' })
-        .getByRole('button', { name: 'お気に入り', exact: true })
+        .getByRole('link', { name: 'お気に入り', exact: true })
         .click();
     await page.getByRole('button', { name: '元.png', exact: true }).click();
     await page
@@ -171,7 +171,7 @@ for (const view of ['list', 'grid', 'detailed-grid']) {
     ).toBeVisible();
     await page
       .getByRole('navigation', { name: 'ワークスペース' })
-      .getByRole('button', { name: 'お気に入り', exact: true })
+      .getByRole('link', { name: 'お気に入り', exact: true })
       .click();
     for (const mode of ['keyword', 'semantic', 'hybrid']) {
       await page.getByRole('searchbox').fill('風景');
@@ -237,7 +237,7 @@ for (const view of ['list', 'grid', 'detailed-grid']) {
 test('removing the last favorite on a page corrects pagination and keeps detail focus', async ({
   page,
 }) => {
-  let items = Array.from({ length: 25 }, (_, i) => ({
+  let items = Array.from({ length: 201 }, (_, i) => ({
     asset_id: String(i),
     filename: `file-${i}.png`,
     mime_type: 'image/png',
@@ -245,6 +245,7 @@ test('removing the last favorite on a page corrects pagination and keeps detail 
     status: 'ready',
     is_favorite: true,
   }));
+  const allItems = [...items];
   await page.route('**/auth/config', (r) => r.fulfill({ json: {} }));
   await page.route('**/api/v1/**', async (r) => {
     const url = new URL(r.request().url());
@@ -257,30 +258,44 @@ test('removing the last favorite on a page corrects pagination and keeps detail 
     if (url.pathname === '/api/v1/assets') {
       const offset = Number(url.searchParams.get('offset'));
       return r.fulfill({
-        json: { assets: items.slice(offset, offset + 24), total: items.length },
+        json: {
+          assets: items.slice(offset, offset + 200),
+          total: items.length,
+        },
       });
     }
-    return r.fulfill({ json: { ...items[0], renditions: [], jobs: [] } });
+    return r.fulfill({
+      json: {
+        ...(allItems.find((asset) =>
+          url.pathname.endsWith(`/${asset.asset_id}`),
+        ) ?? items[0]),
+        is_favorite: items.some((asset) =>
+          url.pathname.endsWith(`/${asset.asset_id}`),
+        ),
+        renditions: [],
+        jobs: [],
+      },
+    });
   });
   await page.goto('/');
   await page
     .getByRole('navigation', { name: 'ワークスペース' })
-    .getByRole('button', { name: 'お気に入り', exact: true })
+    .getByRole('link', { name: 'お気に入り', exact: true })
     .click();
   await page.getByRole('button', { name: '次へ' }).click();
-  await page.getByRole('button', { name: 'file-24.png', exact: true }).click();
+  await page.getByRole('button', { name: 'file-200.png', exact: true }).click();
   const star = page
     .getByRole('region', { name: 'ファイル一覧' })
-    .getByRole('button', { name: 'file-24.png：お気に入りを解除' });
+    .getByRole('button', { name: 'file-200.png：お気に入りを解除' });
   await star.focus();
   await page.keyboard.press('Enter');
   await expect(
     page.getByRole('region', { name: 'ファイル一覧' }).locator('.file'),
-  ).toHaveCount(24);
+  ).toHaveCount(200);
   await expect(
     page
       .getByRole('region', { name: 'ファイル詳細' })
-      .getByRole('button', { name: 'file-24.png：お気に入りに登録' }),
+      .getByRole('button', { name: 'file-200.png：お気に入りに登録' }),
   ).toBeVisible();
   await page.getByRole('button', { name: '詳細を閉じる' }).click();
   await expect(
