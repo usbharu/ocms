@@ -116,3 +116,62 @@ func TestRecommendationsUseSearchAndSessionPrincipal(t *testing.T) {
 		t.Fatal("anonymous request reached Search")
 	}
 }
+
+func TestMediaCachingPreservesSessionBoundary(t *testing.T) {
+	t.Setenv("AUTH_MODE", "development")
+	t.Setenv("PUBLIC_URL", "http://localhost:8080")
+	status := 200
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("Cookie") != "" || r.Header.Get("X-Principal") != "reader" || r.Header.Get("If-None-Match") != `"cached"` {
+			t.Error("media proxy lost authorization or validator boundary")
+		}
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("ETag", `"cached"`)
+		w.WriteHeader(status)
+	}))
+	defer upstream.Close()
+	t.Setenv("TRANSFER_URL", upstream.URL)
+	s, err := New(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sessions["session"] = session{Principal: "reader", Expiry: time.Now().Add(time.Hour)}
+	s.sessions["expired"] = session{Principal: "reader", Expiry: time.Now().Add(-time.Hour)}
+	handler := s.Handler(fstest.MapFS{})
+	for _, path := range []string{"/api/v1/assets/a/content", "/api/v1/assets/a/preview?page=2", "/api/v1/assets/a/renditions/r/content"} {
+		for _, code := range []int{200, 206, 304, 404, 503} {
+			status = code
+			r := httptest.NewRequest("GET", path, nil)
+			r.AddCookie(&http.Cookie{Name: "ocms_session", Value: "session"})
+			r.Header.Set("If-None-Match", `"cached"`)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			policy := "private, no-cache"
+			if code >= 400 {
+				policy = "private, no-store"
+			}
+			if w.Code != code || len(w.Header().Values("Cache-Control")) != 1 || w.Header().Get("Cache-Control") != policy {
+				t.Fatalf("unexpected media response: %d %v", w.Code, w.Header())
+			}
+			if code < 400 && w.Header().Get("Vary") != "Cookie" {
+				t.Fatal("media cache must vary by session cookie")
+			}
+		}
+	}
+	before := calls
+	for _, cookie := range []string{"", "expired"} {
+		r := httptest.NewRequest("GET", "/api/v1/assets/a/content", nil)
+		r.Header.Set("If-None-Match", `"cached"`)
+		r.AddCookie(&http.Cookie{Name: "ocms_session", Value: cookie})
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != 401 || w.Header().Get("Cache-Control") != "private, no-store" {
+			t.Fatal("cached validator bypassed session authentication")
+		}
+	}
+	if calls != before {
+		t.Fatal("unauthenticated revalidation reached Transfer")
+	}
+}

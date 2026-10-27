@@ -224,10 +224,29 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var assetID, state string
+	duplicateFound := false
 	err = tx.QueryRow(r.Context(), `SELECT u.asset_id,u.state FROM catalog.upload_sessions u JOIN catalog.assets a ON a.id=u.asset_id WHERE u.id=$1 AND a.owner_id=$2 AND a.deleted_at IS NULL AND (u.expires_at>now() OR u.state='completed') FOR UPDATE OF u,a`, r.PathValue("id"), user(r)).Scan(&assetID, &state)
 	if errors.Is(err, pgx.ErrNoRows) {
 		platform.Error(w, 404, "NOT_FOUND")
 		return
+	}
+	if err == nil && state != "completed" {
+		// Serialize completions for this owner's Blob, including uploads with the same name.
+		_, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,2))`, user(r)+":"+in.BlobID)
+		if err == nil {
+			var duplicate string
+			err = tx.QueryRow(r.Context(), `SELECT existing.id FROM catalog.assets current JOIN catalog.assets existing ON existing.owner_id=current.owner_id AND existing.filename=current.filename AND existing.deleted_at IS NULL JOIN catalog.asset_originals o ON o.asset_id=existing.id AND o.blob_id=$2 WHERE current.id=$1 AND existing.id<>current.id ORDER BY existing.created_at,existing.id LIMIT 1`, assetID, in.BlobID).Scan(&duplicate)
+			if errors.Is(err, pgx.ErrNoRows) {
+				err = nil
+			} else if err == nil {
+				_, err = tx.Exec(r.Context(), `UPDATE catalog.upload_sessions SET asset_id=$2 WHERE id=$1`, r.PathValue("id"), duplicate)
+				if err == nil {
+					_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=$1`, assetID)
+				}
+				assetID = duplicate
+				duplicateFound = true
+			}
+		}
 	}
 	if err == nil && state == "completed" {
 		var existing string
@@ -243,7 +262,7 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE catalog.upload_sessions SET state='completed' WHERE id=$1`, r.PathValue("id"))
 	}
-	if err == nil {
+	if err == nil && state != "completed" && !duplicateFound {
 		_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='stored',updated_at=now() WHERE id=$1`, assetID)
 	}
 	if err == nil {

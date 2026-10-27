@@ -83,7 +83,7 @@ export const kinds: { id: Kind; label: string }[] = [
   { id: 'audio', label: '音声' },
   { id: 'document', label: 'PDF・その他' },
 ];
-export const pageSize = 24;
+export const pageSize = 200;
 export const allFiles: SearchContext = { mode: 'keyword', query: '' };
 
 export function kindOf(asset: Asset): Kind {

@@ -42,6 +42,17 @@ cipher_info = json.loads(compose('exec', '-T', 'transfer', 'ocms', 'ciphertext-i
 assert cipher_info['size_bytes'] == len(body)
 assert cipher_info['sha256'] != hashlib.sha256(body).hexdigest()
 check('actual S3 object contains same-length ciphertext')
+# Same owner, name and content resolve to one Asset even under concurrency.
+matching = [a.create(name + '.png', body) for _ in range(4)]
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(lambda item: a.call('PUT', f"/api/v1/uploads/{item['upload_id']}/content", body)[2], matching))
+assert all(result['asset_id'] == u['asset_id'] for result in results)
+assert all(a.call('GET', f"/api/v1/uploads/{item['upload_id']}")[2]['asset_id'] == u['asset_id'] for item in matching)
+other = b.create(name + '.png', body)
+assert b.call('PUT', f"/api/v1/uploads/{other['upload_id']}/content", body)[2]['asset_id'] == other['asset_id']
+different = a.create(name + '.png', body + b'x')
+assert a.call('PUT', f"/api/v1/uploads/{different['upload_id']}/content", body + b'x')[2]['asset_id'] == different['asset_id']
+check('same-owner exact duplicates reuse an Asset; other owners and different content remain separate')
 # Independent users upload the same bytes concurrently.
 sessions = [(a if i % 2 == 0 else b, (a if i % 2 == 0 else b).create(name + f'-copy-{i}.png', body)) for i in range(8)]
 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
