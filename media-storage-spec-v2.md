@@ -553,9 +553,9 @@ Blob削除は参照管理と分離して行い、参照がゼロになったBlob
 | 動画 | MP4 / H.264 + AAC、`+faststart` | ブラウザでの再生・シーク |
 | 動画 | MP4 1080p/720pなど（任意） | **手動**画質切替 |
 | 音声 | Opus、AAC（任意） | 再生互換性・圧縮効率 |
-| PDF | 長辺1600pxのページプレビュー、長辺512pxの解析サムネイル | プレビュー・OCR／pHash・タグ・画像Embedding |
+| PDF | 長辺1600pxのPNGページプレビュー、最大512pxのWebPサムネイル | プレビュー・OCR／一覧・pHash・タグ・画像Embedding |
 
-画像のタグ・画像Embeddingは保存済みの `thumbnail-v1` を使う。PDFは初回解析時にページプレビュー `pdf.page-{page}-v1` と解析サムネイル `pdf.thumbnail-{page}-v1` を暗号化保存し、pHash・タグ・画像Embeddingで同じ縮小画像を使う。本文は全ページを一度に抽出し、改ページ区切りから白紙ページを含むページ番号を保持する。描画は最大8ページずつ実行し、OCRには1600pxプレビューを使う。プレビューは各ページの処理後に削除し、一時領域に全ページを保持しない。既存PDFに解析サムネイルがない場合は保存済みプレビューを512pxへ縮小し、元PDFを再描画しない。画像・動画はサムネイルを再エンコードより先に保存する。動画のpHash・タグ・Embeddingはそれぞれの時間サンプリングを維持し、入力シークで縮小フレームを抽出する。元ファイルの完全一致判定用SHA-256は変更しない。
+新規の画像とPDFは、一覧・pHash・タグ・画像Embeddingで共用するWebPサムネイルを暗号化保存する。最大512pxから始め、80,000バイト未満を目標に解像度を保ち画質を段階的に下げる。目標は保証値ではなく、非可逆圧縮による解析結果の変化を伴う。画像のOCRは保存前のPNGを使う。PDFは1600pxのPNGページプレビューを保存し、OCRに利用する。先頭ページを先に描画し、残りは最大8ページずつ描画する。本文は全ページを一度に抽出し、改ページから白紙ページを含むページ番号を保持する。ページプレビューは各ページの処理後に削除し、一時領域に全ページを保持しない。既存のPNGサムネイルを引き続き読み、既存PDFで解析サムネイルがない場合は保存済みプレビューを512pxへ縮小する。画像・動画はサムネイルを再エンコードより先に保存する。動画のpHash・タグ・Embeddingはそれぞれの時間サンプリングを維持し、入力シークで縮小フレームを抽出する。元ファイルの完全一致判定用SHA-256は変更しない。
 
 Workerは派生画像を `GET /internal/blobs/{sourceBlobId}/content?rendition={outputBlobId}` でTransferから取得する。Transferは復号前に `POST /internal/jobs/{jobId}/authorize` へ `blob_id`・`lease_token` と任意の `rendition_blob_id` を送り、Workerは実行中Jobの対象Blob・リース・期限と、その元Blobに属する派生Blobであることを確認する。Workerに鍵・S3資格情報は渡さない。テーブル変更・既存Jobの自動再実行は伴わない。
 
@@ -650,7 +650,7 @@ Workerはジョブ入力をTransferから復号取得する。FFmpegのシーク
 | `DELETE` | `/api/v1/assets/{assetId}/favorite` | 自分のお気に入りを解除（閲覧権限、204） |
 | `GET` | `/api/v1/assets/{assetId}/content` | 元ファイルの復号配信（Range可） |
 | `HEAD` | `/api/v1/assets/{assetId}/content` | サイズ/MIME/Range情報 |
-| `GET` | `/api/v1/assets/{assetId}/preview` | プレビュー |
+| `GET` | `/api/v1/assets/{assetId}/preview` | プレビュー。PDFの `page` はページ番号、`thumbnail=1` は一覧用WebPを優先し、未生成ならPNGへフォールバック |
 | `GET` | `/api/v1/tags?q={tagName}` | 認可済みAssetのタグ・被リンク数・共起グラフ |
 | `PATCH` | `/api/v1/assets/{assetId}` | ファイル名/タグ等更新 |
 | `DELETE` | `/api/v1/assets/{assetId}` | 論理削除 |

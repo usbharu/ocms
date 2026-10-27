@@ -176,6 +176,13 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 	if err := s.processPDF(ctx, j, input, dir, &index, metadata); err != nil {
 		t.Fatal(err)
 	}
+	var analysisPNG, sharedWebP int
+	if err := s.DB.QueryRow(ctx, `SELECT count(*) FILTER (WHERE profile_id LIKE 'pdf.thumbnail-%'), count(*) FILTER (WHERE profile_id LIKE 'pdf.display-%' AND mime_type='image/webp') FROM media.renditions WHERE source_blob_id=$1`, j.BlobID).Scan(&analysisPNG, &sharedWebP); err != nil {
+		t.Fatal(err)
+	}
+	if analysisPNG != 0 || sharedWebP != 3 {
+		t.Fatalf("unexpected PDF thumbnail renditions: PNG=%d WebP=%d", analysisPNG, sharedWebP)
+	}
 	if len(index.Hashes) != 3 || len(index.Passages) != 2 || *index.Passages[0].Page != 1 || *index.Passages[1].Page != 3 || !strings.Contains(index.Passages[1].Content, "THIRD PAGE") {
 		t.Fatal("page attribution or hashes lost")
 	}
@@ -187,9 +194,9 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		width, height, err := imageDimensions(path)
-		if err != nil || max(width, height) != 512 {
-			t.Fatalf("invalid analysis size %dx%d: %v", width, height, err)
+		info, err := probe(ctx, path)
+		if err != nil || len(info.Streams) == 0 || max(info.Streams[0].Width, info.Streams[0].Height) != 512 {
+			t.Fatalf("invalid analysis image: %v", err)
 		}
 	}
 	// Downstream Jobs consume only the stored thumbnails, never the original.
@@ -221,9 +228,8 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 					w.WriteHeader(400)
 					return
 				}
-				cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-				if err != nil || max(cfg.Width, cfg.Height) != 512 {
-					t.Error("inference received full size preview")
+				if len(data) < 12 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WEBP" || len(data) >= 80000 {
+					t.Error("inference did not receive a compact WebP")
 					w.WriteHeader(400)
 					return
 				}
@@ -270,7 +276,7 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 		t.Fatalf("inference or checkpoint reuse incorrect: encodes=%d tags=%d", encodes, tags)
 	}
 	// Legacy PDFs use existing previews and never rerender the PDF.
-	if _, err := s.DB.Exec(ctx, `DELETE FROM media.renditions WHERE source_blob_id=$1 AND profile_id LIKE 'pdf.thumbnail-%'`, j.BlobID); err != nil {
+	if _, err := s.DB.Exec(ctx, `DELETE FROM media.renditions WHERE source_blob_id=$1 AND profile_id LIKE 'pdf.display-%'`, j.BlobID); err != nil {
 		t.Fatal(err)
 	}
 	path, err := s.analysisImage(ctx, j, dir, 3)
@@ -288,7 +294,7 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(calls), "pdftotext\n") != 1 || strings.Count(string(calls), "pdftoppm\n") != 1 || strings.Count(string(calls), "tesseract\n") != 1 {
+	if strings.Count(string(calls), "pdftotext\n") != 1 || strings.Count(string(calls), "pdftoppm\n") != 2 || strings.Count(string(calls), "tesseract\n") != 1 {
 		t.Fatalf("unexpected subprocess counts: %s", calls)
 	}
 }
@@ -376,7 +382,7 @@ func TestPDFRenderBatches(t *testing.T) {
 	if err := os.WriteFile(input, analysisTestPDF(make([]string, 12)...), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, interval := range [][2]int{{1, 8}, {9, 12}} {
+	for _, interval := range [][2]int{{1, 1}, {2, 9}, {10, 12}} {
 		images, err := renderPDFBatch(context.Background(), input, dir, interval[0], interval[1])
 		if err != nil {
 			t.Fatal(err)
@@ -394,5 +400,103 @@ func TestPDFRenderBatches(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+func TestAnalysisResizePreservesPixels(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("requires FFmpeg")
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.png")
+	f, err := os.Create(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 800, 400))
+	for y := 0; y < 400; y++ {
+		for x := 0; x < 800; x++ {
+			i := img.PixOffset(x, y)
+			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = byte(x), byte(y), byte(x+y), byte((x+y)%256)
+		}
+	}
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	oldPath, newPath := filepath.Join(dir, "old.png"), filepath.Join(dir, "new.png")
+	ctx := context.Background()
+	if err := ffmpeg(ctx, source, oldPath, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
+		t.Fatal(err)
+	}
+	if err := resizeAnalysisImage(ctx, source, newPath); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(path string) image.Image {
+		t.Helper()
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		img, err := png.Decode(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return img
+	}
+	old, resized := decode(oldPath), decode(newPath)
+	if old.Bounds() != resized.Bounds() || max(resized.Bounds().Dx(), resized.Bounds().Dy()) != 512 {
+		t.Fatal("thumbnail dimensions changed")
+	}
+	for y := old.Bounds().Min.Y; y < old.Bounds().Max.Y; y++ {
+		for x := old.Bounds().Min.X; x < old.Bounds().Max.X; x++ {
+			if old.At(x, y) != resized.At(x, y) {
+				t.Fatalf("thumbnail pixel differs at %d,%d", x, y)
+			}
+		}
+	}
+}
+
+func TestDisplayThumbnailWebP(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("requires FFmpeg")
+	}
+	dir := t.TempDir()
+	input, output := filepath.Join(dir, "input.png"), filepath.Join(dir, "display.webp")
+	img := image.NewNRGBA(image.Rect(0, 0, 512, 512))
+	var state uint32 = 1
+	for i := 0; i < len(img.Pix); i++ {
+		state = state*1664525 + 1013904223
+		img.Pix[i] = byte(state >> 24)
+	}
+	file, err := os.Create(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := displayThumbnail(context.Background(), input, output); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) < 12 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+		t.Fatalf("invalid WebP: %d bytes", len(data))
+	}
+	if len(data) < 80000 {
+		t.Fatal("test image did not exercise the size target overflow")
+	}
+	info, err := probe(context.Background(), output)
+	if err != nil || len(info.Streams) == 0 || info.Streams[0].Width != 512 || info.Streams[0].Height != 512 {
+		t.Fatalf("resolution changed: %v", err)
 	}
 }

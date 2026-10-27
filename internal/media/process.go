@@ -246,10 +246,14 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 		switch {
 		case strings.HasPrefix(mime, "image/"):
 			frame := filepath.Join(dir, "image.png")
-			if err = ffmpeg(ctx, input, frame, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
+			if err = resizeAnalysisImage(ctx, input, frame); err != nil {
 				return err
 			}
-			if err = s.storeOutput(ctx, j, frame, "thumbnail-v1", "image/png"); err != nil {
+			display := filepath.Join(dir, "display.webp")
+			if err = displayThumbnail(ctx, frame, display); err != nil {
+				return err
+			}
+			if err = s.storeOutput(ctx, j, display, "thumbnail.display-v1", "image/webp"); err != nil {
 				return err
 			}
 			out := filepath.Join(dir, "image.webp")
@@ -259,7 +263,7 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 			if err = s.storeOutput(ctx, j, out, "image.webp-v1", "image/webp"); err != nil {
 				return err
 			}
-			h, e := hashImage(ctx, frame)
+			h, e := hashImage(ctx, display)
 			if e != nil {
 				return e
 			}
@@ -373,9 +377,13 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 	textPages := bufio.NewReader(textFile)
 	var images map[int]string
 	for p := 1; p <= pages; p++ {
-		// Amortize PDF parsing and process startup while bounding tmpfs usage.
-		if (p-1)%8 == 0 {
-			images, err = renderPDFBatch(ctx, input, dir, p, min(p+7, pages))
+		// Save the first page promptly, then amortize parsing in bounded batches.
+		if p == 1 || (p-2)%8 == 0 {
+			last := p
+			if p > 1 {
+				last = min(p+7, pages)
+			}
+			images, err = renderPDFBatch(ctx, input, dir, p, last)
 			if err != nil {
 				return err
 			}
@@ -384,14 +392,14 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 		if err = s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", p), "image/png"); err != nil {
 			return err
 		}
-		thumbnail := filepath.Join(dir, "thumbnail.png")
-		if err = resizeAnalysisImage(ctx, imagePath, thumbnail); err != nil {
+		display := filepath.Join(dir, "display.webp")
+		if err = displayThumbnail(ctx, imagePath, display); err != nil {
 			return err
 		}
-		if err = s.storeOutput(ctx, j, thumbnail, fmt.Sprintf("pdf.thumbnail-%d-v1", p), "image/png"); err != nil {
+		if err = s.storeOutput(ctx, j, display, fmt.Sprintf("pdf.display-%d-v1", p), "image/webp"); err != nil {
 			return err
 		}
-		h, e := hashImage(ctx, thumbnail)
+		h, e := hashImage(ctx, display)
 		if e != nil {
 			return e
 		}
