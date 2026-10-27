@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ocms/internal/contracts"
@@ -372,62 +373,128 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 		return processingError("OUTPUT_TOO_LARGE")
 	}
 	textPages := bufio.NewReader(textFile)
-	var images map[int]string
-	for p := 1; p <= pages; p++ {
-		// Save the first page promptly, then amortize parsing in bounded batches.
-		if p == 1 || (p-2)%8 == 0 {
-			last := p
-			if p > 1 {
-				last = min(p+7, pages)
-			}
-			images, err = renderPDFBatch(ctx, input, dir, p, last)
-			if err != nil {
-				return err
-			}
+	for first := 1; first <= pages; {
+		last := first
+		if first > 1 {
+			last = min(first+7, pages)
 		}
-		rendered := images[p]
-		imagePath := filepath.Join(dir, "preview.png")
-		display := filepath.Join(dir, "display.webp")
-		if err = previewAndThumbnail(ctx, rendered, imagePath, display, false); err != nil {
-			return err
-		}
-		if err = os.Remove(rendered); err != nil {
-			return err
-		}
-		if err = s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", p), "image/png"); err != nil {
-			return err
-		}
-		if err = s.storeOutput(ctx, j, display, fmt.Sprintf("pdf.display-%d-v1", p), "image/webp"); err != nil {
-			return err
-		}
-		h, e := hashImage(ctx, display)
-		if e != nil {
-			return e
-		}
-		page := p
-		index.Hashes = append(index.Hashes, contracts.Hash{Kind: "pdf_page", Ordinal: p - 1, Page: &page, Hash: h})
-		text, err := readPDFTextPage(textPages)
+		images, err := renderPDFBatch(ctx, input, dir, first, last)
 		if err != nil {
 			return err
 		}
-		content := text
-		kind := "pdf_text"
-		if content == "" {
-			content, err = ocr(ctx, imagePath)
-			kind = "ocr"
+		batch := make([]pdfPage, last-first+1)
+		for i := range batch {
+			page := first + i
+			text, err := readPDFTextPage(textPages)
 			if err != nil {
 				return err
 			}
+			batch[i] = pdfPage{number: page, total: pages, rendered: images[page], text: text}
 		}
-		if content != "" {
-			index.Passages = append(index.Passages, contracts.Passage{Kind: kind, Ordinal: p - 1, Page: &page, Content: content})
-		}
-		if err = os.Remove(imagePath); err != nil {
+		results := make([]pdfPageResult, len(batch))
+		if err := runPDFBatch(ctx, len(batch), func(ctx context.Context, i int) error {
+			result, err := s.processPDFPage(ctx, j, dir, batch[i])
+			results[i] = result
+			return err
+		}); err != nil {
 			return err
 		}
-		slog.InfoContext(ctx, "media.pdf_page_completed", "job_id", j.ID, "page", p, "pages", pages)
+		for _, result := range results {
+			index.Hashes = append(index.Hashes, result.hash)
+			if result.passage != nil {
+				index.Passages = append(index.Passages, *result.passage)
+			}
+		}
+		first = last + 1
 	}
 	return nil
+}
+
+type pdfPage struct {
+	number, total  int
+	rendered, text string
+}
+
+type pdfPageResult struct {
+	hash    contracts.Hash
+	passage *contracts.Passage
+}
+
+// Two pages bound CPU and memory use under the default worker limits.
+func runPDFBatch(ctx context.Context, count int, process func(context.Context, int) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan int, count)
+	for i := 0; i < count; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	var wg sync.WaitGroup
+	var once sync.Once
+	var firstErr error
+	for range min(count, 2) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := process(ctx, i); err != nil {
+					once.Do(func() { firstErr = err; cancel() })
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	return ctx.Err()
+}
+
+func (s *Service) processPDFPage(ctx context.Context, j contracts.Job, dir string, page pdfPage) (pdfPageResult, error) {
+	var result pdfPageResult
+	imagePath := filepath.Join(dir, fmt.Sprintf("preview-%d.png", page.number))
+	display := filepath.Join(dir, fmt.Sprintf("display-%d.webp", page.number))
+	if err := previewAndThumbnail(ctx, page.rendered, imagePath, display, false); err != nil {
+		return result, err
+	}
+	if err := os.Remove(page.rendered); err != nil {
+		return result, err
+	}
+	if err := s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", page.number), "image/png"); err != nil {
+		return result, err
+	}
+	if err := s.storeOutput(ctx, j, display, fmt.Sprintf("pdf.display-%d-v1", page.number), "image/webp"); err != nil {
+		return result, err
+	}
+	h, err := hashImage(ctx, display)
+	if err != nil {
+		return result, err
+	}
+	number := page.number
+	result.hash = contracts.Hash{Kind: "pdf_page", Ordinal: number - 1, Page: &number, Hash: h}
+	content, kind := page.text, "pdf_text"
+	if content == "" {
+		content, err = ocr(ctx, imagePath)
+		kind = "ocr"
+		if err != nil {
+			return result, err
+		}
+	}
+	if content != "" {
+		result.passage = &contracts.Passage{Kind: kind, Ordinal: number - 1, Page: &number, Content: content}
+	}
+	if err = os.Remove(imagePath); err != nil {
+		return result, err
+	}
+	if err = os.Remove(display); err != nil {
+		return result, err
+	}
+	slog.InfoContext(ctx, "media.pdf_page_completed", "job_id", j.ID, "page", number, "pages", page.total)
+	return result, nil
 }
 
 // Preserve page boundaries without allowing a single page to allocate the

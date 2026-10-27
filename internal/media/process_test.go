@@ -3,12 +3,15 @@ package media
 import (
 	"bufio"
 	"context"
+	"errors"
 	"math/bits"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestPHashBrightnessInvariance(t *testing.T) {
@@ -78,5 +81,67 @@ func TestFFmpegSeekBeforeInput(t *testing.T) {
 	}
 	if !strings.Contains(string(args), "-ss\n7.500\n-i\nsource\n") {
 		t.Fatalf("seek must precede the input: %s", args)
+	}
+}
+
+func TestPDFBatchConcurrencyAndCancellation(t *testing.T) {
+	started := make(chan int, 8)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	var active, peak atomic.Int32
+	go func() {
+		done <- runPDFBatch(context.Background(), 8, func(ctx context.Context, page int) error {
+			n := active.Add(1)
+			for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+			}
+			started <- page
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			active.Add(-1)
+			return ctx.Err()
+		})
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("two pages did not start")
+		}
+	}
+	if peak.Load() != 2 || active.Load() != 2 {
+		t.Fatal("batch did not enforce the two-page limit")
+	}
+	close(release)
+	if err := <-done; err != nil || peak.Load() != 2 {
+		t.Fatalf("batch failed or exceeded concurrency: %v", err)
+	}
+
+	failure := errors.New("page failed")
+	blocked := make(chan struct{})
+	cancelled := make(chan struct{})
+	err := runPDFBatch(context.Background(), 8, func(ctx context.Context, page int) error {
+		if page == 0 {
+			<-blocked
+			return failure
+		}
+		close(blocked)
+		<-ctx.Done()
+		close(cancelled)
+		return ctx.Err()
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("lost page failure: %v", err)
+	}
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("in-flight page was not cancelled")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := runPDFBatch(ctx, 3, func(context.Context, int) error { t.Error("cancelled work started"); return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation not propagated: %v", err)
 	}
 }

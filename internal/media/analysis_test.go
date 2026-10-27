@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -148,6 +149,7 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 	}
 	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stored := map[string][]byte{}
+	var storedMu sync.Mutex
 	transfer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Job-ID") != j.ID || r.Header.Get("X-Job-Lease") != j.Lease {
 			t.Error("missing Job lease")
@@ -157,11 +159,15 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 		if r.Method == "POST" {
 			data, _ := io.ReadAll(r.Body)
 			id := uuid.NewString()
+			storedMu.Lock()
 			stored[id] = data
+			storedMu.Unlock()
 			platform.JSON(w, 200, map[string]string{"blob_id": id})
 			return
 		}
+		storedMu.Lock()
 		data, ok := stored[r.URL.Query().Get("rendition")]
+		storedMu.Unlock()
 		if !ok {
 			t.Error("unexpected original download or missing rendition")
 			w.WriteHeader(404)
@@ -185,6 +191,11 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 	}
 	if len(index.Hashes) != 3 || len(index.Passages) != 2 || *index.Passages[0].Page != 1 || *index.Passages[1].Page != 3 || !strings.Contains(index.Passages[1].Content, "THIRD PAGE") {
 		t.Fatal("page attribution or hashes lost")
+	}
+	for i, hash := range index.Hashes {
+		if hash.Ordinal != i || hash.Page == nil || *hash.Page != i+1 {
+			t.Fatal("parallel hashes are not ordered by page")
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "page-3.ppm")); !os.IsNotExist(err) {
 		t.Fatal("page image retained")
