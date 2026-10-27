@@ -90,7 +90,7 @@ func TestPDFBatchConcurrencyAndCancellation(t *testing.T) {
 	done := make(chan error, 1)
 	var active, peak atomic.Int32
 	go func() {
-		done <- runPDFBatch(context.Background(), 8, func(ctx context.Context, page int) error {
+		done <- runPDFBatch(context.Background(), 8, 2, func(ctx context.Context, page int) error {
 			n := active.Add(1)
 			for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
 			}
@@ -121,7 +121,7 @@ func TestPDFBatchConcurrencyAndCancellation(t *testing.T) {
 	failure := errors.New("page failed")
 	blocked := make(chan struct{})
 	cancelled := make(chan struct{})
-	err := runPDFBatch(context.Background(), 8, func(ctx context.Context, page int) error {
+	err := runPDFBatch(context.Background(), 8, 2, func(ctx context.Context, page int) error {
 		if page == 0 {
 			<-blocked
 			return failure
@@ -141,7 +141,41 @@ func TestPDFBatchConcurrencyAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := runPDFBatch(ctx, 3, func(context.Context, int) error { t.Error("cancelled work started"); return nil }); !errors.Is(err, context.Canceled) {
+	if err := runPDFBatch(ctx, 3, 2, func(context.Context, int) error { t.Error("cancelled work started"); return nil }); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation not propagated: %v", err)
+	}
+}
+
+func TestPDFBatchUsesConfiguredConcurrency(t *testing.T) {
+	for _, limit := range []int{1, 3} {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
+			started := make(chan struct{}, 6)
+			release := make(chan struct{})
+			done := make(chan error, 1)
+			var active, peak atomic.Int32
+			go func() {
+				done <- runPDFBatch(context.Background(), 6, limit, func(ctx context.Context, _ int) error {
+					n := active.Add(1)
+					for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+					}
+					started <- struct{}{}
+					<-release
+					active.Add(-1)
+					return nil
+				})
+			}()
+			for range limit {
+				select {
+				case <-started:
+				case <-time.After(5 * time.Second):
+					close(release)
+					t.Fatal("configured number of pages did not start")
+				}
+			}
+			close(release)
+			if err := <-done; err != nil || peak.Load() != int32(limit) {
+				t.Fatalf("expected peak %d, got %d: %v", limit, peak.Load(), err)
+			}
+		})
 	}
 }

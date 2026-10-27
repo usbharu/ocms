@@ -392,7 +392,11 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 			batch[i] = pdfPage{number: page, total: pages, rendered: images[page], text: text}
 		}
 		results := make([]pdfPageResult, len(batch))
-		if err := runPDFBatch(ctx, len(batch), func(ctx context.Context, i int) error {
+		concurrency := s.PDFPageConcurrency
+		if concurrency < 1 {
+			concurrency = 2
+		}
+		if err := runPDFBatch(ctx, len(batch), concurrency, func(ctx context.Context, i int) error {
 			result, err := s.processPDFPage(ctx, j, dir, batch[i])
 			results[i] = result
 			return err
@@ -420,8 +424,8 @@ type pdfPageResult struct {
 	passage *contracts.Passage
 }
 
-// Two pages bound CPU and memory use under the default worker limits.
-func runPDFBatch(ctx context.Context, count int, process func(context.Context, int) error) error {
+// The configured limit bounds concurrent page conversions and OCR.
+func runPDFBatch(ctx context.Context, count, concurrency int, process func(context.Context, int) error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	jobs := make(chan int, count)
@@ -432,7 +436,7 @@ func runPDFBatch(ctx context.Context, count int, process func(context.Context, i
 	var wg sync.WaitGroup
 	var once sync.Once
 	var firstErr error
-	for range min(count, 2) {
+	for range min(count, concurrency) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

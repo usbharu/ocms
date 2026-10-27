@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,6 +22,8 @@ import (
 
 type Service struct {
 	SemanticSearchDisabled             bool
+	Concurrency, PDFPageConcurrency    int
+	pollMu, stateMu                    sync.Mutex
 	DB                                 *pgxpool.Pool
 	Catalog, Transfer, Search, Runtime string
 }
@@ -180,38 +183,39 @@ func (s *Service) assetJobs(w http.ResponseWriter, r *http.Request) {
 	platform.JSON(w, 200, map[string]any{"jobs": jobs})
 }
 func (s *Service) Run(ctx context.Context) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	for {
-		if err := s.tick(ctx); err != nil && ctx.Err() == nil {
-			slog.WarnContext(ctx, "media.queue_retry")
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
+	count := s.Concurrency
+	if count < 1 {
+		count = 1
 	}
+	runWorkerPool(ctx, count, s.tick)
 }
-func (s *Service) tick(ctx context.Context) error {
-	if _, err := s.DB.Exec(ctx, `UPDATE media.processing_jobs SET status='failed',error_code='LEASE_EXHAUSTED',locked_until=NULL WHERE status='running' AND locked_until<now() AND attempts>=4 AND (NOT $1::boolean OR job_type<>'embedding.generate')`, s.SemanticSearchDisabled); err != nil {
-		return err
-	}
 
-	var events struct {
-		Events []contracts.Event `json:"events"`
+func runWorkerPool(ctx context.Context, count int, tick func(context.Context) error) {
+	var workers sync.WaitGroup
+	for range count {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for ctx.Err() == nil {
+				if err := tick(ctx); err != nil && ctx.Err() == nil {
+					slog.WarnContext(ctx, "media.queue_retry")
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
 	}
-	if err := platform.Call(ctx, "GET", s.Catalog+"/internal/events", "", nil, &events); err != nil {
+	workers.Wait()
+}
+
+func (s *Service) tick(ctx context.Context) error {
+	if err := s.pollEvents(ctx); err != nil {
 		return err
-	}
-	for _, event := range events.Events {
-		_, err := s.DB.Exec(ctx, `INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type,traceparent) VALUES($1,$2,'media.process',$3) ON CONFLICT DO NOTHING`, event.ID, event.BlobID, event.Traceparent)
-		if err != nil {
-			return err
-		}
-		if err = platform.Call(ctx, "POST", s.Catalog+"/internal/events/"+event.ID+"/ack", "", nil, nil); err != nil {
-			return err
-		}
 	}
 	j, err := s.claim(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -237,7 +241,7 @@ func (s *Service) tick(ctx context.Context) error {
 	} else {
 		err = s.embed(jobCtx, j)
 	}
-	finishCtx, finishCancel := context.WithTimeout(ctx, 10*time.Second)
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer finishCancel()
 	if err != nil {
 		if jobCtx.Err() != nil {
@@ -248,10 +252,11 @@ func (s *Service) tick(ctx context.Context) error {
 			slog.WarnContext(jobCtx, "media.transcode_failed", "job_id", j.ID, "error_code", errorCode(err), "outcome", "failed")
 		}
 		status := "retry"
-		if j.Attempts >= 4 || !retryable(err) {
+		shutdown := ctx.Err() != nil && errors.Is(err, context.Canceled)
+		if !shutdown && (j.Attempts >= 4 || !retryable(err)) {
 			status = "failed"
 		}
-		_, e := s.DB.Exec(finishCtx, `UPDATE media.processing_jobs SET status=$3,error_code=$4,locked_until=NULL,available_at=now()+($5*interval '1 second'),updated_at=now() WHERE id=$1 AND lease_token=$2`, j.ID, j.Lease, status, errorCode(err), j.Attempts*j.Attempts*5)
+		_, e := s.DB.Exec(finishCtx, `UPDATE media.processing_jobs SET status=$3,error_code=$4,locked_until=NULL,available_at=now()+($5*interval '1 second'),attempts=CASE WHEN $6 THEN GREATEST(attempts-1,0) ELSE attempts END,updated_at=now() WHERE id=$1 AND lease_token=$2`, j.ID, j.Lease, status, errorCode(err), j.Attempts*j.Attempts*5, shutdown)
 		platform.Count(jobCtx, "media.job.completed", 1, attribute.String("outcome", status), attribute.String("job_type", j.Type))
 		slog.WarnContext(jobCtx, "media.job_failed", "job_id", j.ID, "error_code", errorCode(err), "status", status)
 		if e != nil {
@@ -301,6 +306,31 @@ func (s *Service) tick(ctx context.Context) error {
 	return s.syncStates(finishCtx)
 }
 
+func (s *Service) pollEvents(ctx context.Context) error {
+	s.pollMu.Lock()
+	defer s.pollMu.Unlock()
+	if _, err := s.DB.Exec(ctx, `UPDATE media.processing_jobs SET status='failed',error_code='LEASE_EXHAUSTED',locked_until=NULL WHERE status='running' AND locked_until<now() AND attempts>=4 AND (NOT $1::boolean OR job_type<>'embedding.generate')`, s.SemanticSearchDisabled); err != nil {
+		return err
+	}
+
+	var events struct {
+		Events []contracts.Event `json:"events"`
+	}
+	if err := platform.Call(ctx, "GET", s.Catalog+"/internal/events", "", nil, &events); err != nil {
+		return err
+	}
+	for _, event := range events.Events {
+		_, err := s.DB.Exec(ctx, `INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type,traceparent) VALUES($1,$2,'media.process',$3) ON CONFLICT DO NOTHING`, event.ID, event.BlobID, event.Traceparent)
+		if err != nil {
+			return err
+		}
+		if err = platform.Call(ctx, "POST", s.Catalog+"/internal/events/"+event.ID+"/ack", "", nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Disabled embedding jobs remain queued (including expired leases) for re-enabling.
 func (s *Service) claim(ctx context.Context) (contracts.Job, error) {
 	var j contracts.Job
@@ -327,9 +357,17 @@ func (s *Service) heartbeat(ctx context.Context, cancel context.CancelFunc, j co
 	}
 }
 func (s *Service) state(ctx context.Context, blob, status string) error {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.setState(ctx, blob, status)
+}
+
+func (s *Service) setState(ctx context.Context, blob, status string) error {
 	return platform.Call(ctx, "POST", s.Catalog+"/internal/blobs/"+blob+"/state", "", map[string]string{"status": status}, nil)
 }
 func (s *Service) syncStates(ctx context.Context) error {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
 	// Periodic reconciliation includes Assets added after a shared Blob completed.
 	// Paused embeddings must not keep otherwise completed media processing pending.
 	rows, err := s.DB.Query(ctx, `SELECT source_blob_id,CASE WHEN bool_or(status='failed') THEN 'failed' WHEN count(*)>=CASE WHEN $1::boolean THEN 1 ELSE 2 END AND bool_and(status='completed') THEN 'ready' ELSE 'processing' END FROM media.processing_jobs WHERE NOT $1::boolean OR job_type<>'embedding.generate' GROUP BY source_blob_id`, s.SemanticSearchDisabled)
@@ -352,7 +390,7 @@ func (s *Service) syncStates(ctx context.Context) error {
 		return err
 	}
 	for _, i := range states {
-		if err = s.state(ctx, i.blob, i.status); err != nil {
+		if err = s.setState(ctx, i.blob, i.status); err != nil {
 			return err
 		}
 	}
