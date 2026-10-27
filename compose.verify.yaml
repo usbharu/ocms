@@ -9,7 +9,7 @@ services:
       - ./infra/verify/grafana-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ocms.yaml:ro
       - ./infra/verify/ocms-dashboard.json:/otel-lgtm/ocms-dashboards/ocms.json:ro
   collector:
-    image: otel/opentelemetry-collector-contrib:0.137.0
+    image: otel/opentelemetry-collector-contrib:0.164.0
     command: [--config=/etc/otelcol/config.yaml]
     volumes:
       - ./infra/verify/collector.yaml:/etc/otelcol/config.yaml:ro
