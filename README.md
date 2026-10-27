@@ -1,6 +1,6 @@
 # OCMS
 
-仕様書 `media-storage-spec-v2.md` に沿って、暗号化保存・配信とAC-09〜14のメディア処理・検索を実装しています。React SPA、Go BFF / Catalog / Transfer / Search / Media Worker、PostgreSQL、S3互換ストレージ、独立した推論RuntimeをDocker Composeで起動します。仕様全体の実装は完了していません。対応状況は [docs/implementation-status.md](docs/implementation-status.md) を参照してください。
+仕様書 `media-storage-spec-v2.md` に沿って、暗号化保存・配信とAC-09〜14のメディア処理・検索を実装しています。React SPA、Go BFF / Catalog / Transfer / Search / Media Worker、PostgreSQL、S3互換ストレージ、独立した推論RuntimeをDocker Composeで起動します。仕様全体の実装は完了していません。
 
 ## 起動
 
