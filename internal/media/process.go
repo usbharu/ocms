@@ -246,11 +246,8 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 		switch {
 		case strings.HasPrefix(mime, "image/"):
 			frame := filepath.Join(dir, "image.png")
-			if err = resizeAnalysisImage(ctx, input, frame); err != nil {
-				return err
-			}
 			display := filepath.Join(dir, "display.webp")
-			if err = displayThumbnail(ctx, frame, display); err != nil {
+			if err = previewAndThumbnail(ctx, input, frame, display, true); err != nil {
 				return err
 			}
 			if err = s.storeOutput(ctx, j, display, "thumbnail.display-v1", "image/webp"); err != nil {
@@ -388,12 +385,16 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 				return err
 			}
 		}
-		imagePath := images[p]
-		if err = s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", p), "image/png"); err != nil {
+		rendered := images[p]
+		imagePath := filepath.Join(dir, "preview.png")
+		display := filepath.Join(dir, "display.webp")
+		if err = previewAndThumbnail(ctx, rendered, imagePath, display, false); err != nil {
 			return err
 		}
-		display := filepath.Join(dir, "display.webp")
-		if err = displayThumbnail(ctx, imagePath, display); err != nil {
+		if err = os.Remove(rendered); err != nil {
+			return err
+		}
+		if err = s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", p), "image/png"); err != nil {
 			return err
 		}
 		if err = s.storeOutput(ctx, j, display, fmt.Sprintf("pdf.display-%d-v1", p), "image/webp"); err != nil {
@@ -452,16 +453,16 @@ func readPDFTextPage(reader *bufio.Reader) (string, error) {
 // Render at most eight pages at once; callers remove each page after use.
 func renderPDFBatch(ctx context.Context, input, dir string, first, last int) (map[int]string, error) {
 	root := filepath.Join(dir, "page")
-	if _, err := command(ctx, "pdftoppm", "-f", strconv.Itoa(first), "-l", strconv.Itoa(last), "-scale-to", "1600", "-png", input, root); err != nil {
+	if _, err := command(ctx, "pdftoppm", "-f", strconv.Itoa(first), "-l", strconv.Itoa(last), "-scale-to", "1600", input, root); err != nil {
 		return nil, err
 	}
-	paths, err := filepath.Glob(root + "-*.png")
+	paths, err := filepath.Glob(root + "-*.ppm")
 	if err != nil {
 		return nil, err
 	}
 	images := make(map[int]string)
 	for _, path := range paths {
-		number := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "page-"), ".png")
+		number := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "page-"), ".ppm")
 		page, err := strconv.Atoi(number)
 		if err != nil || page < first || page > last {
 			return nil, processingError("MEDIA_INVALID_DATA")

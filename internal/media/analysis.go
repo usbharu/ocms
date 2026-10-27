@@ -17,19 +17,33 @@ func resizeAnalysisImage(ctx context.Context, input, output string) error {
 	return ffmpeg(ctx, input, output, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease", "-compression_level", "1")
 }
 
-// Share one compact WebP between preview and analysis, keeping dimensions fixed.
-func displayThumbnail(ctx context.Context, input, output string) error {
-	for _, quality := range []int{75, 50, 35} {
-		filter := "scale=512:512:force_original_aspect_ratio=decrease"
-		if err := ffmpeg(ctx, input, output, "-frames:v", "1", "-vf", filter, "-c:v", "libwebp", "-quality", strconv.Itoa(quality)); err != nil {
-			return err
-		}
+// Encode both outputs from one decoded frame, then retry the WebP only if needed.
+func previewAndThumbnail(ctx context.Context, input, preview, output string, previewIsThumbnail bool) error {
+	filter := "[0:v]split=2[p][t];[t]scale=512:512:force_original_aspect_ratio=decrease[w]"
+	compression := "6"
+	if previewIsThumbnail {
+		compression = "1"
+		filter = "[0:v]scale=512:512:force_original_aspect_ratio=decrease,split=2[p][w]"
+	}
+	if err := ffmpeg(ctx, input, output, "-filter_complex_threads", "1", "-filter_complex", filter,
+		"-map", "[p]", "-frames:v", "1", "-compression_level", compression, "-threads", "1", preview,
+		"-map", "[w]", "-frames:v", "1", "-c:v", "libwebp", "-quality", "75"); err != nil {
+		return err
+	}
+	return finishThumbnail(ctx, preview, output)
+}
+
+func finishThumbnail(ctx context.Context, input, output string) error {
+	for _, quality := range []int{50, 35} {
 		info, err := os.Stat(output)
 		if err != nil {
 			return err
 		}
 		if info.Size() < 80000 {
 			return nil
+		}
+		if err := ffmpeg(ctx, input, output, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease", "-c:v", "libwebp", "-quality", strconv.Itoa(quality)); err != nil {
+			return err
 		}
 	}
 	return nil

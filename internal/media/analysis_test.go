@@ -186,7 +186,7 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 	if len(index.Hashes) != 3 || len(index.Passages) != 2 || *index.Passages[0].Page != 1 || *index.Passages[1].Page != 3 || !strings.Contains(index.Passages[1].Content, "THIRD PAGE") {
 		t.Fatal("page attribution or hashes lost")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "page-3.png")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "page-3.ppm")); !os.IsNotExist(err) {
 		t.Fatal("page image retained")
 	}
 	for page := 1; page <= 3; page++ {
@@ -392,8 +392,15 @@ func TestPDFRenderBatches(t *testing.T) {
 		}
 		for page := interval[0]; page <= interval[1]; page++ {
 			path := images[page]
-			width, height, err := imageDimensions(path)
-			if err != nil || max(width, height) != 1600 {
+			file, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var magic string
+			var width, height, maxValue int
+			_, err = fmt.Fscan(file, &magic, &width, &height, &maxValue)
+			file.Close()
+			if err != nil || magic != "P6" || maxValue != 255 || max(width, height) != 1600 {
 				t.Fatalf("page %d missing or wrong size", page)
 			}
 			if err := os.Remove(path); err != nil {
@@ -482,7 +489,7 @@ func TestDisplayThumbnailWebP(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := displayThumbnail(context.Background(), input, output); err != nil {
+	if err := previewAndThumbnail(context.Background(), input, filepath.Join(dir, "preview.png"), output, true); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(output)
@@ -498,5 +505,122 @@ func TestDisplayThumbnailWebP(t *testing.T) {
 	info, err := probe(context.Background(), output)
 	if err != nil || len(info.Streams) == 0 || info.Streams[0].Width != 512 || info.Streams[0].Height != 512 {
 		t.Fatalf("resolution changed: %v", err)
+	}
+}
+
+func TestCombinedPDFOutputMatchesPreviousPixels(t *testing.T) {
+	for _, tool := range []string{"pdftoppm", "ffmpeg"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("requires Poppler and FFmpeg")
+		}
+	}
+	dir := t.TempDir()
+	pdf := filepath.Join(dir, "input.pdf")
+	if err := os.WriteFile(pdf, analysisTestPDF("PDF page"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	oldPrefix := filepath.Join(dir, "old")
+	if _, err := command(ctx, "pdftoppm", "-f", "1", "-l", "1", "-scale-to", "1600", "-png", "-singlefile", pdf, oldPrefix); err != nil {
+		t.Fatal(err)
+	}
+	oldImage, oldWebP := oldPrefix+".png", oldPrefix+".webp"
+	if err := ffmpeg(ctx, oldImage, oldWebP, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease", "-c:v", "libwebp", "-quality", "75"); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := renderPDFBatch(ctx, pdf, dir, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, thumbnail := filepath.Join(dir, "new.png"), filepath.Join(dir, "new.webp")
+	if err := previewAndThumbnail(ctx, batch[1], preview, thumbnail, false); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(path string) image.Image {
+		t.Helper()
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		img, err := png.Decode(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return img
+	}
+	old, newImage := decode(oldImage), decode(preview)
+	if old.Bounds() != newImage.Bounds() {
+		t.Fatal("preview dimensions changed")
+	}
+	for y := old.Bounds().Min.Y; y < old.Bounds().Max.Y; y++ {
+		for x := old.Bounds().Min.X; x < old.Bounds().Max.X; x++ {
+			r1, g1, b1, a1 := old.At(x, y).RGBA()
+			r2, g2, b2, a2 := newImage.At(x, y).RGBA()
+			if r1 != r2 || g1 != g2 || b1 != b2 || a1 != a2 {
+				t.Fatalf("preview pixels differ at %d,%d", x, y)
+			}
+		}
+	}
+	oldBytes, err := os.ReadFile(oldWebP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBytes, err := os.ReadFile(thumbnail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(oldBytes, newBytes) {
+		t.Fatal("thumbnail changed")
+	}
+}
+
+func TestCombinedImageOutputMatchesPrevious(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("requires FFmpeg")
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.png")
+	img := image.NewNRGBA(image.Rect(0, 0, 800, 400))
+	for i := 0; i < len(img.Pix); i++ {
+		img.Pix[i] = byte((i*37 + i/11) % 256)
+	}
+	f, err := os.Create(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	oldPNG, oldWebP := filepath.Join(dir, "old.png"), filepath.Join(dir, "old.webp")
+	newPNG, newWebP := filepath.Join(dir, "new.png"), filepath.Join(dir, "new.webp")
+	if err := resizeAnalysisImage(ctx, input, oldPNG); err != nil {
+		t.Fatal(err)
+	}
+	if err := ffmpeg(ctx, oldPNG, oldWebP, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease", "-c:v", "libwebp", "-quality", "75"); err != nil {
+		t.Fatal(err)
+	}
+	if err := finishThumbnail(ctx, oldPNG, oldWebP); err != nil {
+		t.Fatal(err)
+	}
+	if err := previewAndThumbnail(ctx, input, newPNG, newWebP, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{oldPNG, newPNG}, {oldWebP, newWebP}} {
+		old, err := os.ReadFile(pair[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated, err := os.ReadFile(pair[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(old, updated) {
+			t.Fatalf("output changed: %s", filepath.Ext(pair[0]))
+		}
 	}
 }
