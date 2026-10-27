@@ -95,12 +95,15 @@ func (s *Service) upload(w http.ResponseWriter, r *http.Request) {
 	s.complete(w, r, u, blob)
 }
 func (s *Service) complete(w http.ResponseWriter, r *http.Request, u catalog.Upload, blob string) {
-	err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/uploads/"+u.ID+"/complete", r.Header.Get("X-Principal"), map[string]string{"blob_id": blob}, nil)
+	var result struct {
+		AssetID string `json:"asset_id"`
+	}
+	err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/uploads/"+u.ID+"/complete", r.Header.Get("X-Principal"), map[string]string{"blob_id": blob}, &result)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	platform.JSON(w, 200, map[string]string{"upload_id": u.ID, "asset_id": u.AssetID, "state": "completed"})
+	platform.JSON(w, 200, map[string]string{"upload_id": u.ID, "asset_id": result.AssetID, "state": "completed"})
 }
 
 // ParseRange supports a single byte range. Multipart ranges are ignored per §5.5.

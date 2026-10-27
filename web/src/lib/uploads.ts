@@ -16,15 +16,20 @@ function send(
   csrf: string,
   progress: (bytes: number) => void,
 ) {
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<{ asset_id: string }>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', path);
     xhr.timeout = 10 * 60 * 1000;
     xhr.setRequestHeader('X-CSRF-Token', csrf);
     xhr.upload.onprogress = (event) => progress(event.loaded);
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error('アップロードに失敗しました'));
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          resolve({ asset_id: '' });
+        }
+      } else reject(new Error('アップロードに失敗しました'));
     };
     xhr.onerror = xhr.ontimeout = () => reject(new Error('通信に失敗しました'));
     xhr.send(body);
@@ -51,18 +56,22 @@ export async function uploadFile(
   if (!session) throw new Error('アップロードを開始できませんでした');
   const base = `/api/v1/uploads/${session.upload_id}`;
   if (file.size <= uploadPartSize) {
-    await send(`${base}/content`, file, csrf, (bytes) =>
+    const result = await send(`${base}/content`, file, csrf, (bytes) =>
       progress(
         file.size ? Math.min(99, Math.floor((bytes / file.size) * 100)) : 0,
       ),
     );
+    if (result.asset_id) session.asset_id = result.asset_id;
   } else {
     const status = (await request(`${base}/parts`)) as {
       state: string;
       part_size: number;
       parts: { part_number: number }[];
     };
-    if (status.state !== 'completed') {
+    if (status.state === 'completed') {
+      const result = (await request(base)) as { asset_id: string };
+      session.asset_id = result.asset_id;
+    } else {
       const received = new Set<number>(
         status.parts.map((part: { part_number: number }) => part.part_number),
       );
@@ -97,7 +106,10 @@ export async function uploadFile(
         sent += part.size;
         progress(Math.min(99, Math.floor((sent / file.size) * 100)));
       }
-      await request(`${base}/complete`, { method: 'POST' });
+      const result = (await request(`${base}/complete`, {
+        method: 'POST',
+      })) as { asset_id: string };
+      session.asset_id = result.asset_id;
     }
   }
   progress(100);

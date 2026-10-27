@@ -810,6 +810,10 @@ README・仕様§12・検証履歴は双方の追記を保持し、起動処理�
 
 `HUSKY=0 npm ci --cache ../.cache/npm`、`npm run check`、`npm run build` は成功。ChromiumでPWA・ルーティングの回帰試験17件が成功し、既知の画面URL（クエリ付きも含む）のオフライン案内とオンライン復帰を確認した。Goサービスには競合解消による変更がないため、Go試験・実サービス結合試験は再実行していない。
 
+### 同名・同一内容のアップロード
+
+同じ所有者の未削除Assetに同じBlobとファイル名がある場合、アップロード完了時に既存Assetを返す。別名・別所有者・異なる内容は独立したAssetとする。並列完了は所有者とBlob単位で直列化する。Goのraceテストとvetは成功。実DB・S3を使う `scripts/integration.py` と `scripts/upload-integration.py` も成功し、並列アップロード、所有者・内容の分離、分割アップロードと完了再送を確認した。
+
 ### PR #31へのmain取り込み（2026-10-27）
 
 サムネイル・Workerの変更とPWAの検証履歴を両方保持した。`web/` の `npm run check`・`npm run build`、ChromiumでPWAとサムネイルの画面回帰テスト7件が成功した。競合解消によるGoコード変更はなく、実サービス結合試験は再実行していない。
