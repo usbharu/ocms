@@ -1,4 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import { parseRoute } from '../../lib/routes';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 
@@ -17,8 +19,39 @@ export function TagsPage({
 }) {
   const label = kind === 'characters' ? 'キャラクター' : 'タグ';
   const searchId = useId();
-  const [query, setQuery] = useState('');
-  const [view, setView] = useState<TagView>('cloud');
+  const [params, setParams] = useSearchParams();
+  const routeQuery = params.get('q') ?? '';
+  const [query, setQuery] = useState(routeQuery);
+  const view: TagView = parseRoute(`/${kind}`, `?${params}`).tagView;
+  useEffect(() => {
+    setQuery(routeQuery);
+  }, [routeQuery]);
+  useEffect(() => {
+    if (query === routeQuery) return;
+    const timer = window.setTimeout(() => {
+      const next = new URLSearchParams(params);
+      if (query.trim()) next.set('q', query.trim());
+      else next.delete('q');
+      setParams(next, { replace: true });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [query, routeQuery, params, setParams]);
+  useEffect(() => {
+    const rawView = params.get('view');
+    if (rawView && !['list', 'graph'].includes(rawView)) {
+      const next = new URLSearchParams(params);
+      next.delete('view');
+      setParams(next, { replace: true });
+    }
+  }, [params, setParams]);
+
+  function setView(nextView: TagView) {
+    const next = new URLSearchParams(params);
+    if (nextView === 'cloud') next.delete('view');
+    else next.set('view', nextView);
+    setParams(next);
+  }
+
   const [data, setData] = useState<TagData | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
