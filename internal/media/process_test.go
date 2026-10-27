@@ -2,7 +2,10 @@ package media
 
 import (
 	"bufio"
+	"context"
 	"math/bits"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -54,5 +57,26 @@ func TestPDFTextPages(t *testing.T) {
 	}
 	if _, err := readPDFTextPage(bufio.NewReader(strings.NewReader(strings.Repeat("x", (2<<20)+1)))); errorCode(err) != "OUTPUT_TOO_LARGE" {
 		t.Fatal("oversized page text accepted")
+	}
+}
+
+func TestFFmpegSeekBeforeInput(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "args")
+	tool := filepath.Join(dir, "ffmpeg")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FFMPEG_TEST_ARGS\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("FFMPEG_TEST_ARGS", logPath)
+	if err := ffmpegAt(context.Background(), "source", "frame.png", "7.500", "-frames:v", "1"); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-ss\n7.500\n-i\nsource\n") {
+		t.Fatalf("seek must precede the input: %s", args)
 	}
 }

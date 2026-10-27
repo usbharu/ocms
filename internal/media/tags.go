@@ -137,7 +137,7 @@ func (s *Service) tag(ctx context.Context, j contracts.Job) error {
 			return processingError("MEDIA_DURATION_EXCEEDED")
 		}
 		for _, second := range tagFrameTimes(duration) {
-			if err = ffmpeg(ctx, input, frame, "-ss", strconv.FormatFloat(second, 'f', 3, 64), "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
+			if err = ffmpegAt(ctx, input, frame, strconv.FormatFloat(second, 'f', 3, 64), "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
 				return err
 			}
 			if err = infer(frame); err != nil {

@@ -64,11 +64,19 @@ func command(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 func ffmpeg(ctx context.Context, input, output string, args ...string) error {
+	return ffmpegAt(ctx, input, output, "", args...)
+}
+
+func ffmpegAt(ctx context.Context, input, output, seek string, args ...string) error {
 	ctx, end := platform.Span(ctx, "media.transcode")
 	defer end()
 	started := time.Now()
 	defer platform.Duration(ctx, "media.transcode.duration", started)
-	common := []string{"-v", "error", "-nostdin", "-y", "-threads", "1", "-filter_threads", "1", "-max_alloc", "67108864", "-protocol_whitelist", "file,pipe", "-i", input}
+	common := []string{"-v", "error", "-nostdin", "-y", "-threads", "1", "-filter_threads", "1", "-max_alloc", "67108864", "-protocol_whitelist", "file,pipe"}
+	if seek != "" {
+		common = append(common, "-ss", seek)
+	}
+	common = append(common, "-i", input)
 	_, err := command(ctx, "ffmpeg", append(append(common, args...), "-threads", "1", output)...)
 	return err
 }
@@ -237,18 +245,18 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 		}
 		switch {
 		case strings.HasPrefix(mime, "image/"):
-			out := filepath.Join(dir, "image.webp")
-			if err = ffmpeg(ctx, input, out, "-frames:v", "1", "-c:v", "libwebp", "-quality", "82"); err != nil {
-				return err
-			}
-			if err = s.storeOutput(ctx, j, out, "image.webp-v1", "image/webp"); err != nil {
-				return err
-			}
 			frame := filepath.Join(dir, "image.png")
 			if err = ffmpeg(ctx, input, frame, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
 				return err
 			}
 			if err = s.storeOutput(ctx, j, frame, "thumbnail-v1", "image/png"); err != nil {
+				return err
+			}
+			out := filepath.Join(dir, "image.webp")
+			if err = ffmpeg(ctx, input, out, "-frames:v", "1", "-c:v", "libwebp", "-quality", "82"); err != nil {
+				return err
+			}
+			if err = s.storeOutput(ctx, j, out, "image.webp-v1", "image/webp"); err != nil {
 				return err
 			}
 			h, e := hashImage(ctx, frame)
@@ -267,20 +275,20 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 			if duration > 600 {
 				return processingError("MEDIA_DURATION_EXCEEDED")
 			}
-			out := filepath.Join(dir, "video.mp4")
-			if err = ffmpeg(ctx, input, out, "-map", "0:v:0", "-map", "0:a?", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"); err != nil {
-				return err
-			}
-			if err = s.storeOutput(ctx, j, out, "video.mp4-v1", "video/mp4"); err != nil {
-				return err
-			}
 			for n := 0; n < min(12, max(1, int(math.Ceil(duration/5)))); n++ {
 				frame := filepath.Join(dir, fmt.Sprintf("frame-%02d.png", n))
-				if err = ffmpeg(ctx, input, frame, "-ss", strconv.Itoa(n*5), "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
+				if err = ffmpegAt(ctx, input, frame, strconv.Itoa(n*5), "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
 					return err
 				}
 				if n == 0 {
 					if err = s.storeOutput(ctx, j, frame, "thumbnail-v1", "image/png"); err != nil {
+						return err
+					}
+					out := filepath.Join(dir, "video.mp4")
+					if err = ffmpeg(ctx, input, out, "-map", "0:v:0", "-map", "0:a?", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"); err != nil {
+						return err
+					}
+					if err = s.storeOutput(ctx, j, out, "video.mp4-v1", "video/mp4"); err != nil {
 						return err
 					}
 				}
