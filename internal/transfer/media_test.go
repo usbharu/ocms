@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"ocms/internal/contracts"
 )
 
 func TestPDFPageProfilesUseSharedConfiguredLimit(t *testing.T) {
@@ -65,5 +67,33 @@ func TestWorkerRenditionReadRequiresJobAuthorization(t *testing.T) {
 				t.Fatalf("unexpected status %d", response.Code)
 			}
 		})
+	}
+}
+
+func TestPreviewSelectionPrefersDisplayAndFallsBack(t *testing.T) {
+	items := []contracts.Rendition{
+		{Profile: "pdf.page-2-v1", MIME: "image/png"},
+		{Profile: "pdf.display-2-v1", MIME: "image/webp"},
+		{Profile: "pdf.page-1-v1", MIME: "image/png"},
+	}
+	if got := selectPreview(items, "2", true); got == nil || got.Profile != "pdf.display-2-v1" {
+		t.Fatal("display page not preferred")
+	}
+	if got := selectPreview(items, "2", false); got == nil || got.Profile != "pdf.page-2-v1" {
+		t.Fatal("full preview changed")
+	}
+	if got := selectPreview(items[:1], "2", true); got == nil || got.Profile != "pdf.page-2-v1" {
+		t.Fatal("legacy preview not used")
+	}
+	if got := selectPreview(items, "3", true); got != nil {
+		t.Fatal("wrong PDF page selected")
+	}
+	images := []contracts.Rendition{{Profile: "thumbnail-v1"}, {Profile: "thumbnail.display-v1"}}
+	if got := selectPreview(images, "", false); got == nil || got.Profile != "thumbnail.display-v1" {
+		t.Fatal("display image not preferred")
+	}
+	t.Setenv("MEDIA_MAX_PDF_PAGES", "70")
+	if !validPDFDisplayProfile("pdf.display-70-v1") || validPDFDisplayProfile("pdf.display-71-v1") || validPDFDisplayProfile("pdf.display-../-v1") {
+		t.Fatal("display page limit not enforced")
 	}
 }

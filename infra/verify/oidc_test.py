@@ -33,8 +33,10 @@ def browser(user='alice'):
     opener.addheaders=[('X-Fixture-User',user)]
     return opener
 
-def start(opener):
-    status,headers,_=call(opener,'GET',BFF+'/auth/login');assert status==302
+def start(opener,return_to=None):
+    target=BFF+'/auth/login'
+    if return_to is not None:target+='?'+url.urlencode({'return_to':return_to})
+    status,headers,_=call(opener,'GET',target);assert status==302
     location=headers['Location'];params=url.parse_qs(url.urlsplit(location).query)
     assert params['response_type']==['code'] and params['code_challenge_method']==['S256']
     assert all(params.get(k) for k in ['state','nonce','code_challenge'])
@@ -104,6 +106,24 @@ upload=json.loads(body)
 assert call(b,'GET',BFF+'/api/v1/assets/'+upload['asset_id'])[0]==404
 assert call(a,'POST',BFF+'/api/v1/uploads',{}, {'Origin':BFF})[0]==403
 checks.append('two OIDC identities, ACL isolation and CSRF enforcement')
+# Exercise production redirects and HTML fallback through the actual Hydra flow.
+for target in ['/favorites?page=2', '/tags?'+url.urlencode({'q':'日本語 & + #?','view':'graph'}),
+               '/assets/'+upload['asset_id']+'/view?from=favorites', '/recommendations']:
+    test=browser();auth,_=start(test,target)
+    status,return_headers,_=call(test,'GET',callback(test,auth))
+    assert status==303 and return_headers['Location']==target
+    status,return_headers,body=call(test,'GET',BFF+target)
+    assert status==200 and return_headers.get('Content-Type','').startswith('text/html')
+    assert return_headers.get('Content-Security-Policy') and b'<html' in body
+    status,_,body=call(test,'HEAD',BFF+target)
+    assert status==200 and not body
+checks.append('deep-link login return, encoded Japanese conditions, GET/HEAD SPA fallback')
+for target in ['https://outside.example/library','//outside.example/library','/auth/login','/assets/%00']:
+    assert call(browser(),'GET',BFF+'/auth/login?'+url.urlencode({'return_to':target}))[0]==400
+assert call(browser(),'GET',BFF+'/missing-page')[0]==404
+status,return_headers,_=call(browser(),'GET',BFF+'/assets/missing.js')
+assert status==404 and not return_headers.get('Content-Type','').startswith('text/html')
+checks.append('invalid return targets and missing static assets rejected')
 canary='private-query-'+secrets.token_hex(16);sensitive.append(canary)
 call(a,'GET',BFF+'/api/v1/assets?q='+canary)
 assert call(a,'POST',BFF+'/auth/logout',headers=headers)[0]==204
