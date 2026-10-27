@@ -848,6 +848,8 @@ GET /api/v1/recommendations?kind=image&ratings=general,sensitive&session_id=<ses
 
 ## 12. フロントエンド
 
+- 本番SPAはWeb App Manifest、192/512pxの通常・maskableアイコン、Apple touch iconを提供し、対応ブラウザでstandalone表示としてインストールできる。HTTPS（ローカル開発ではlocalhost）を前提とする。
+- Service Workerはホームや既知の画面URLへのナビゲーションが通信失敗した場合に公開のオフライン案内と再読み込み操作を表示する。Cache Storageへ保存するのは案内HTMLとCSSのみとし、API・認証・メディア要求を介入対象にせず、認証済み応答や検索結果を永続化しない。オフラインの閲覧・検索・アップロードは対象外とする。更新時は既存クライアントの終了後にWorkerを切り替え、旧バージョンの案内キャッシュを回収する。
 - BrowserRouterによるパスベースのSPAルーティングを使う。主要画面は `/library`・`/tags`・`/characters`・`/favorites`・`/recommendations`、共通ファイル詳細は `/assets/{asset_id}`、全画面閲覧は `/assets/{asset_id}/view` とする。`/` は `/library` へ置換遷移する。詳細・閲覧の `from` は `library`・`favorites`・`recommendations`（省略時 `library`）から元の一覧を指定する。
 - 確定済みの検索・絞り込み・ページを `q`・`mode`・`tag`・`character`・`kind`・`ratings`・`page`、比較元を `source` に保持する。既定値は省略し、レーティング未選択は `ratings=none` で表す。タグ・キャラクター画面は `q` と `view`（`list`・`cloud`・`graph`、既定 `cloud`）を使う。タグ名入力のURL更新は200ms後の履歴置換とする。検索方式の未確定入力、アップロード処理、可視化の座標・ズームはURLへ含めない。
 - 画面・検索・絞り込み・ページ・詳細・閲覧の開始はブラウザ履歴に追加し、全画面の連続ファイル移動は置換する。関連コンテンツの戻る操作は探索元の履歴へ戻る。タブ内で取得結果・推薦セッション・未送信の検索入力を履歴エントリーへ対応づけ、認証主体が変われば破棄する。共有URLや再読み込みでは最新のデータを取得し、個人向けおすすめは先頭ページから新しいセッションを開始する。選択ファイルは維持し、セッションIDはURLへ含めない。
