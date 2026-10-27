@@ -212,7 +212,7 @@ PYTHONPYCACHEPREFIX="$PWD/.cache/pycache" python3 scripts/recovery.py
 
 `integration.py` はセッション・CSRF、S3暗号文、非整列Range / HEAD / If-Range / 416、8並列重複排除、冪等性、ACL、タグ検索、論理削除、DBロール分離を検証します。
 
-`media-integration.py` はテスト用の画像・文字PDF・スキャンPDF・音声・動画を生成し、AC-09〜14を実際のコーデック・OCR・ASR・指紋・モデル・DB・S3を使って検証します。ダミーベクトルや固定の文字起こし結果は使いません。再開時は `--resume` で生成済みの `.cache/media-uploads.json` を使えます。CPU推論は数分かかる場合があります。
+`media-integration.py` はテスト用の画像・文字PDF・スキャンPDF・音声・動画を生成し、AC-09〜14を実際のコーデック・OCR・ASR・指紋・モデル・DB・S3を使って検証します。画像OCRも検証する場合は、先に`MEDIA_IMAGE_OCR_ENABLED=true docker compose up -d --wait worker`でWorkerを更新してください。ダミーベクトルや固定の文字起こし結果は使いません。再開時は `--resume` で生成済みの `.cache/media-uploads.json` を使えます。CPU推論は数分かかる場合があります。
 
 `job-recovery.py` はメディア検証後に実行します。JobとBlobの一致・リース期限、Workerへの鍵/資格情報の非配布、read Grantでの変換要求拒否を確認し、Searchを一時停止してJobの再試行と完了を検証します。
 
@@ -448,7 +448,7 @@ go vet ./...
 
 | 入力 | 標準出力・索引 |
 |---|---|
-| 画像 | WebP、共用WebPサムネイル、OCR、64bit DCT pHash、ネイティブ画像Embedding |
+| 画像 | WebP、共用WebPサムネイル、任意のOCR、64bit DCT pHash、ネイティブ画像Embedding |
 | 動画 | H.264/AAC MP4（faststart）、PNGサムネイル、5秒間隔・最大12枚のフレームpHash、音声ASR・指紋、30秒単位のネイティブ動画Embedding |
 | 音声 | Opus/Ogg、Chromaprint、60秒単位のASRとネイティブ音声Embedding |
 | PDF | 全ページのPNGプレビュー・共用WebPサムネイル、テキストレイヤー一括抽出／文字のないページのOCR、ページpHash・Embedding |
@@ -497,12 +497,15 @@ python3 scripts/tagging-integration.py
 
 Workerはマスターキー・S3資格情報を持ちません。Transferは実行中JobのID、対象Blob、リーストークン、期限をWorkerに照会してから復号データを渡します。平文作業領域はtmpfs内の0700一時ディレクトリで、処理後に削除します。Jobは既定2時間、PDFは既定500ページで、それぞれ `MEDIA_JOB_TIMEOUT_SECONDS` と `MEDIA_MAX_PDF_PAGES` で変更できます。入力/出力256 MiB、画像約1600万画素、動画10分、音声30分、Workerの既定メモリ1536 MiB・tmpfs 1536 MiBという上限も設けています。PDFは最大8ページずつ描画し、ページ画像は保存・抽出後に順次削除します。tmpfsには全ページを保持しません。
 
-新規の画像・PDFは、一覧表示とpHash・タグ・画像EmbeddingでWebPサムネイルを共用し、解析用PNGは保存しません。解像度は長辺512pxに保ち、80,000バイト未満を目標に画質を段階的に下げます。目標は保証値ではなく、非可逆圧縮のため解析結果が変わる可能性があります。画像のOCRは作業中のPNGを使います。PDFは1600pxのPNGプレビューを保存し、文字のないページのOCRに使います。先頭ページを先に描画・処理し、残りは最大8ページずつ描画して、変換・保存・OCRを既定で最大2ページ並列で実行します。結果はページ順に索引へ追加し、失敗やリース失効時には処理を中断します。PDFは一時的なPPMからPNGプレビューとWebPサムネイルを一度に生成し、画像もOCR用PNGとWebPを同時生成します。PDFのPPMは8ページで最大約61 MBです。抽出本文は全体256 MiB・1ページ2 MiBまでとし、上限超過は切り捨てずJobを失敗させます。既存コンテンツのPNGは引き続き読み取り、既存PDFに解析サムネイルがなければ保存済みプレビューを縮小します。動画は各処理の時間サンプリングを保って縮小フレームを使います。元ファイルの完全一致判定用SHA-256は変更しません。
+新規の画像・PDFは、一覧表示とpHash・タグ・画像EmbeddingでWebPサムネイルを共用し、解析用PNGは保存しません。解像度は長辺512pxに保ち、80,000バイト未満を目標に画質を段階的に下げます。目標は保証値ではなく、非可逆圧縮のため解析結果が変わる可能性があります。画像のOCRは既定で無効です。`MEDIA_IMAGE_OCR_ENABLED=true`をWorkerに設定した場合だけ、作業中のPNGから英語・日本語を抽出します。PDFは1600pxのPNGプレビューを保存し、テキストがないページへのOCRに使います。この処理は画像OCRの設定に関係なく実行します。先頭ページを先に描画・処理し、残りは最大8ページずつ描画して、変換・保存・OCRを既定で最大2ページ並列で実行します。結果はページ順に索引へ追加し、失敗やリース失効時には処理を中断します。PDFは一時的なPPMからPNGプレビューとWebPサムネイルを一度に生成し、画像もOCR用PNGとWebPを同時生成します。PDFのPPMは8ページで最大約61 MBです。抽出本文は全体256 MiB・1ページ2 MiBまでとし、上限超過は切り捨てずJobを失敗させます。既存コンテンツのPNGは引き続き読み取り、既存PDFに解析サムネイルがなければ保存済みプレビューを縮小します。動画は各処理の時間サンプリングを保って縮小フレームを使います。元ファイルの完全一致判定用SHA-256は変更しません。
+
+画像OCRの既定値変更は、更新後に実行するJobへ適用します。既存のOCR索引の一括削除や完了済みJobの自動再処理は行いません。画像を再処理した場合は、その時点の設定に従って索引を更新します。DBマイグレーションは不要です。
 
 Workerは1プロセス内で既定2件のJobを同時に実行します。並列数やリソースはComposeの環境変数で調整できます。設定値は `.env` に追記するか、Compose実行時に環境変数で渡してください。既存の `.env` の資格情報は変更しません。
 
 | 環境変数 | 既定値 | 内容 |
 |---|---:|---|
+| `MEDIA_IMAGE_OCR_ENABLED` | `false` | 通常画像のOCRを有効にする。PDFのOCRには影響しない |
 | `MEDIA_WORKER_CONCURRENCY` | 2 | 1 Workerで同時実行するJob数。1〜8 |
 | `MEDIA_PDF_PAGE_CONCURRENCY` | 2 | 1 PDF Job内で同時処理するページ数。1〜8 |
 | `INFERENCE_WORKERS` | 1 | 推論Runtimeのプロセス数（正整数）。各プロセスは推論を1件ずつ実行 |

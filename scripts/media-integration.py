@@ -84,13 +84,14 @@ assert alice.call('GET',f"/api/v1/assets/{source['asset_id']}/renditions")[2]['r
 check('AC-10 same Blob and profile reuse identical Rendition IDs across owners')
 
 results=alice.call('POST','/api/v1/search',{'query':'ORCHID','mode':'keyword','limit':200})[2]['assets']
-for name in ['text.pdf','scan.pdf','ocr.png']:
+image_ocr_enabled=compose('exec','-T','worker','sh','-c','printf %s "${MEDIA_IMAGE_OCR_ENABLED:-false}"').strip().lower() in ('true','1','t')
+for name in ['text.pdf','scan.pdf'] + (['ocr.png'] if image_ocr_enabled else []):
     matches=[a for a in results if a['asset_id']==uploads[name]['asset_id']]
     assert matches,(name,'missing extracted keyword')
     if name.endswith('.pdf'):assert matches[0]['page_number']==1
 speech=alice.call('POST','/api/v1/search',{'query':'quick','mode':'keyword','limit':200})[2]['assets']
 assert any(a['asset_id']==uploads['speech.mp3']['asset_id'] and 'start_ms' in a and 'end_ms' in a for a in speech)
-check('AC-11 PDF text layer, scanned PDF/image OCR and timestamped real ASR searchable')
+check('AC-11 PDF text layer, scanned PDF OCR, optional image OCR and timestamped real ASR searchable')
 
 for source_name,target in [('car.png','car-copy.jpg'),('car.mp4','car-copy.mp4'),('text.pdf','scan.pdf')]:
     matches=alice.call('GET',f"/api/v1/assets/{uploads[source_name]['asset_id']}/similar")[2]['assets']
