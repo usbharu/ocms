@@ -126,7 +126,7 @@ func (s *Service) embed(ctx context.Context, j contracts.Job) error {
 					break
 				}
 				path := filepath.Join(dir, "frame.png")
-				if err = ffmpeg(ctx, input, path, "-ss", strconv.FormatFloat(second, 'f', 2, 64), "-frames:v", "1", "-vf", "scale=384:384:force_original_aspect_ratio=decrease"); err != nil {
+				if err = ffmpegAt(ctx, input, path, strconv.FormatFloat(second, 'f', 2, 64), "-frames:v", "1", "-vf", "scale=384:384:force_original_aspect_ratio=decrease"); err != nil {
 					return err
 				}
 				data, e := os.ReadFile(path)

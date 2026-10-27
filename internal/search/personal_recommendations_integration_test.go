@@ -181,7 +181,7 @@ func TestPersonalRecommendationsDatabase(t *testing.T) {
 	started := time.Now()
 	first := call(owner, "", 200)
 	cold := time.Since(started)
-	if first.Status != "ready" || first.Total != 36 || len(first.Assets) != 24 || calls != 1 {
+	if first.Status != "ready" || first.Total != 36 || len(first.Assets) != 36 || calls != 1 {
 		t.Fatalf("bad initial pool: total %d, page %d, engine %d", first.Total, len(first.Assets), calls)
 	}
 	seen := map[string]bool{}
@@ -196,7 +196,7 @@ func TestPersonalRecommendationsDatabase(t *testing.T) {
 		t.Fatal("resumed page changed")
 	}
 	second := call(owner, path+"&page=2", 200)
-	if len(second.Assets) != 12 {
+	if len(second.Assets) != 0 {
 		t.Fatal("page size")
 	}
 	for _, a := range second.Assets {

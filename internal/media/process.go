@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ocms/internal/contracts"
@@ -64,11 +65,19 @@ func command(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 func ffmpeg(ctx context.Context, input, output string, args ...string) error {
+	return ffmpegAt(ctx, input, output, "", args...)
+}
+
+func ffmpegAt(ctx context.Context, input, output, seek string, args ...string) error {
 	ctx, end := platform.Span(ctx, "media.transcode")
 	defer end()
 	started := time.Now()
 	defer platform.Duration(ctx, "media.transcode.duration", started)
-	common := []string{"-v", "error", "-nostdin", "-y", "-threads", "1", "-filter_threads", "1", "-max_alloc", "67108864", "-protocol_whitelist", "file,pipe", "-i", input}
+	common := []string{"-v", "error", "-nostdin", "-y", "-threads", "1", "-filter_threads", "1", "-max_alloc", "67108864", "-protocol_whitelist", "file,pipe"}
+	if seek != "" {
+		common = append(common, "-ss", seek)
+	}
+	common = append(common, "-i", input)
 	_, err := command(ctx, "ffmpeg", append(append(common, args...), "-threads", "1", output)...)
 	return err
 }
@@ -237,6 +246,14 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 		}
 		switch {
 		case strings.HasPrefix(mime, "image/"):
+			frame := filepath.Join(dir, "image.png")
+			display := filepath.Join(dir, "display.webp")
+			if err = previewAndThumbnail(ctx, input, frame, display, true); err != nil {
+				return err
+			}
+			if err = s.storeOutput(ctx, j, display, "thumbnail.display-v1", "image/webp"); err != nil {
+				return err
+			}
 			out := filepath.Join(dir, "image.webp")
 			if err = ffmpeg(ctx, input, out, "-frames:v", "1", "-c:v", "libwebp", "-quality", "82"); err != nil {
 				return err
@@ -244,14 +261,7 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 			if err = s.storeOutput(ctx, j, out, "image.webp-v1", "image/webp"); err != nil {
 				return err
 			}
-			frame := filepath.Join(dir, "image.png")
-			if err = ffmpeg(ctx, input, frame, "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
-				return err
-			}
-			if err = s.storeOutput(ctx, j, frame, "thumbnail-v1", "image/png"); err != nil {
-				return err
-			}
-			h, e := hashImage(ctx, frame)
+			h, e := hashImage(ctx, display)
 			if e != nil {
 				return e
 			}
@@ -267,20 +277,20 @@ func (s *Service) process(ctx context.Context, j contracts.Job) error {
 			if duration > 600 {
 				return processingError("MEDIA_DURATION_EXCEEDED")
 			}
-			out := filepath.Join(dir, "video.mp4")
-			if err = ffmpeg(ctx, input, out, "-map", "0:v:0", "-map", "0:a?", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"); err != nil {
-				return err
-			}
-			if err = s.storeOutput(ctx, j, out, "video.mp4-v1", "video/mp4"); err != nil {
-				return err
-			}
 			for n := 0; n < min(12, max(1, int(math.Ceil(duration/5)))); n++ {
 				frame := filepath.Join(dir, fmt.Sprintf("frame-%02d.png", n))
-				if err = ffmpeg(ctx, input, frame, "-ss", strconv.Itoa(n*5), "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
+				if err = ffmpegAt(ctx, input, frame, strconv.Itoa(n*5), "-frames:v", "1", "-vf", "scale=512:512:force_original_aspect_ratio=decrease"); err != nil {
 					return err
 				}
 				if n == 0 {
 					if err = s.storeOutput(ctx, j, frame, "thumbnail-v1", "image/png"); err != nil {
+						return err
+					}
+					out := filepath.Join(dir, "video.mp4")
+					if err = ffmpeg(ctx, input, out, "-map", "0:v:0", "-map", "0:a?", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"); err != nil {
+						return err
+					}
+					if err = s.storeOutput(ctx, j, out, "video.mp4-v1", "video/mp4"); err != nil {
 						return err
 					}
 				}
@@ -363,54 +373,132 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 		return processingError("OUTPUT_TOO_LARGE")
 	}
 	textPages := bufio.NewReader(textFile)
-	var images map[int]string
-	for p := 1; p <= pages; p++ {
-		// Amortize PDF parsing and process startup while bounding tmpfs usage.
-		if (p-1)%8 == 0 {
-			images, err = renderPDFBatch(ctx, input, dir, p, min(p+7, pages))
-			if err != nil {
-				return err
-			}
+	for first := 1; first <= pages; {
+		last := first
+		if first > 1 {
+			last = min(first+7, pages)
 		}
-		imagePath := images[p]
-		if err = s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", p), "image/png"); err != nil {
-			return err
-		}
-		thumbnail := filepath.Join(dir, "thumbnail.png")
-		if err = resizeAnalysisImage(ctx, imagePath, thumbnail); err != nil {
-			return err
-		}
-		if err = s.storeOutput(ctx, j, thumbnail, fmt.Sprintf("pdf.thumbnail-%d-v1", p), "image/png"); err != nil {
-			return err
-		}
-		h, e := hashImage(ctx, thumbnail)
-		if e != nil {
-			return e
-		}
-		page := p
-		index.Hashes = append(index.Hashes, contracts.Hash{Kind: "pdf_page", Ordinal: p - 1, Page: &page, Hash: h})
-		text, err := readPDFTextPage(textPages)
+		images, err := renderPDFBatch(ctx, input, dir, first, last)
 		if err != nil {
 			return err
 		}
-		content := text
-		kind := "pdf_text"
-		if content == "" {
-			content, err = ocr(ctx, imagePath)
-			kind = "ocr"
+		batch := make([]pdfPage, last-first+1)
+		for i := range batch {
+			page := first + i
+			text, err := readPDFTextPage(textPages)
 			if err != nil {
 				return err
 			}
+			batch[i] = pdfPage{number: page, total: pages, rendered: images[page], text: text}
 		}
-		if content != "" {
-			index.Passages = append(index.Passages, contracts.Passage{Kind: kind, Ordinal: p - 1, Page: &page, Content: content})
+		results := make([]pdfPageResult, len(batch))
+		concurrency := s.PDFPageConcurrency
+		if concurrency < 1 {
+			concurrency = 2
 		}
-		if err = os.Remove(imagePath); err != nil {
+		if err := runPDFBatch(ctx, len(batch), concurrency, func(ctx context.Context, i int) error {
+			result, err := s.processPDFPage(ctx, j, dir, batch[i])
+			results[i] = result
+			return err
+		}); err != nil {
 			return err
 		}
-		slog.InfoContext(ctx, "media.pdf_page_completed", "job_id", j.ID, "page", p, "pages", pages)
+		for _, result := range results {
+			index.Hashes = append(index.Hashes, result.hash)
+			if result.passage != nil {
+				index.Passages = append(index.Passages, *result.passage)
+			}
+		}
+		first = last + 1
 	}
 	return nil
+}
+
+type pdfPage struct {
+	number, total  int
+	rendered, text string
+}
+
+type pdfPageResult struct {
+	hash    contracts.Hash
+	passage *contracts.Passage
+}
+
+// The configured limit bounds concurrent page conversions and OCR.
+func runPDFBatch(ctx context.Context, count, concurrency int, process func(context.Context, int) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan int, count)
+	for i := 0; i < count; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	var wg sync.WaitGroup
+	var once sync.Once
+	var firstErr error
+	for range min(count, concurrency) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := process(ctx, i); err != nil {
+					once.Do(func() { firstErr = err; cancel() })
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	return ctx.Err()
+}
+
+func (s *Service) processPDFPage(ctx context.Context, j contracts.Job, dir string, page pdfPage) (pdfPageResult, error) {
+	var result pdfPageResult
+	imagePath := filepath.Join(dir, fmt.Sprintf("preview-%d.png", page.number))
+	display := filepath.Join(dir, fmt.Sprintf("display-%d.webp", page.number))
+	if err := previewAndThumbnail(ctx, page.rendered, imagePath, display, false); err != nil {
+		return result, err
+	}
+	if err := os.Remove(page.rendered); err != nil {
+		return result, err
+	}
+	if err := s.storeOutput(ctx, j, imagePath, fmt.Sprintf("pdf.page-%d-v1", page.number), "image/png"); err != nil {
+		return result, err
+	}
+	if err := s.storeOutput(ctx, j, display, fmt.Sprintf("pdf.display-%d-v1", page.number), "image/webp"); err != nil {
+		return result, err
+	}
+	h, err := hashImage(ctx, display)
+	if err != nil {
+		return result, err
+	}
+	number := page.number
+	result.hash = contracts.Hash{Kind: "pdf_page", Ordinal: number - 1, Page: &number, Hash: h}
+	content, kind := page.text, "pdf_text"
+	if content == "" {
+		content, err = ocr(ctx, imagePath)
+		kind = "ocr"
+		if err != nil {
+			return result, err
+		}
+	}
+	if content != "" {
+		result.passage = &contracts.Passage{Kind: kind, Ordinal: number - 1, Page: &number, Content: content}
+	}
+	if err = os.Remove(imagePath); err != nil {
+		return result, err
+	}
+	if err = os.Remove(display); err != nil {
+		return result, err
+	}
+	slog.InfoContext(ctx, "media.pdf_page_completed", "job_id", j.ID, "page", number, "pages", page.total)
+	return result, nil
 }
 
 // Preserve page boundaries without allowing a single page to allocate the
@@ -436,16 +524,16 @@ func readPDFTextPage(reader *bufio.Reader) (string, error) {
 // Render at most eight pages at once; callers remove each page after use.
 func renderPDFBatch(ctx context.Context, input, dir string, first, last int) (map[int]string, error) {
 	root := filepath.Join(dir, "page")
-	if _, err := command(ctx, "pdftoppm", "-f", strconv.Itoa(first), "-l", strconv.Itoa(last), "-scale-to", "1600", "-png", input, root); err != nil {
+	if _, err := command(ctx, "pdftoppm", "-f", strconv.Itoa(first), "-l", strconv.Itoa(last), "-scale-to", "1600", input, root); err != nil {
 		return nil, err
 	}
-	paths, err := filepath.Glob(root + "-*.png")
+	paths, err := filepath.Glob(root + "-*.ppm")
 	if err != nil {
 		return nil, err
 	}
 	images := make(map[int]string)
 	for _, path := range paths {
-		number := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "page-"), ".png")
+		number := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "page-"), ".ppm")
 		page, err := strconv.Atoi(number)
 		if err != nil || page < first || page > last {
 			return nil, processingError("MEDIA_INVALID_DATA")

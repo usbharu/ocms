@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
-const files = Array.from({ length: 50 }, (_, i) => ({
+const files = Array.from({ length: 202 }, (_, i) => ({
   asset_id: `file-${i}`,
   filename: `サンプル${i}.png`,
   mime_type: 'image/png',
@@ -56,7 +56,10 @@ async function setup(
     if (path === '/api/v1/assets') {
       const offset = Number(url.searchParams.get('offset'));
       return r.fulfill({
-        json: { assets: files.slice(offset, offset + 24), total: files.length },
+        json: {
+          assets: files.slice(offset, offset + 200),
+          total: files.length,
+        },
       });
     }
     if (
@@ -101,16 +104,16 @@ test('URLs restore Japanese filters, pagination, selection and browser history',
   await expect(
     page.getByRole('heading', { name: `タグ：${tag}` }),
   ).toBeVisible();
-  await expect(page.getByText('2 / 3 ページ')).toBeVisible();
+  await expect(page.getByText('2 / 2 ページ')).toBeVisible();
   await page
-    .getByRole('button', { name: files[24].filename, exact: true })
+    .getByRole('button', { name: files[200].filename, exact: true })
     .click();
-  await expect(page).toHaveURL(/\/assets\/file-24\?/);
+  await expect(page).toHaveURL(/\/assets\/file-200\?/);
   expect(new URL(page.url()).searchParams.get('tag')).toBe(tag);
   await page.reload();
   await expect(
     page.getByRole('region', { name: 'ファイル詳細' }),
-  ).toContainText(files[24].filename);
+  ).toContainText(files[200].filename);
   await page.goBack();
   await expect(page).toHaveURL(/\/library\?/);
   await expect(page.getByRole('region', { name: 'ファイル詳細' })).toHaveCount(
@@ -123,34 +126,34 @@ test('URLs restore Japanese filters, pagination, selection and browser history',
   await page
     .getByRole('button', { name: 'ファイルを閲覧', exact: true })
     .click();
-  await expect(page).toHaveURL(/\/assets\/file-24\/view\?/);
+  await expect(page).toHaveURL(/\/assets\/file-200\/view\?/);
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('ArrowRight');
-  await expect(page).toHaveURL(/\/assets\/file-25\/view\?/);
-  await expect(page.getByRole('dialog')).toContainText(files[25].filename);
+  await expect(page).toHaveURL(/\/assets\/file-201\/view\?/);
+  await expect(page.getByRole('dialog')).toContainText(files[201].filename);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByText('2 / 3 ページ')).toBeVisible();
+  await expect(page.getByText('2 / 2 ページ')).toBeVisible();
 });
 
 test('direct viewer and comparison links load authorized assets and parent conditions', async ({
   page,
 }) => {
   await setup(page);
-  await page.goto('/assets/file-25/view?from=favorites&page=2');
-  await expect(page.getByRole('dialog')).toContainText(files[25].filename);
+  await page.goto('/assets/file-201/view?from=favorites&page=2');
+  await expect(page.getByRole('dialog')).toContainText(files[201].filename);
   await expect(
     page.getByRole('link', { name: 'お気に入り', exact: true }),
   ).toHaveAttribute('aria-current', 'page');
   await page.keyboard.press('Escape');
-  await expect(page).toHaveURL(/\/assets\/file-25\?page=2&from=favorites$/);
+  await expect(page).toHaveURL(/\/assets\/file-201\?page=2&from=favorites$/);
   await page.getByRole('button', { name: '詳細を閉じる' }).click();
   await expect(page).toHaveURL(/\/favorites\?page=2$/);
   await page.goto('/library?mode=recommendation&source=file-0&page=2');
   await expect(
     page.getByRole('heading', { name: '関連コンテンツ', exact: true }),
   ).toBeVisible();
-  await expect(page.getByText('2 / 3 ページ')).toBeVisible();
+  await expect(page.getByText('2 / 2 ページ')).toBeVisible();
   if (process.env.UI_SCREENSHOTS === '1')
     await page.screenshot({ path: '../docs/path-routing.png', fullPage: true });
   await page.getByRole('button', { name: '戻る', exact: true }).click();
@@ -174,7 +177,7 @@ test('search input is committed on submit; ratings and malformed values are norm
   expect(new URL(page.url()).searchParams.get('q')).toBe('日本語 & + #?');
   await page.reload();
   await expect(page.getByRole('searchbox')).toHaveValue('日本語 & + #?');
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
 });
 
 test('tag and character view URLs survive reload and history traversal', async ({
@@ -231,14 +234,14 @@ test('login resumes the current deep link and missing assets have one message', 
 test('navigation discards late search responses', async ({ page }) => {
   const searches = await setup(page);
   await page.goto('/library');
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
   await page.getByRole('searchbox').fill('slow');
   await page.getByRole('button', { name: '検索', exact: true }).click();
   await expect.poll(() => searches.length).toBe(1);
   await page.getByRole('link', { name: 'お気に入り', exact: true }).click();
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
   await page.waitForTimeout(500);
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
   await expect(page.getByRole('searchbox')).toHaveValue('');
 });
 
@@ -276,8 +279,8 @@ test('a fresh recommendation link starts a new session on page one and preserves
       json: {
         status: 'ready',
         session_id: 'fixture-session',
-        total: 50,
-        assets: files.slice(0, 24).map((asset) => ({
+        total: 201,
+        assets: files.slice(0, 200).map((asset) => ({
           ...asset,
           score: 80,
           common_tags: [],
@@ -286,10 +289,10 @@ test('a fresh recommendation link starts a new session on page one and preserves
       },
     });
   });
-  await page.goto('/assets/file-25/view?from=recommendations&page=2');
-  await expect(page.getByRole('dialog')).toContainText(files[25].filename);
+  await page.goto('/assets/file-201/view?from=recommendations&page=2');
+  await expect(page.getByRole('dialog')).toContainText(files[201].filename);
   await expect(page).toHaveURL(
-    /\/assets\/file-25\/view\?from=recommendations$/,
+    /\/assets\/file-201\/view\?from=recommendations$/,
   );
   expect(generations).toBe(1);
   await page.reload();
@@ -352,8 +355,8 @@ test('a search page past the final result is corrected in the URL', async ({
 }) => {
   await setup(page);
   await page.goto('/library?q=sample&page=999');
-  await expect(page.getByText('3 / 3 ページ')).toBeVisible();
-  await expect(page).toHaveURL(/\/library\?q=sample&page=3$/);
+  await expect(page.getByText('2 / 2 ページ')).toBeVisible();
+  await expect(page).toHaveURL(/\/library\?q=sample&page=2$/);
   await page.reload();
   await expect(page.locator('.file')).toHaveCount(2);
 });
@@ -366,13 +369,13 @@ test('recommendation viewer crosses pages using the same session', async ({
   await page.route('**/api/v1/recommendations?**', (r) => {
     const params = new URL(r.request().url()).searchParams;
     if (!params.has('session_id')) generations++;
-    const offset = (Number(params.get('page') ?? '1') - 1) * 24;
+    const offset = (Number(params.get('page') ?? '1') - 1) * 200;
     return r.fulfill({
       json: {
         status: 'ready',
         session_id: 'fixture-session',
         total: files.length,
-        assets: files.slice(offset, offset + 24).map((asset) => ({
+        assets: files.slice(offset, offset + 200).map((asset) => ({
           ...asset,
           score: 80,
           common_tags: [],
@@ -383,23 +386,23 @@ test('recommendation viewer crosses pages using the same session', async ({
   });
   await page.goto('/recommendations');
   await page
-    .getByRole('button', { name: files[23].filename, exact: true })
+    .getByRole('button', { name: files[199].filename, exact: true })
     .click();
   await page
     .getByRole('button', { name: 'ファイルを閲覧', exact: true })
     .click();
-  await expect(page.getByRole('dialog')).toContainText(files[23].filename);
+  await expect(page.getByRole('dialog')).toContainText(files[199].filename);
   await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('dialog')).toContainText(files[24].filename);
+  await expect(page.getByRole('dialog')).toContainText(files[200].filename);
   await expect(page).toHaveURL(
-    /\/assets\/file-24\/view\?page=2&from=recommendations$/,
+    /\/assets\/file-200\/view\?page=2&from=recommendations$/,
   );
   expect(generations).toBe(1);
   await page.keyboard.press('Escape');
-  await expect(page.getByText('2 / 3 ページ')).toBeVisible();
+  await expect(page.getByText('2 / 2 ページ')).toBeVisible();
   await expect(
     page.getByRole('region', { name: 'ファイル詳細' }),
-  ).toContainText(files[24].filename);
+  ).toContainText(files[200].filename);
 });
 
 test('draft input follows the latest visit to a history entry', async ({
@@ -407,7 +410,7 @@ test('draft input follows the latest visit to a history entry', async ({
 }) => {
   await setup(page);
   await page.goto('/library');
-  await expect(page.locator('.file')).toHaveCount(24);
+  await expect(page.locator('.file')).toHaveCount(200);
   await page.getByRole('searchbox').fill('first draft');
   await page.getByRole('link', { name: 'タグ', exact: true }).click();
   await page.goBack();
