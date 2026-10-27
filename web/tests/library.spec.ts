@@ -1559,7 +1559,7 @@ for (const [field, label] of [
       page,
     }) => {
       const tag = '旅行, 日本語 & + #?';
-      const assets = Array.from({ length: 49 }, (_, i) => ({
+      const assets = Array.from({ length: 201 }, (_, i) => ({
         ...fixtures[0],
         asset_id: `tag-${i}`,
         filename: `タグ検索 ${i + 1}`,
@@ -1580,7 +1580,7 @@ for (const [field, label] of [
         const offset = Number(params.get('offset'));
         return route.fulfill({
           json: {
-            assets: assets.slice(offset, offset + 24),
+            assets: assets.slice(offset, offset + 200),
             total: assets.length,
           },
         });
@@ -1611,10 +1611,10 @@ for (const [field, label] of [
         .getByRole('button', { name: '次へ' })
         .click();
       await expect(
-        page.getByRole('button', { name: 'タグ検索 25', exact: true }),
+        page.getByRole('button', { name: 'タグ検索 201', exact: true }),
       ).toBeVisible();
       await page
-        .getByRole('button', { name: 'タグ検索 25', exact: true })
+        .getByRole('button', { name: 'タグ検索 201', exact: true })
         .click();
       const request = page.waitForRequest((r) =>
         new URL(r.url()).searchParams.has(field),
@@ -1625,7 +1625,7 @@ for (const [field, label] of [
       const params = new URL((await request).url()).searchParams;
       expect(Object.fromEntries(params)).toEqual({
         [field]: tag,
-        limit: '24',
+        limit: '200',
         offset: '0',
       });
       await expect(
@@ -1645,7 +1645,7 @@ for (const [field, label] of [
       ).toHaveAttribute('aria-pressed', 'true');
       await expect(
         page.getByRole('navigation', { name: 'ページネーション' }),
-      ).toContainText('1–24 / 49 件');
+      ).toContainText('1–200 / 201 件');
     });
   }
 }
@@ -1748,7 +1748,7 @@ test('detail character deletion stays separate and long names support keyboard s
   const params = new URL(requests[0]).searchParams;
   expect(Object.fromEntries(params)).toEqual({
     character,
-    limit: '24',
+    limit: '200',
     offset: '0',
   });
 });
