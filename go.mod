@@ -1,6 +1,6 @@
 module ocms
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
@@ -20,7 +20,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.14.0
 	go.opentelemetry.io/otel/sdk/metric v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
