@@ -957,10 +957,7 @@ export function App() {
         a.asset_id === id ? { ...a, is_favorite: !asset.is_favorite } : a;
       setAssets((current) => current.map(update));
       setSelected((current) => (current ? update(current) : current));
-      if (
-        sectionRef.current === 'favorites' ||
-        sectionRef.current === 'recommendations'
-      ) {
+      if (sectionRef.current === 'favorites') {
         try {
           const latest = collectionRef.current;
           await refresh(latest.context, latest.page, latest.kind);
