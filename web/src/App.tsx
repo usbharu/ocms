@@ -707,7 +707,7 @@ export function App() {
     };
     try {
       await Promise.all(
-        Array.from({ length: Math.min(3, tasks.length) }, () => worker()),
+        Array.from({ length: Math.min(10, tasks.length) }, () => worker()),
       );
       const lastAsset = [...tasks]
         .reverse()
