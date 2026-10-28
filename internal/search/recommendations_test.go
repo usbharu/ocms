@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"ocms/internal/catalog"
+	"ocms/internal/contracts"
 )
 
 func TestOverlap(t *testing.T) {
@@ -41,7 +42,7 @@ func TestRecommendationRanking(t *testing.T) {
 	noMetadata.ID = "hash-only"
 	noMetadata.Tags = nil
 	noMetadata.Characters = nil
-	out := rankRecommendations(source, []catalog.Asset{source, sameContent, candidateAsset, candidateAsset, noMetadata, {ID: "zero"}}, map[string]candidate{otherBlob: {rank: 1 - 12.0/64}})
+	out := rankRecommendations(source, []catalog.Asset{source, sameContent, candidateAsset, candidateAsset, noMetadata, {ID: "zero"}}, map[string]candidate{otherBlob: {rank: 1 - 12.0/64}}, labelFrequency{})
 	if len(out) != 2 || out[0].ID != "b" || math.Abs(out[0].Score-96.25) > 1e-10 || out[1].Score != 16.25 {
 		t.Fatalf("ranking: %#v", out)
 	}
@@ -49,11 +50,11 @@ func TestRecommendationRanking(t *testing.T) {
 		t.Fatal("per-asset reasons lost")
 	}
 	source.MIME = "audio/ogg"
-	if rankRecommendations(source, []catalog.Asset{candidateAsset}, map[string]candidate{otherBlob: {rank: 0.75}})[0].Perceptual != "audio" {
+	if rankRecommendations(source, []catalog.Asset{candidateAsset}, map[string]candidate{otherBlob: {rank: 0.75}}, labelFrequency{})[0].Perceptual != "audio" {
 		t.Fatal("audio reason missing")
 	}
 	// Missing hash evidence never renormalizes the metadata score.
-	if rankRecommendations(source, []catalog.Asset{candidateAsset}, nil)[0].Score != 80 {
+	if rankRecommendations(source, []catalog.Asset{candidateAsset}, nil, labelFrequency{})[0].Score != 80 {
 		t.Fatal("weights renormalized")
 	}
 }
@@ -63,7 +64,7 @@ func TestRecommendationLimitAndTies(t *testing.T) {
 	for i := 1005; i > 0; i-- {
 		assets = append(assets, catalog.Asset{ID: fmt.Sprintf("%04d", i), Tags: source.Tags})
 	}
-	out := rankRecommendations(source, assets, nil)
+	out := rankRecommendations(source, assets, nil, labelFrequency{})
 	if len(out) != 200 || out[0].ID != "0001" || out[199].ID != "0200" {
 		t.Fatal("limit or stable ordering broken")
 	}
@@ -79,12 +80,12 @@ func TestRecommendationsAuthorizationAndFailures(t *testing.T) {
 					t.Error("principal missing")
 				}
 				switch {
-				case strings.HasSuffix(r.URL.Path, "recommendation-candidates"):
+				case strings.HasSuffix(r.URL.Path, "recommendation-dataset"):
 					if scenario == "metadata-failed" {
 						w.WriteHeader(503)
 						return
 					}
-					json.NewEncoder(w).Encode(map[string]any{"asset_ids": []string{"allowed", "denied"}})
+					json.NewEncoder(w).Encode(map[string]any{"assets": []map[string]any{{"asset_id": "allowed", "tags": []string{"tag"}}, {"asset_id": "denied", "tags": []string{"tag"}}}})
 				case strings.HasSuffix(r.URL.Path, "authorize-blobs"):
 					authCalls++
 					if scenario == "authorization-failed" {
@@ -149,6 +150,33 @@ func TestMissingHashAndDatabaseFailure(t *testing.T) {
 		a.MIME = mime
 		if _, _, err = s.recommendationHashes(request, a); err == nil {
 			t.Fatal("DB failure treated as pending")
+		}
+	}
+}
+
+func TestRarityOverlap(t *testing.T) {
+	f := frequencies([]contracts.RecommendationInput{
+		{Tags: []string{"common", "rare", "rare"}, Characters: []string{"hero"}},
+		{Tags: []string{"common"}}, {Tags: []string{"common"}}, {Tags: []string{"common"}},
+	})
+	common, _ := rarityOverlap([]string{"common", "rare"}, []string{"common"}, f.tags, f.total)
+	rare, names := rarityOverlap([]string{"common", "rare"}, []string{"rare"}, f.tags, f.total)
+	if common != 0.5 || math.Abs(rare-0.575) > 1e-10 || len(names) != 1 || f.tags["rare"] != 1 {
+		t.Fatalf("common=%v rare=%v frequency=%v", common, rare, f.tags)
+	}
+	full, _ := rarityOverlap([]string{"hero"}, []string{"hero"}, f.characters, f.total)
+	if full != 1 {
+		t.Fatal("score exceeded its bound")
+	}
+}
+
+func TestRareMetadataRanksAhead(t *testing.T) {
+	source := catalog.Asset{ID: "source", Tags: []string{"common", "rare"}, Characters: []string{"usual", "unusual"}}
+	assets := []catalog.Asset{{ID: "common", Tags: []string{"common"}, Characters: []string{"usual"}}, {ID: "rare", Tags: []string{"rare"}, Characters: []string{"unusual"}}}
+	freq := labelFrequency{total: 10, tags: map[string]int{"common": 10, "rare": 2}, characters: map[string]int{"usual": 10, "unusual": 2}}
+	for _, ranked := range [][]recommendation{rankMetadataCandidates(source, assets, freq), rankRecommendations(source, assets, nil, freq)} {
+		if len(ranked) != 2 || ranked[0].ID != "rare" || ranked[0].Score <= ranked[1].Score {
+			t.Fatalf("rarity did not affect ranking: %#v", ranked)
 		}
 	}
 }
