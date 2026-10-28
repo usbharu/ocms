@@ -103,7 +103,7 @@ test('複数ファイルの失敗後も続行し、受信済み部分から再�
   ).toBeLessThanOrEqual(390);
 });
 
-test('最大3ファイルを並列に送り、完了・失敗した枠で後続を開始する', async ({
+test('最大10ファイルを並列に送り、完了・失敗した枠で後続を開始する', async ({
   page,
 }) => {
   const started: string[] = [];
@@ -149,45 +149,55 @@ test('最大3ファイルを並列に送り、完了・失敗した枠で後続�
   });
   await page.goto('/');
   await page.getByLabel('アップロードするファイル').setInputFiles(
-    [1, 2, 3, 4, 5].map((number) => ({
+    Array.from({ length: 12 }, (_, i) => i + 1).map((number) => ({
       name: `${number}.png`,
       mimeType: 'image/png',
       buffer: Buffer.from('synthetic'),
     })),
   );
   const queue = page.getByRole('region', { name: 'アップロード状況' });
-  await expect.poll(() => pending.size).toBe(3);
-  expect([...started].sort()).toEqual(['1.png', '2.png', '3.png']);
-  await expect(queue.getByRole('progressbar')).toHaveCount(3);
+  await expect.poll(() => pending.size).toBe(10);
+  expect(started).toHaveLength(10);
+  await expect(queue.getByRole('progressbar')).toHaveCount(10);
   await expect(queue.getByText('待機中', { exact: true })).toHaveCount(2);
 
-  // A failed request frees a slot even while the other two remain blocked.
+  // A failed request frees a slot even while the other uploads remain blocked.
   await pending.get('2.png')?.fulfill({ status: 503, json: {} });
   pending.delete('2.png');
-  await expect.poll(() => pending.has('4.png')).toBe(true);
-  expect(pending.size).toBe(3);
-  expect(started).toHaveLength(4);
+  await expect.poll(() => pending.has('11.png')).toBe(true);
+  expect(pending.size).toBe(10);
+  expect(started).toHaveLength(11);
   await expect(
     page.getByRole('button', { name: '2.pngを再試行' }),
   ).toBeDisabled();
 
   await pending.get('3.png')?.fulfill({ json: {} });
   pending.delete('3.png');
-  await expect.poll(() => pending.has('5.png')).toBe(true);
-  expect(pending.size).toBe(3);
-  expect(started).toHaveLength(5);
+  await expect.poll(() => pending.has('12.png')).toBe(true);
+  expect(pending.size).toBe(10);
+  expect(started).toHaveLength(12);
   // Finish out of order; selection still follows the original file order.
-  for (const id of ['5.png', '4.png']) {
+  for (const id of [
+    '12.png',
+    '11.png',
+    '10.png',
+    '9.png',
+    '8.png',
+    '7.png',
+    '6.png',
+    '5.png',
+    '4.png',
+  ]) {
     await pending.get(id)?.fulfill({ json: {} });
     pending.delete(id);
   }
-  await expect(queue).toContainText('3 / 5 件完了');
+  await expect(queue).toContainText('10 / 12 件完了');
   expect(selected).toEqual([]);
   await pending.get('1.png')?.fulfill({ json: {} });
   pending.delete('1.png');
-  await expect(queue).toContainText('4 / 5 件完了');
+  await expect(queue).toContainText('11 / 12 件完了');
   await expect(
     page.getByRole('button', { name: '2.pngを再試行' }),
   ).toBeEnabled();
-  expect(selected[0]).toBe('5.png');
+  expect(selected[0]).toBe('12.png');
 });
