@@ -2,6 +2,7 @@ package search
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -46,7 +47,51 @@ func overlap(a, b []string) (float64, []string) {
 	return float64(len(common)) / float64(len(union)), names
 }
 
-func rankRecommendations(source catalog.Asset, assets []catalog.Asset, hashes map[string]candidate) []recommendation {
+type labelFrequency struct {
+	total            int
+	tags, characters map[string]int
+}
+
+func frequencies(assets []contracts.RecommendationInput) labelFrequency {
+	f := labelFrequency{total: len(assets), tags: map[string]int{}, characters: map[string]int{}}
+	for _, a := range assets {
+		for _, pair := range []struct {
+			values []string
+			counts map[string]int
+		}{{a.Tags, f.tags}, {a.Characters, f.characters}} {
+			seen := map[string]bool{}
+			for _, v := range pair.values {
+				if !seen[v] {
+					pair.counts[v]++
+					seen[v] = true
+				}
+			}
+		}
+	}
+	return f
+}
+
+func rarityOverlap(a, b []string, counts map[string]int, total int) (float64, []string) {
+	score, common := overlap(a, b)
+	if len(common) == 0 || total == 0 {
+		return score, common
+	}
+	rarity := 0.0
+	for _, name := range common {
+		rarity += 1 - float64(counts[name])/float64(total)
+	}
+	return math.Min(1, score*(1+0.2*rarity/float64(len(common)))), common
+}
+
+func rankRecommendations(source catalog.Asset, assets []catalog.Asset, hashes map[string]candidate, freq labelFrequency) []recommendation {
+	return rankWithLimit(source, assets, hashes, freq, 200)
+}
+
+func rankMetadataCandidates(source catalog.Asset, assets []catalog.Asset, freq labelFrequency) []recommendation {
+	return rankWithLimit(source, assets, nil, freq, 1000)
+}
+
+func rankWithLimit(source catalog.Asset, assets []catalog.Asset, hashes map[string]candidate, freq labelFrequency, limit int) []recommendation {
 	out := []recommendation{}
 	seen := map[string]bool{}
 	for _, a := range assets {
@@ -54,8 +99,8 @@ func rankRecommendations(source catalog.Asset, assets []catalog.Asset, hashes ma
 			continue
 		}
 		seen[a.ID] = true
-		c, chars := overlap(source.Characters, a.Characters)
-		t, tags := overlap(source.Tags, a.Tags)
+		c, chars := rarityOverlap(source.Characters, a.Characters, freq.characters, freq.total)
+		t, tags := rarityOverlap(source.Tags, a.Tags, freq.tags, freq.total)
 		item := recommendation{result: result{Asset: a}, CommonTags: tags, CommonCharacters: chars}
 		h := 0.0
 		if a.BlobID != nil {
@@ -79,8 +124,8 @@ func rankRecommendations(source catalog.Asset, assets []catalog.Asset, hashes ma
 		}
 		return out[i].Score > out[j].Score
 	})
-	if len(out) > 200 {
-		out = out[:200]
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }
@@ -103,12 +148,21 @@ func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
 		platform.RespondError(w, err)
 		return
 	}
-	var metadata struct {
-		IDs []string `json:"asset_ids"`
-	}
-	if err := platform.Call(ctx, "GET", s.Catalog+"/internal/assets/"+url.PathEscape(source.ID)+"/recommendation-candidates", principal, nil, &metadata); err != nil {
+	var dataset contracts.RecommendationDataset
+	if err := platform.Call(ctx, "GET", s.Catalog+"/internal/recommendation-dataset", principal, nil, &dataset); err != nil {
 		platform.RespondError(w, err)
 		return
+	}
+	freq := frequencies(dataset.Assets)
+	metadataAssets := make([]catalog.Asset, 0, len(dataset.Assets))
+	for _, a := range dataset.Assets {
+		metadataAssets = append(metadataAssets, catalog.Asset{ID: a.ID, BlobID: a.BlobID, Tags: a.Tags, Characters: a.Characters})
+	}
+	// Rank the metadata pool before applying the existing candidate limit.
+	metadataRanked := rankMetadataCandidates(source, metadataAssets, freq)
+	metadataIDs := make([]string, 0, len(metadataRanked))
+	for _, a := range metadataRanked {
+		metadataIDs = append(metadataIDs, a.ID)
 	}
 	hashes, state, err := s.recommendationHashes(r, source)
 	if err != nil {
@@ -121,7 +175,7 @@ func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
 	}
 	assets := []catalog.Asset{}
 	// Each authorization call stays below Catalog's 1,500 identifier limit.
-	for _, input := range []map[string]any{{"asset_ids": metadata.IDs}, {"blob_ids": blobs}} {
+	for _, input := range []map[string]any{{"asset_ids": metadataIDs}, {"blob_ids": blobs}} {
 		var authorized struct {
 			Assets []catalog.Asset `json:"assets"`
 		}
@@ -141,7 +195,7 @@ func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform.Audit(ctx, "search.executed", principal, "")
-	platform.JSON(w, 200, map[string]any{"source_asset_id": source.ID, "hash_status": state, "assets": rankRecommendations(source, assets, hashes)})
+	platform.JSON(w, 200, map[string]any{"source_asset_id": source.ID, "hash_status": state, "assets": rankRecommendations(source, assets, hashes, freq)})
 }
 
 func (s *Service) recommendationHashes(r *http.Request, a catalog.Asset) (map[string]candidate, string, error) {
