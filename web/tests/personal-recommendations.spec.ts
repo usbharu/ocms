@@ -134,6 +134,11 @@ for (const width of [1440, 375, 320]) {
     await page
       .getByRole('button', { name: 'おすすめ4.png：お気に入りに登録' })
       .click();
+    await expect(
+      page.getByRole('button', { name: 'おすすめ4.png：お気に入りを解除' }),
+    ).toBeVisible();
+    expect(generation).toBe(4);
+    await page.getByRole('button', { name: '更新', exact: true }).click();
     await expect.poll(() => generation).toBe(5);
     if (process.env.UI_SCREENSHOTS === '1')
       await page.screenshot({
