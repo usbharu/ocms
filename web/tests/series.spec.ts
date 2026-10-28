@@ -40,7 +40,7 @@ const collection = {
 const preview =
   '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="640"><rect width="480" height="640" fill="#dce9e5"/><path d="M20 600 240 50 460 600Z" fill="#527d67"/></svg>';
 
-async function setup(page: Page, failure = false) {
+async function setup(page: Page, failure = false, logicalLibrary = false) {
   const saves: { name: string; kind: string; member_ids: string[] }[] = [];
   let saved = composite;
   let grouped = false;
@@ -98,9 +98,19 @@ async function setup(page: Page, failure = false) {
     if (path === '/api/v1/series/comic') return route.fulfill({ json: saved });
     if (path === '/api/v1/series/collection')
       return route.fulfill({ json: collection });
+    if (path === '/api/v1/assets/comic') return route.fulfill({ json: saved });
+    if (path === '/api/v1/assets/collection')
+      return route.fulfill({ json: collection });
     if (path === '/api/v1/assets')
       return route.fulfill({
-        json: { assets: grouped ? [saved] : [a, b], total: grouped ? 1 : 2 },
+        json: {
+          assets: grouped
+            ? [saved]
+            : logicalLibrary
+              ? [saved, collection]
+              : [a, b],
+          total: grouped ? 1 : 2,
+        },
       });
     if (path === '/api/v1/search')
       return route.fulfill({ json: { assets: [composite] } });
@@ -134,13 +144,13 @@ test('create from details, reorder and view in saved order', async ({
     .getByRole('button', { name: '漫画 002.pngを上へ', exact: true })
     .click();
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page).toHaveURL(/\/series\/comic$/);
+  await expect(page).toHaveURL(/\/assets\/comic$/);
   expect(saves[0]).toMatchObject({
     name: '漫画まとめ',
     kind: 'composite',
     member_ids: ['page-b', 'page-a'],
   });
-  await page.getByRole('link', { name: '順番に見る' }).click();
+  await page.getByRole('button', { name: 'ファイルを閲覧' }).click();
   await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
     b.filename,
   );
@@ -174,8 +184,8 @@ test('video ended advances into nested composite and member URL survives reload'
     b.filename,
   );
   await page.getByRole('button', { name: '閲覧を閉じる' }).click();
-  await expect(page).toHaveURL(/\/series\/collection$/);
-  await page.goBack();
+  await expect(page).toHaveURL(/\/assets\/collection$/);
+  await page.getByRole('button', { name: 'ファイルを閲覧' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
 });
 
@@ -195,6 +205,10 @@ test('header, kind filter and direct routes', async ({ page }) => {
     page.getByRole('heading', { name: 'シリーズ', exact: true }),
   ).toBeVisible();
   await page.getByRole('link', { name: '作品集', exact: true }).click();
+  await expect(page).toHaveURL(/\/assets\/collection$/);
+  await expect(
+    page.getByRole('region', { name: 'ファイル詳細' }),
+  ).toBeVisible();
   await expect(
     page.getByRole('heading', { name: '作品集', exact: true }),
   ).toBeVisible();
@@ -252,14 +266,105 @@ test('returning to the library after grouping discards old page snapshots', asyn
   await page.getByLabel('シリーズ名').fill('漫画まとめ');
   await page.getByRole('button', { name: '追加', exact: true }).click();
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page).toHaveURL(/series\/comic$/);
+  await expect(page).toHaveURL(/assets\/comic$/);
   await page.goBack();
   await page.goBack();
-  await expect(page).toHaveURL(/series\/comic/);
+  await expect(page).toHaveURL(/assets\/comic/);
   await page.goBack();
   await expect(page).toHaveURL(/\/library$/);
   await expect(page.locator('.file')).toHaveCount(1);
   await expect(
     page.getByRole('button', { name: '漫画まとめ', exact: true }),
   ).toBeVisible();
+});
+
+for (const width of [1440, 390]) {
+  test(`series selection uses ordinary details and viewer at ${width}px`, async ({
+    page,
+  }) => {
+    await setup(page, false, true);
+    const paths: string[] = [];
+    page.on('request', (r) => paths.push(new URL(r.url()).pathname));
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto('/library?kind=series');
+    await page.getByRole('button', { name: '漫画', exact: true }).click();
+    await expect(page).toHaveURL(/\/assets\/comic\?kind=series/);
+    const detail = page.getByRole('region', { name: 'ファイル詳細' });
+    await expect(
+      detail.getByRole('heading', { name: '漫画', exact: true }),
+    ).toBeVisible();
+    await expect(detail.locator('.preview img')).toHaveAttribute(
+      'src',
+      /page-a\/(?:content|preview)$/,
+    );
+    await expect(detail.getByLabel('コンテンツレーティング')).toBeDisabled();
+    await expect(
+      detail.getByRole('button', { name: 'タグ「漫画」で検索', exact: true }),
+    ).toBeVisible();
+    await expect(
+      detail.getByRole('button', { name: 'タグ「漫画」を削除' }),
+    ).toHaveCount(0);
+    await expect(
+      detail.getByRole('link', { name: 'シリーズを編集' }),
+    ).toHaveAttribute('href', '/series/comic/edit');
+    expect(paths).not.toContain('/api/v1/assets/comic/renditions');
+    expect(paths).not.toContain('/api/v1/assets/comic/jobs');
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    if (process.env.OCMS_CAPTURE_SCREENSHOTS)
+      await page.screenshot({
+        path: `../docs/series-details-${width}.png`,
+        fullPage: true,
+      });
+    await detail.getByRole('button', { name: 'ファイルを閲覧' }).click();
+    await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+      a.filename,
+    );
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+      b.filename,
+    );
+    await expect(page).toHaveURL(/\/assets\/comic\/view.*member=page-b/);
+    await page.reload();
+    await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+      b.filename,
+    );
+    await page.getByRole('button', { name: '閲覧を閉じる' }).click();
+    await expect(detail).toBeVisible();
+    await expect(page).toHaveURL(/\/assets\/comic\?kind=series/);
+  });
+}
+
+test('series playback failures can retry inside the standard viewer', async ({
+  page,
+}) => {
+  await setup(page, false, true);
+  await page.goto('/assets/comic');
+  await expect(page.locator('.preview img')).toBeVisible();
+  let failed = true;
+  await page.route('**/api/v1/series/comic', async (route) => {
+    if (failed)
+      return route.fulfill({
+        status: 503,
+        json: { error: 'SERVICE_UNAVAILABLE' },
+      });
+    return route.fallback();
+  });
+  await page.getByRole('button', { name: 'ファイルを閲覧' }).click();
+  await expect(
+    page
+      .getByRole('dialog')
+      .getByText('シリーズを読み込めません。', { exact: true }),
+  ).toHaveText('シリーズを読み込めません。');
+  failed = false;
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '再試行', exact: true })
+    .click();
+  await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+    a.filename,
+  );
 });

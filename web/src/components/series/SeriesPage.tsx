@@ -179,7 +179,7 @@ export function SeriesPage({ request }: { request: Request }) {
           }),
         },
       )) as Series;
-      navigate(`/series/${value.asset_id}`);
+      navigate(`/assets/${value.asset_id}`);
     } catch (e) {
       setError(
         (e as { status?: number }).status === 409
@@ -491,7 +491,7 @@ export function SeriesPage({ request }: { request: Request }) {
           {leaves.length > 0 && (
             <Button asChild>
               <Link
-                to={`/series/${series.asset_id}/view${initialMember ? location.search : ''}`}
+                to={`/assets/${series.asset_id}/view${initialMember ? location.search : ''}`}
               >
                 順番に見る
               </Link>
@@ -514,15 +514,7 @@ export function SeriesPage({ request }: { request: Request }) {
           {series.members.map((asset) => (
             <li key={asset.asset_id}>
               <Thumbnail asset={asset} />
-              <Link
-                to={
-                  asset.series_kind
-                    ? `/series/${asset.asset_id}`
-                    : `/series/${series.asset_id}/view?member=${asset.asset_id}`
-                }
-              >
-                {asset.filename}
-              </Link>
+              <Link to={`/assets/${asset.asset_id}`}>{asset.filename}</Link>
             </li>
           ))}
         </ol>
@@ -571,7 +563,12 @@ export function SeriesPage({ request }: { request: Request }) {
           {items.map((asset) => (
             <li key={asset.asset_id}>
               <Thumbnail asset={asset} />
-              <Link to={`/series/${asset.asset_id}`}>{asset.filename}</Link>
+              <Link
+                to={`/assets/${asset.asset_id}`}
+                state={{ closeTo: location.pathname + location.search }}
+              >
+                {asset.filename}
+              </Link>
             </li>
           ))}
         </ul>

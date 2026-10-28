@@ -16,6 +16,8 @@ import { Status } from './Status';
 
 export function AssetDetails({
   selected,
+  previewAsset,
+  seriesEditable,
   renditions,
   jobs,
   searching,
@@ -37,6 +39,8 @@ export function AssetDetails({
   onSearchTag: (tag: string) => void;
   onSearchCharacter: (character: string) => void;
   selected: Asset;
+  previewAsset?: Asset;
+  seriesEditable?: boolean;
   renditions: Rendition[];
   jobs: Job[];
   searching: boolean;
@@ -63,6 +67,7 @@ export function AssetDetails({
     return url + (a.start_ms !== undefined ? `#t=${a.start_ms / 1000}` : '');
   };
 
+  const preview = selected.series_kind ? previewAsset : selected;
   const pdfPreview = renditions.find(
     (d) => d.profile_id === `pdf.page-${selected?.page_number ?? 1}-v1`,
   );
@@ -92,7 +97,13 @@ export function AssetDetails({
         </Button>
       </div>
       <div className="detail-meta">
-        <span>{selected.mime_type.split('/')[1]?.toUpperCase()}</span>
+        <span>
+          {selected.series_kind
+            ? selected.series_kind === 'composite'
+              ? '一体型シリーズ'
+              : '通常シリーズ'
+            : selected.mime_type.split('/')[1]?.toUpperCase()}
+        </span>
         <Status value={selected.status} />
       </div>
       <button
@@ -101,32 +112,32 @@ export function AssetDetails({
         aria-label="ファイルを閲覧"
         onClick={onOpen}
       >
-        {selected.mime_type.startsWith('image/') ? (
+        {preview?.mime_type.startsWith('image/') ? (
           <img
             alt={selected.filename}
-            src={`/api/v1/assets/${selected.asset_id}/${renditions.some((d) => d.profile_id === 'thumbnail-v1') ? 'preview' : 'content'}`}
+            src={`/api/v1/assets/${preview?.asset_id}/${renditions.some((d) => d.profile_id === 'thumbnail-v1') ? 'preview' : 'content'}`}
           />
-        ) : selected.mime_type.startsWith('video/') ? (
+        ) : preview?.mime_type.startsWith('video/') ? (
           <video
-            key={mediaURL(selected)}
+            key={mediaURL(preview)}
             muted
             preload="metadata"
-            src={mediaURL(selected)}
+            src={mediaURL(preview)}
           />
-        ) : selected.mime_type.startsWith('audio/') ? (
+        ) : preview?.mime_type.startsWith('audio/') ? (
           <span className="audio-preview">
             <span aria-hidden="true">♫</span>
             <span>音声を再生</span>
           </span>
-        ) : selected.mime_type === 'application/pdf' && pdfPreview ? (
+        ) : preview?.mime_type === 'application/pdf' && pdfPreview ? (
           <img
             alt={`PDF ${selected.page_number ?? 1}ページ目`}
-            src={`/api/v1/assets/${selected.asset_id}/renditions/${pdfPreview.rendition_id}/content`}
+            src={`/api/v1/assets/${preview?.asset_id}/renditions/${pdfPreview.rendition_id}/content`}
           />
         ) : (
           <span className="muted">
-            {selected.mime_type === 'application/pdf' &&
-            ['stored', 'processing'].includes(selected.status)
+            {preview?.mime_type === 'application/pdf' &&
+            ['stored', 'processing'].includes(preview?.status ?? '')
               ? 'プレビューを生成中…'
               : 'プレビューなし'}
           </span>
@@ -137,15 +148,17 @@ export function AssetDetails({
           検索の一致箇所 · {locationOf(selected)}
         </p>
       )}
-      <Button asChild variant="outline" className="open-original">
-        <a
-          href={`/api/v1/assets/${selected.asset_id}/content${selected.page_number ? `#page=${selected.page_number}` : ''}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          元ファイルを開く <span aria-hidden="true">↗</span>
-        </a>
-      </Button>
+      {!selected.series_kind && (
+        <Button asChild variant="outline" className="open-original">
+          <a
+            href={`/api/v1/assets/${selected.asset_id}/content${selected.page_number ? `#page=${selected.page_number}` : ''}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            元ファイルを開く <span aria-hidden="true">↗</span>
+          </a>
+        </Button>
+      )}
       <div className="comparison-section">
         <div className="comparison-actions">
           {onRecommend && (
@@ -179,81 +192,95 @@ export function AssetDetails({
           )}
         </div>
       </div>
-      <Button variant="outline" asChild>
-        <Link to={`/series/new?source=${selected.asset_id}`}>
-          シリーズを作成
-        </Link>
-      </Button>
+      {selected.series_kind && seriesEditable && (
+        <Button variant="outline" asChild>
+          <Link to={`/series/${selected.asset_id}/edit`}>シリーズを編集</Link>
+        </Button>
+      )}
+      {selected.series_kind !== 'collection' && (
+        <Button variant="outline" asChild>
+          <Link to={`/series/new?source=${selected.asset_id}`}>
+            シリーズを作成
+          </Link>
+        </Button>
+      )}
       <AssetMetadataEditor
         key={selected.asset_id}
         asset={selected}
+        readOnly={Boolean(selected.series_kind)}
         onSave={onSaveMetadata}
         onSearchTag={onSearchTag}
         onSearchCharacter={onSearchCharacter}
       />
-      <details className="detail-section">
-        <summary>処理状況</summary>
-        {jobs.length === 0 && <p className="muted">処理情報なし</p>}
-        {jobs.map((j) => (
-          <div className="job" key={j.job_id}>
-            <div>
-              <span>
-                {j.job_type === 'media.process'
-                  ? 'プレビュー・文字抽出'
-                  : j.job_type === 'tags.generate'
-                    ? '自動タグ付け'
-                    : '意味検索の索引'}
-              </span>
-              <Status value={j.status} />
+      {!selected.series_kind && (
+        <details className="detail-section">
+          <summary>処理状況</summary>
+          {jobs.length === 0 && <p className="muted">処理情報なし</p>}
+          {jobs.map((j) => (
+            <div className="job" key={j.job_id}>
+              <div>
+                <span>
+                  {j.job_type === 'media.process'
+                    ? 'プレビュー・文字抽出'
+                    : j.job_type === 'tags.generate'
+                      ? '自動タグ付け'
+                      : '意味検索の索引'}
+                </span>
+                <Status value={j.status} />
+              </div>
+              <small>
+                試行 {j.attempts}
+                {j.error_code ? ` · ${j.error_code}` : ''}
+              </small>
             </div>
-            <small>
-              試行 {j.attempts}
-              {j.error_code ? ` · ${j.error_code}` : ''}
-            </small>
-          </div>
-        ))}
-        <Button variant="outline" type="button" onClick={onReprocess}>
-          {selected.status === 'failed' ? '再試行' : '再処理'}
-        </Button>
-      </details>
-      <details className="detail-section">
-        <summary>
-          変換ファイル <span className="count">{renditions.length}</span>
-        </summary>
-        {renditions.length === 0 ? (
-          <p className="muted">変換ファイルなし</p>
-        ) : (
-          <ul className="renditions">
-            {renditions.map((d) => (
-              <li key={d.rendition_id}>
-                <a
-                  href={`/api/v1/assets/${selected.asset_id}/renditions/${d.rendition_id}/content`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {renditionName(d.profile_id)}{' '}
-                  <span aria-hidden="true">↗</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-      </details>
+          ))}
+          <Button variant="outline" type="button" onClick={onReprocess}>
+            {selected.status === 'failed' ? '再試行' : '再処理'}
+          </Button>
+        </details>
+      )}
+      {!selected.series_kind && (
+        <details className="detail-section">
+          <summary>
+            変換ファイル <span className="count">{renditions.length}</span>
+          </summary>
+          {renditions.length === 0 ? (
+            <p className="muted">変換ファイルなし</p>
+          ) : (
+            <ul className="renditions">
+              {renditions.map((d) => (
+                <li key={d.rendition_id}>
+                  <a
+                    href={`/api/v1/assets/${selected.asset_id}/renditions/${d.rendition_id}/content`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {renditionName(d.profile_id)}{' '}
+                    <span aria-hidden="true">↗</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+      )}
       {notice && (
         <p className="notice" role="status">
           {notice}
         </p>
       )}
-      <div className="detail-footer">
-        <Button
-          variant="link"
-          type="button"
-          className="text-button danger"
-          onClick={onDelete}
-        >
-          ファイルを削除
-        </Button>
-      </div>
+      {(!selected.series_kind || seriesEditable) && (
+        <div className="detail-footer">
+          <Button
+            variant="link"
+            type="button"
+            className="text-button danger"
+            onClick={onDelete}
+          >
+            {selected.series_kind ? 'シリーズを解除' : 'ファイルを削除'}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

@@ -15,6 +15,7 @@ export type Asset = {
   member_ids?: string[];
   composite_id?: string;
   cover_asset_id?: string;
+  blob_asset_ids?: string[];
   matched_asset_id?: string;
   is_favorite?: boolean;
   asset_id: string;
@@ -29,6 +30,11 @@ export type Asset = {
   start_ms?: number;
   end_ms?: number;
 };
+export type AssetHit = Pick<
+  Asset,
+  'matched_asset_id' | 'page_number' | 'start_ms' | 'end_ms'
+>;
+
 export type AssetChanges = {
   filename?: string;
   tags?: string[];

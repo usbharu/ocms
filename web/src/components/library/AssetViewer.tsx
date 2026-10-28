@@ -5,6 +5,21 @@ import { FavoriteButton } from './FavoriteButton';
 
 const PDFViewer = lazy(() => import('./PDFViewer'));
 
+export type AssetViewerProps = {
+  asset: Asset;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  onNavigate: (direction: number) => void;
+  onFavorite?: (asset: Asset) => void;
+  favoriteBusy?: boolean;
+  onClose: () => void;
+  navigationError: string;
+  continuous?: boolean;
+  autoAdvance?: boolean;
+  onMemberChange?: (member: Asset) => void;
+  status?: { message: string; retry?: () => void };
+};
+
 export function AssetViewer({
   asset,
   hasPrevious,
@@ -15,17 +30,9 @@ export function AssetViewer({
   onClose,
   navigationError,
   continuous = false,
-}: {
-  asset: Asset;
-  hasPrevious: boolean;
-  hasNext: boolean;
-  onNavigate: (direction: number) => void;
-  onFavorite?: (asset: Asset) => void;
-  favoriteBusy?: boolean;
-  onClose: () => void;
-  navigationError: string;
-  continuous?: boolean;
-}) {
+  autoAdvance = continuous && hasNext,
+  status,
+}: AssetViewerProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -153,7 +160,7 @@ export function AssetViewer({
       <header className="viewer-header">
         <div>
           <h2>{asset.filename}</h2>
-          <p>{asset.mime_type}</p>
+          <p>{asset.series_kind ? 'シリーズ' : asset.mime_type}</p>
         </div>
         <FavoriteButton
           asset={asset}
@@ -236,7 +243,12 @@ export function AssetViewer({
         }}
         onPointerCancel={() => pointers.current.clear()}
       >
-        {error ? (
+        {status ? (
+          <div>
+            <p role={status.retry ? 'alert' : 'status'}>{status.message}</p>
+            {status.retry && <Button onClick={status.retry}>再試行</Button>}
+          </div>
+        ) : error ? (
           <p role="alert">{error} 下のリンクから元ファイルを開けます。</p>
         ) : (
           <div
@@ -277,7 +289,7 @@ export function AssetViewer({
                 controls
                 autoPlay={continuous}
                 onEnded={() => {
-                  if (continuous && hasNext) onNavigate(1);
+                  if (autoAdvance) onNavigate(1);
                 }}
                 playsInline
                 preload="metadata"
@@ -293,7 +305,7 @@ export function AssetViewer({
                   controls
                   autoPlay={continuous}
                   onEnded={() => {
-                    if (continuous && hasNext) onNavigate(1);
+                    if (autoAdvance) onNavigate(1);
                   }}
                   preload="metadata"
                   src={`${mediaURL}${asset.start_ms !== undefined ? `#t=${asset.start_ms / 1000}` : ''}`}
@@ -357,9 +369,11 @@ export function AssetViewer({
             </Button>
           </div>
         )}
-        <a href={contentURL} target="_blank" rel="noreferrer">
-          元ファイル ↗
-        </a>
+        {!asset.series_kind && (
+          <a href={contentURL} target="_blank" rel="noreferrer">
+            元ファイル ↗
+          </a>
+        )}
         <p className="viewer-hint">
           左右にスワイプで移動{visual ? ' · 拡大後はドラッグで移動' : ''}
         </p>

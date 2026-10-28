@@ -13,6 +13,7 @@ import { LibraryToolbar } from './components/library/LibraryToolbar';
 import { LoginPanel } from './components/library/LoginPanel';
 import { RecommendationsHeader } from './components/library/RecommendationsHeader';
 import { SearchForm } from './components/library/SearchForm';
+import { SeriesAssetViewer } from './components/library/SeriesAssetViewer';
 import { UploadControl } from './components/library/UploadControl';
 import { UploadProgress } from './components/library/UploadProgress';
 import { SeriesPage } from './components/series/SeriesPage';
@@ -122,6 +123,8 @@ export function App() {
   const [viewerMoving, setViewerMoving] = useState(false);
   const [renditions, setRenditions] = useState<Rendition[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
+  const [seriesEditable, setSeriesEditable] = useState(false);
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<Mode>('keyword');
   const [context, setContext] = useState<SearchContext>(allFiles);
@@ -391,6 +394,20 @@ export function App() {
       navigate(`/library${location.search}`, { replace: true });
       return;
     }
+    const legacySeries = /^\/series\/([^/]+)(\/view)?$/.exec(location.pathname);
+    if (legacySeries && legacySeries[1] !== 'new') {
+      const hit = new URLSearchParams();
+      const previous = new URLSearchParams(location.search);
+      for (const key of ['member', 'page_number', 'start_ms', 'end_ms']) {
+        const value = previous.get(key);
+        if (value !== null) hit.set(key, value);
+      }
+      navigate(
+        `/assets/${legacySeries[1]}${legacySeries[2] || ''}${hit.size ? `?${hit}` : ''}`,
+        { replace: true, state: location.state },
+      );
+      return;
+    }
     ++requestVersion.current;
     readyRoute.current = '';
     setSearching(true);
@@ -481,6 +498,7 @@ export function App() {
             next,
             route.page,
             route.kind,
+            route.hit,
           )
         : collectionKey;
       if (canonical !== location.pathname + location.search) {
@@ -521,17 +539,25 @@ export function App() {
             `/api/v1/assets/${encodeURIComponent(route.assetId)}`,
           );
           if (!active) return;
-          if (asset.composite_id || asset.series_kind) {
+          if (asset.composite_id) {
             navigate(
-              `/series/${asset.composite_id || asset.asset_id}${route.viewer ? '/view' : ''}${asset.composite_id ? `?member=${asset.asset_id}` : ''}`,
-              { replace: true },
+              assetURL(
+                asset.composite_id,
+                route.viewer,
+                route.section,
+                next,
+                route.page,
+                route.kind,
+                { ...route.hit, matched_asset_id: asset.asset_id },
+              ),
+              { replace: true, state: location.state },
             );
             return;
           }
           const match = liveSnapshot.current.assets.find(
             (item) => item.asset_id === route.assetId,
           );
-          setSelected({ ...match, ...asset });
+          setSelected({ ...match, ...asset, ...route.hit });
           setViewerOpen(route.viewer);
         } catch (error) {
           if (active) {
@@ -603,27 +629,19 @@ export function App() {
     replace = false,
     nextPage = page,
   ) {
-    if (asset.series_kind || asset.composite_id) {
-      const target = asset.composite_id || asset.asset_id;
-      const member =
-        asset.matched_asset_id || (asset.composite_id ? asset.asset_id : '');
-      const hit = new URLSearchParams();
-      if (member) hit.set('member', member);
-      if (asset.page_number !== undefined)
-        hit.set('page_number', String(asset.page_number));
-      if (asset.start_ms !== undefined)
-        hit.set('start_ms', String(asset.start_ms));
-      if (asset.end_ms !== undefined) hit.set('end_ms', String(asset.end_ms));
-      navigate(
-        `/series/${target}${viewer ? '/view' : ''}${hit.size ? `?${hit}` : ''}`,
-      );
-      return;
-    }
     snapshots.current.set(location.key, liveSnapshot.current);
     capturedSnapshot.current = location.key;
     const parent = location.pathname + location.search;
     navigate(
-      assetURL(asset.asset_id, viewer, section, context, nextPage, kind),
+      assetURL(
+        asset.asset_id,
+        viewer,
+        section,
+        context,
+        nextPage,
+        kind,
+        asset.series_kind ? asset : undefined,
+      ),
       {
         replace,
         state: {
@@ -658,22 +676,57 @@ export function App() {
   useEffect(() => {
     setRenditions([]);
     setJobs([]);
+    setPreviewAsset(null);
+    setSeriesEditable(false);
     setNotice('');
     if (!selected || !me) return;
     let active = true;
     const update = async () => {
       const version = metadataVersion.current;
-      const [ds, js, asset] = await Promise.all([
-        request(`/api/v1/assets/${selected.asset_id}/renditions`),
-        request(`/api/v1/assets/${selected.asset_id}/jobs`),
-        request(`/api/v1/assets/${selected.asset_id}`),
-      ]);
+      let ds: { renditions: Rendition[] };
+      let js: { jobs: Job[] };
+      let asset: Asset & { editable?: boolean };
+      let preview: Asset | null = null;
+      if (selected.series_kind) {
+        asset = await request(`/api/v1/series/${selected.asset_id}`);
+        const previewID =
+          selected.matched_asset_id &&
+          asset.blob_asset_ids?.includes(selected.matched_asset_id)
+            ? selected.matched_asset_id
+            : asset.cover_asset_id;
+        if (previewID) {
+          preview = await request(`/api/v1/assets/${previewID}`);
+          ds = await request(`/api/v1/assets/${previewID}/renditions`);
+        } else ds = { renditions: [] };
+        js = { jobs: [] };
+      } else {
+        [ds, js, asset] = await Promise.all([
+          request(`/api/v1/assets/${selected.asset_id}/renditions`),
+          request(`/api/v1/assets/${selected.asset_id}/jobs`),
+          request(`/api/v1/assets/${selected.asset_id}`),
+        ]);
+      }
       if (active && version === metadataVersion.current) {
         setRenditions(ds.renditions);
         setJobs(js.jobs);
+        setPreviewAsset(preview);
+        setSeriesEditable(Boolean(asset.editable));
         setSelected((current) =>
           current
-            ? { ...current, status: asset.status, rating: asset.rating }
+            ? {
+                ...current,
+                ...(current.series_kind
+                  ? {
+                      tags: asset.tags,
+                      characters: asset.characters,
+                      cover_asset_id: asset.cover_asset_id,
+                      member_ids: asset.member_ids,
+                      series_version: asset.series_version,
+                    }
+                  : {}),
+                status: asset.status,
+                rating: asset.rating,
+              }
             : null,
         );
         setAssets((current) =>
@@ -1067,7 +1120,15 @@ export function App() {
   }
 
   function deleteAsset() {
-    if (!selected || !confirm('このファイルを削除しますか？')) return;
+    if (
+      !selected ||
+      !confirm(
+        selected.series_kind
+          ? 'シリーズを解除しますか？ 元のファイルは残ります。'
+          : 'このファイルを削除しますか？',
+      )
+    )
+      return;
     run(async () => {
       await request(`/api/v1/assets/${selected.asset_id}`, {
         method: 'DELETE',
@@ -1088,6 +1149,8 @@ export function App() {
       );
     });
   }
+
+  const Viewer = selected?.series_kind ? SeriesAssetViewer : AssetViewer;
 
   return (
     <div className="shell">
@@ -1391,6 +1454,8 @@ export function App() {
                   }}
                   favoriteBusy={favoriteBusy.has(selected.asset_id)}
                   renditions={renditions}
+                  previewAsset={previewAsset ?? undefined}
+                  seriesEditable={seriesEditable}
                   jobs={jobs}
                   searching={searching}
                   notice={notice}
@@ -1414,13 +1479,26 @@ export function App() {
         )}
       </main>
       {me && viewerOpen && selected && (
-        <AssetViewer
+        <Viewer
           asset={selected}
           onFavorite={(asset) => {
             void toggleFavorite(asset);
           }}
           favoriteBusy={favoriteBusy.has(selected.asset_id)}
           navigationError={error}
+          onMemberChange={(member: Asset) =>
+            goAsset(
+              {
+                ...selected,
+                matched_asset_id: member.asset_id,
+                page_number: member.page_number,
+                start_ms: member.start_ms,
+                end_ms: member.end_ms,
+              },
+              true,
+              true,
+            )
+          }
           hasPrevious={
             !viewerMoving &&
             selectedIndex >= 0 &&
