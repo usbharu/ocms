@@ -50,7 +50,7 @@ func rankRecommendations(source catalog.Asset, assets []catalog.Asset, hashes ma
 	out := []recommendation{}
 	seen := map[string]bool{}
 	for _, a := range assets {
-		if seen[a.ID] || a.ID == source.ID || (source.BlobID != nil && a.BlobID != nil && *source.BlobID == *a.BlobID) {
+		if seen[a.ID] || a.ID == source.ID || sharedBlob(a, source) {
 			continue
 		}
 		seen[a.ID] = true
@@ -58,10 +58,16 @@ func rankRecommendations(source catalog.Asset, assets []catalog.Asset, hashes ma
 		t, tags := overlap(source.Tags, a.Tags)
 		item := recommendation{result: result{Asset: a}, CommonTags: tags, CommonCharacters: chars}
 		h := 0.0
-		if a.BlobID != nil {
-			if match, ok := hashes[*a.BlobID]; ok {
+		for _, blob := range assetBlobs(a) {
+			if match, ok := hashes[blob]; ok && match.rank >= h {
 				h = match.rank
 				item.Page, item.Start, item.End = match.page, match.start, match.end
+				for i, b := range a.BlobIDs {
+					if b == blob && i < len(a.BlobAssetIDs) {
+						item.MatchedAssetID = a.BlobAssetIDs[i]
+						break
+					}
+				}
 				item.Perceptual = "visual"
 				if strings.HasPrefix(source.MIME, "audio/") {
 					item.Perceptual = "audio"
@@ -146,6 +152,28 @@ func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) recommendationHashes(r *http.Request, a catalog.Asset) (map[string]candidate, string, error) {
 	out := map[string]candidate{}
+	if a.SeriesKind != "" {
+		state := "pending"
+		for _, id := range a.MemberIDs {
+			var member catalog.Asset
+			if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets/"+url.PathEscape(id), r.Header.Get("X-Principal"), nil, &member); err != nil {
+				return nil, "", err
+			}
+			matches, next, err := s.recommendationHashes(r, member)
+			if err != nil {
+				return nil, "", err
+			}
+			if next == "ready" {
+				state = "ready"
+			}
+			for blob, c := range matches {
+				if c.rank >= out[blob].rank {
+					out[blob] = c
+				}
+			}
+		}
+		return out, state, nil
+	}
 	audio := strings.HasPrefix(a.MIME, "audio/")
 	if !audio && !strings.HasPrefix(a.MIME, "image/") && !strings.HasPrefix(a.MIME, "video/") && a.MIME != "application/pdf" {
 		return out, "unsupported", nil

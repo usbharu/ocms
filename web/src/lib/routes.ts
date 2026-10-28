@@ -8,6 +8,7 @@ import {
 } from './assets';
 
 export type Section =
+  | 'series'
   | 'library'
   | 'tags'
   | 'characters'
@@ -30,12 +31,20 @@ export function parseRoute(pathname: string, search: string): RouteState {
   const detail = /^\/assets\/([^/]+)(\/view)?$/.exec(pathname);
   const sections = [
     'library',
+    'series',
     'tags',
     'characters',
     'favorites',
     'recommendations',
   ];
-  const candidate = detail ? params.get('from') : pathname.slice(1);
+  const series = /^\/series(?:\/(?:new|[^/]+)(?:\/(?:edit|view))?)?$/.test(
+    pathname,
+  );
+  const candidate = series
+    ? 'series'
+    : detail
+      ? params.get('from')
+      : pathname.slice(1);
   const section = (
     candidate &&
     sections.includes(candidate) &&
@@ -110,6 +119,7 @@ export function parseRoute(pathname: string, search: string): RouteState {
         ? (params.get('view') as 'list' | 'graph')
         : 'cloud',
     known:
+      series ||
       pathname === '/' ||
       sections.includes(pathname.slice(1)) ||
       Boolean(

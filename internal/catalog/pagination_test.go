@@ -15,6 +15,7 @@ func TestListOptions(t *testing.T) {
 		{"", listOptions{limit: 200}, false},
 		{"?limit=24&offset=216&kind=image", listOptions{limit: 24, offset: 216, kind: "image"}, false},
 		{"?kind=document", listOptions{limit: 200, kind: "document"}, false},
+		{"?kind=series", listOptions{limit: 200, kind: "series"}, false},
 		{query: "?limit=0", invalid: true},
 		{query: "?limit=201", invalid: true},
 		{query: "?offset=-1", invalid: true},

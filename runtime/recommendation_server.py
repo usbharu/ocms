@@ -6,7 +6,7 @@ import threading
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from recommendation_engine import ENGINE_VERSION, recommend
 from telemetry import instrument
 
@@ -19,11 +19,22 @@ slot = threading.Lock()
 class AssetInput(BaseModel):
     asset_id: str
     blob_id: str | None = None
-    tags: list[str] = Field(default_factory=list, max_length=512)
-    characters: list[str] = Field(default_factory=list, max_length=512)
+    blob_ids: list[str] = Field(default_factory=list)
+    series_kind: str = ''
+    tags: list[str] = Field(default_factory=list)
+    characters: list[str] = Field(default_factory=list)
     is_favorite: bool = False
     mime_type: str = ''
     rating: str = ''
+
+    @model_validator(mode='after')
+    def validate_metadata_size(self):
+        if self.series_kind not in ('', 'collection', 'composite'):
+            raise ValueError('invalid series kind')
+        # Series contain the complete union of their constituent metadata.
+        if not self.series_kind and (len(self.tags) > 512 or len(self.characters) > 512):
+            raise ValueError('too many labels')
+        return self
 
 
 class RecommendationInput(BaseModel):

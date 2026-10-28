@@ -14,6 +14,7 @@ export function AssetViewer({
   favoriteBusy,
   onClose,
   navigationError,
+  continuous = false,
 }: {
   asset: Asset;
   hasPrevious: boolean;
@@ -23,6 +24,7 @@ export function AssetViewer({
   favoriteBusy?: boolean;
   onClose: () => void;
   navigationError: string;
+  continuous?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -273,6 +275,10 @@ export function AssetViewer({
               <video
                 key={mediaURL}
                 controls
+                autoPlay={continuous}
+                onEnded={() => {
+                  if (continuous && hasNext) onNavigate(1);
+                }}
                 playsInline
                 preload="metadata"
                 src={`${mediaURL}${asset.start_ms !== undefined ? `#t=${asset.start_ms / 1000}` : ''}`}
@@ -285,6 +291,10 @@ export function AssetViewer({
                 <audio
                   key={mediaURL}
                   controls
+                  autoPlay={continuous}
+                  onEnded={() => {
+                    if (continuous && hasNext) onNavigate(1);
+                  }}
                   preload="metadata"
                   src={`${mediaURL}${asset.start_ms !== undefined ? `#t=${asset.start_ms / 1000}` : ''}`}
                   onError={() => setError('音声を再生できません。')}

@@ -25,10 +25,10 @@ def recommend(assets):
     matrix = TfidfVectorizer(analyzer=identity, binary=True, norm='l2').fit_transform(documents)
     profile = normalize(np.asarray(matrix[favorites].mean(axis=0)))
     scores = np.asarray(matrix @ profile.T).ravel()
-    favorite_blobs = {a['blob_id'] for a in assets if a.get('is_favorite') and a.get('blob_id')}
+    favorite_blobs = {b for a in assets if a.get('is_favorite') for b in (a.get('blob_ids') or ([a['blob_id']] if a.get('blob_id') else []))}
     candidates = [{'asset_id': a['asset_id'], 'score': float(score)}
                   for a, score in zip(assets, scores)
                   if score > 0 and not a.get('is_favorite')
-                  and (not a.get('blob_id') or a['blob_id'] not in favorite_blobs)]
+                  and not favorite_blobs.intersection(a.get('blob_ids') or ([a['blob_id']] if a.get('blob_id') else []))]
     candidates.sort(key=lambda a: (-a['score'], a['asset_id']))
     return {'status': 'ready', 'candidates': candidates[:1000]}

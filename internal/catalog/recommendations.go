@@ -18,10 +18,10 @@ func (s *Service) recommendationCandidates(w http.ResponseWriter, r *http.Reques
 	rows, err := s.DB.Query(r.Context(), `WITH candidates AS (
  SELECT a.id,
  ARRAY(SELECT DISTINCT t FROM unnest(a.tags) t) AS tags,
- ARRAY(SELECT name FROM catalog.asset_characters WHERE asset_id=a.id) AS characters
- FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id
- WHERE `+allowed+` AND a.id<>$2 AND ($5::uuid IS NULL OR o.blob_id IS DISTINCT FROM $5::uuid)
- AND (a.tags && $3::text[] OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND c.name=ANY($4::text[])))
+ a.characters
+ FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id
+ WHERE `+displayed+` AND a.id<>$2 AND ($5::uuid IS NULL OR o.blob_id IS DISTINCT FROM $5::uuid)
+ AND (a.tags && $3::text[] OR a.characters && $4::text[])
  ), ranked AS (
  SELECT id, 0.3 * (SELECT count(*)::float8 FROM (SELECT unnest(tags) INTERSECT SELECT unnest($3::text[])) x)
  / greatest(1,(SELECT count(*) FROM (SELECT unnest(tags) UNION SELECT unnest($3::text[])) x))

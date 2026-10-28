@@ -15,6 +15,7 @@ import { RecommendationsHeader } from './components/library/RecommendationsHeade
 import { SearchForm } from './components/library/SearchForm';
 import { UploadControl } from './components/library/UploadControl';
 import { UploadProgress } from './components/library/UploadProgress';
+import { SeriesPage } from './components/series/SeriesPage';
 import { TagsPage } from './components/tags/TagsPage';
 import { Button } from './components/ui/button';
 import { NativeSelect } from './components/ui/native-select';
@@ -227,6 +228,10 @@ export function App() {
             query: next.query,
             mode: next.mode,
             limit: 200,
+            media_types:
+              nextKind === 'all'
+                ? undefined
+                : [nextKind === 'document' ? 'pdf' : nextKind],
             ratings: next.ratings,
             ...(next.favorites ? { favorites: true } : {}),
           }),
@@ -399,7 +404,12 @@ export function App() {
       setSearching(false);
       return;
     }
-    if (route.section === 'tags' || route.section === 'characters') {
+    if (route.section === 'series') snapshots.current.clear();
+    if (
+      route.section === 'series' ||
+      route.section === 'tags' ||
+      route.section === 'characters'
+    ) {
       loadedCollection.current = '';
       setSearching(false);
       return;
@@ -511,6 +521,13 @@ export function App() {
             `/api/v1/assets/${encodeURIComponent(route.assetId)}`,
           );
           if (!active) return;
+          if (asset.composite_id || asset.series_kind) {
+            navigate(
+              `/series/${asset.composite_id || asset.asset_id}${route.viewer ? '/view' : ''}${asset.composite_id ? `?member=${asset.asset_id}` : ''}`,
+              { replace: true },
+            );
+            return;
+          }
           const match = liveSnapshot.current.assets.find(
             (item) => item.asset_id === route.assetId,
           );
@@ -586,6 +603,22 @@ export function App() {
     replace = false,
     nextPage = page,
   ) {
+    if (asset.series_kind || asset.composite_id) {
+      const target = asset.composite_id || asset.asset_id;
+      const member =
+        asset.matched_asset_id || (asset.composite_id ? asset.asset_id : '');
+      const hit = new URLSearchParams();
+      if (member) hit.set('member', member);
+      if (asset.page_number !== undefined)
+        hit.set('page_number', String(asset.page_number));
+      if (asset.start_ms !== undefined)
+        hit.set('start_ms', String(asset.start_ms));
+      if (asset.end_ms !== undefined) hit.set('end_ms', String(asset.end_ms));
+      navigate(
+        `/series/${target}${viewer ? '/view' : ''}${hit.size ? `?${hit}` : ''}`,
+      );
+      return;
+    }
     snapshots.current.set(location.key, liveSnapshot.current);
     capturedSnapshot.current = location.key;
     const parent = location.pathname + location.search;
@@ -1123,6 +1156,8 @@ export function App() {
               一覧に戻る
             </Link>
           </section>
+        ) : route.section === 'series' ? (
+          <SeriesPage key={location.pathname} request={request} />
         ) : section === 'tags' || section === 'characters' ? (
           <TagsPage
             key={section}

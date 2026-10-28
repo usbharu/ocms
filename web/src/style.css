@@ -1520,3 +1520,73 @@ summary .count {
   width: 100px;
   flex-shrink: 0;
 }
+
+.series-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.series-fields {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.series-fields label {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.series-fields input,
+.series-fields select {
+  width: 100%;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--background);
+  color: inherit;
+}
+.series-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+.series-editor > section {
+  min-width: 0;
+}
+.series-members {
+  padding: 0;
+  list-style: none;
+}
+.series-members li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.series-members li > span:not(.thumbnail),
+.series-members li > a {
+  flex: 1;
+  min-width: 100px;
+  overflow-wrap: anywhere;
+}
+.series-members .thumbnail {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+}
+.series-members small {
+  display: block;
+}
+.series-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+@media (max-width: 760px) {
+  .series-editor {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+}

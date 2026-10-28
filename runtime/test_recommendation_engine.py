@@ -31,6 +31,14 @@ class RecommendationTests(unittest.TestCase):
         self.assertEqual([a['asset_id'] for a in out['candidates']], ['a', 'b'])
         self.assertAlmostEqual(out['candidates'][0]['score'], 1)
 
+    def test_composite_excludes_all_favorite_blobs(self):
+        favorite = asset('series', ['x'], favorite=True)
+        favorite['blob_ids'] = ['first', 'second']
+        data = [favorite, asset('copy', ['x'], blob='second'),
+                asset('unrelated', ['x'], blob='third')]
+        result = recommend(data)['candidates']
+        self.assertEqual([a['asset_id'] for a in result], ['unrelated'])
+
     def test_relevance_and_limit(self):
         data = [asset('f', ['x'], favorite=True), asset('mixed', ['x', 'y'])]
         data += [asset(str(i).zfill(4), ['x']) for i in range(1001)]

@@ -1,4 +1,5 @@
 import type { Ref } from 'react';
+import { Link } from 'react-router';
 import {
   type Asset,
   type AssetChanges,
@@ -178,6 +179,11 @@ export function AssetDetails({
           )}
         </div>
       </div>
+      <Button variant="outline" asChild>
+        <Link to={`/series/new?source=${selected.asset_id}`}>
+          シリーズを作成
+        </Link>
+      </Button>
       <AssetMetadataEditor
         key={selected.asset_id}
         asset={selected}
