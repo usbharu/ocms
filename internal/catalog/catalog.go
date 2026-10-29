@@ -19,15 +19,23 @@ type Service struct {
 	MaxSize int64
 }
 type Asset struct {
-	Rating     string   `json:"rating"`
-	IsFavorite bool     `json:"is_favorite"`
-	ID         string   `json:"asset_id"`
-	Filename   string   `json:"filename"`
-	MIME       string   `json:"mime_type"`
-	Tags       []string `json:"tags"`
-	Characters []string `json:"characters"`
-	Status     string   `json:"status"`
-	BlobID     *string  `json:"blob_id,omitempty"`
+	BlobAssetIDs   []string `json:"blob_asset_ids,omitempty"`
+	MatchedAssetID string   `json:"matched_asset_id,omitempty"`
+	SeriesKind     string   `json:"series_kind,omitempty"`
+	SeriesVersion  int64    `json:"series_version,omitempty"`
+	CompositeID    string   `json:"composite_id,omitempty"`
+	CoverAssetID   string   `json:"cover_asset_id,omitempty"`
+	BlobIDs        []string `json:"blob_ids,omitempty"`
+	MemberIDs      []string `json:"member_ids,omitempty"`
+	Rating         string   `json:"rating"`
+	IsFavorite     bool     `json:"is_favorite"`
+	ID             string   `json:"asset_id"`
+	Filename       string   `json:"filename"`
+	MIME           string   `json:"mime_type"`
+	Tags           []string `json:"tags"`
+	Characters     []string `json:"characters"`
+	Status         string   `json:"status"`
+	BlobID         *string  `json:"blob_id,omitempty"`
 }
 type Upload struct {
 	ID      string  `json:"upload_id"`
@@ -39,6 +47,7 @@ type Upload struct {
 
 func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
+	s.seriesRoutes(m)
 	m.HandleFunc("GET /internal/assets/{id}/authorize", s.authorizeAsset)
 	m.HandleFunc("GET /internal/assets/{id}/recommendation-candidates", s.recommendationCandidates)
 	m.HandleFunc("GET /internal/recommendation-dataset", s.recommendationDataset)
@@ -278,12 +287,13 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	platform.JSON(w, 200, map[string]string{"asset_id": assetID, "state": "completed"})
 }
 
-const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,ARRAY(SELECT c.name FROM catalog.asset_characters c WHERE c.asset_id=a.id ORDER BY c.position,c.name),a.rating,EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.asset_id=a.id AND f.principal_id=$1) FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
-const allowed = `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1))`
+const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,a.characters,a.rating,` + favoriteCondition + `,a.series_kind,a.series_version,a.composite_id,a.cover_asset_id,a.blob_ids,a.member_ids,a.blob_asset_ids FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
+const allowed = `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1)) AND NOT EXISTS(SELECT 1 FROM catalog.series_leaves l JOIN catalog.assets x ON x.id=l.asset_id WHERE l.series_id=a.id AND NOT(x.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=x.id AND g.principal_id=$1)))`
+const displayed = allowed + ` AND a.composite_id=''`
 
 func scanAsset(row pgx.Row) (Asset, error) {
 	var a Asset
-	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID, &a.Characters, &a.Rating, &a.IsFavorite)
+	err := row.Scan(&a.ID, &a.Filename, &a.MIME, &a.Tags, &a.Status, &a.BlobID, &a.Characters, &a.Rating, &a.IsFavorite, &a.SeriesKind, &a.SeriesVersion, &a.CompositeID, &a.CoverAssetID, &a.BlobIDs, &a.MemberIDs, &a.BlobAssetIDs)
 	return a, err
 }
 func (s *Service) readable(ctx context.Context, id, principal string) (Asset, error) {
@@ -312,14 +322,18 @@ func (s *Service) detail(w http.ResponseWriter, r *http.Request) {
 }
 
 type listOptions struct {
-	limit   int
-	offset  int
-	kind    string
-	ratings []string
+	seriesKind string
+	limit      int
+	offset     int
+	kind       string
+	ratings    []string
 }
 
 func parseListOptions(r *http.Request) (listOptions, error) {
-	options := listOptions{limit: 200, kind: r.URL.Query().Get("kind")}
+	options := listOptions{limit: 200, kind: r.URL.Query().Get("kind"), seriesKind: r.URL.Query().Get("series_kind")}
+	if len(r.URL.Query()["series_kind"]) > 1 || (options.seriesKind != "" && options.seriesKind != "collection" && options.seriesKind != "composite") {
+		return options, errors.New("invalid series kind")
+	}
 	for key, target := range map[string]*int{"limit": &options.limit, "offset": &options.offset} {
 		if values, ok := r.URL.Query()[key]; ok {
 			if len(values) != 1 {
@@ -338,7 +352,7 @@ func parseListOptions(r *http.Request) (listOptions, error) {
 		return options, err
 	}
 	switch options.kind {
-	case "", "image", "video", "audio", "document":
+	case "", "image", "video", "audio", "document", "series":
 		return options, nil
 	default:
 		return options, errors.New("invalid asset kind")
@@ -355,21 +369,26 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query().Get("q")
-	where := `WHERE ` + allowed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND strpos(lower(c.name),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='document' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
-	where += ` AND ($4='' OR $4=ANY(a.tags)) AND ($5='' OR EXISTS(SELECT 1 FROM catalog.asset_characters c WHERE c.asset_id=a.id AND c.name=$5))`
+	where := `WHERE ` + displayed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM unnest(a.characters) c WHERE strpos(lower(c),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='series' AND a.series_kind<>'') OR ($3='document' AND a.series_kind='' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
+	where += ` AND ($4='' OR $4=ANY(a.tags)) AND ($5='' OR $5=ANY(a.characters))`
 	where += ` AND ($6::text[] IS NULL OR a.rating=ANY($6))`
 	favorites, err := favoriteFilter(r)
 	if err != nil {
 		platform.Error(w, 400, "INVALID_FAVORITES")
 		return
 	}
+	if options.seriesKind == "collection" {
+		where += ` AND a.series_kind='collection'`
+	} else if options.seriesKind == "composite" {
+		where += ` AND a.series_kind='composite'`
+	}
 	order := ` ORDER BY a.created_at DESC,a.id DESC`
 	if favorites {
 		where += ` AND ` + favoriteCondition
-		order = ` ORDER BY (SELECT f.created_at FROM catalog.asset_favorites f WHERE f.asset_id=a.id AND f.principal_id=$1) DESC,a.id DESC`
+		order = ` ORDER BY (SELECT max(f.created_at) FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND (f.asset_id=a.id OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite))) DESC,a.id DESC`
 	}
 	var total int
-	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings).Scan(&total)
+	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.display_assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings).Scan(&total)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -418,8 +437,13 @@ func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 		filter = ` AND ` + favoriteCondition
 	}
 	items := []Asset{}
-	if a.BlobID != nil {
-		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND o.blob_id=$2 AND a.id<>$3 AND ($4::text[] IS NULL OR a.rating=ANY($4))`+filter+` ORDER BY a.created_at LIMIT 200`, user(r), *a.BlobID, a.ID, ratings)
+	sourceBlobs := a.BlobIDs
+	sourceID := a.ID
+	if a.CompositeID != "" {
+		sourceID = a.CompositeID
+	}
+	if len(a.BlobIDs) > 0 {
+		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND a.blob_ids && $2::text[] AND a.id<>$3 AND ($4::text[] IS NULL OR a.rating=ANY($4))`+filter+` ORDER BY a.created_at LIMIT 200`, user(r), a.BlobIDs, sourceID, ratings)
 		if err != nil {
 			platform.RespondError(w, err)
 			return
@@ -429,6 +453,13 @@ func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 			a, err := scanAsset(rows)
 			if assetError(w, err) {
 				return
+			}
+			for i, blob := range a.BlobIDs {
+				for _, sourceBlob := range sourceBlobs {
+					if blob == sourceBlob && i < len(a.BlobAssetIDs) {
+						a.MatchedAssetID = a.BlobAssetIDs[i]
+					}
+				}
 			}
 			items = append(items, a)
 		}
@@ -441,6 +472,14 @@ func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 	if !guard(w, r) {
+		return
+	}
+	a, err := s.readable(r.Context(), r.PathValue("id"), user(r))
+	if assetError(w, err) {
+		return
+	}
+	if a.SeriesKind != "" {
+		platform.Error(w, 409, "EDIT_SERIES_MEMBERS")
 		return
 	}
 	var in struct {
@@ -496,15 +535,67 @@ func (s *Service) remove(w http.ResponseWriter, r *http.Request) {
 	if !guard(w, r) {
 		return
 	}
-	tag, err := s.DB.Exec(r.Context(), `UPDATE catalog.assets a SET status='deleted',deleted_at=now(),updated_at=now() WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission='admin'))`, user(r), r.PathValue("id"))
+	tx, err := s.DB.Begin(r.Context())
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		platform.Error(w, 404, "NOT_FOUND")
+	defer tx.Rollback(r.Context())
+	if err = seriesLock(r.Context(), tx); err != nil {
+		platform.RespondError(w, err)
 		return
 	}
+	var id string
+	err = tx.QueryRow(r.Context(), `SELECT a.id FROM catalog.assets a WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission='admin')) FOR UPDATE OF a`, user(r), r.PathValue("id")).Scan(&id)
+	if assetError(w, err) {
+		return
+	}
+	var series bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM catalog.series WHERE asset_id=$1)`, id).Scan(&series)
+	if err == nil && series {
+		err = dissolveSeries(r.Context(), tx, id)
+	} else if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=$1`, id)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE catalog.series SET version=version+1 WHERE asset_id IN (SELECT series_id FROM catalog.series_members WHERE asset_id=$1)`, id)
+		}
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `DELETE FROM catalog.series_members WHERE asset_id=$1`, id)
+		}
+		if err == nil {
+			rows, e := tx.Query(r.Context(), `SELECT s.asset_id::text FROM catalog.series s WHERE s.kind='composite' AND (SELECT count(*) FROM catalog.series_members WHERE series_id=s.asset_id)<2`)
+			if e != nil {
+				err = e
+			} else {
+				ids := []string{}
+				for rows.Next() {
+					var v string
+					if e = rows.Scan(&v); e != nil {
+						break
+					}
+					ids = append(ids, v)
+				}
+				if e == nil {
+					e = rows.Err()
+				}
+				rows.Close()
+				err = e
+				for _, v := range ids {
+					if err == nil {
+						err = dissolveSeries(r.Context(), tx, v)
+					}
+				}
+			}
+		}
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		platform.RespondError(w, err)
+		return
+	}
+
 	platform.Audit(r.Context(), "asset.deleted", user(r), r.PathValue("id"))
 	w.WriteHeader(204)
 }
@@ -523,15 +614,55 @@ func (s *Service) grant(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
-	tag, err := s.DB.Exec(r.Context(), `INSERT INTO catalog.grants(asset_id,principal_id,permission) SELECT id,$3::uuid,$4 FROM catalog.assets WHERE id=$2 AND owner_id=$1 AND deleted_at IS NULL ON CONFLICT(asset_id,principal_id) DO UPDATE SET permission=excluded.permission`, user(r), r.PathValue("id"), in.Principal, in.Permission)
+	tx, err := s.DB.Begin(r.Context())
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(r.Context())
+	if err = seriesLock(r.Context(), tx); err != nil {
+		platform.RespondError(w, err)
+		return
+	}
+	var owner bool
+	err = tx.QueryRow(r.Context(), `SELECT owner_id=$1 FROM catalog.assets WHERE id=$2 AND deleted_at IS NULL FOR UPDATE`, user(r), r.PathValue("id")).Scan(&owner)
+	if assetError(w, err) {
+		return
+	}
+	if !owner {
 		platform.Error(w, 404, "NOT_FOUND")
 		return
 	}
+	var member bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM catalog.series_members WHERE asset_id=$1)`, r.PathValue("id")).Scan(&member)
+	if err != nil {
+		platform.RespondError(w, err)
+		return
+	}
+	if member {
+		platform.Error(w, 409, "CHANGE_PARENT_SERIES_ACL")
+		return
+	}
+	_, err = tx.Exec(r.Context(), `INSERT INTO catalog.grants(asset_id,principal_id,permission)
+ SELECT id,$3::uuid,$4 FROM catalog.assets WHERE owner_id=$1 AND (id=$2 OR id IN (SELECT asset_id FROM catalog.series_leaves WHERE series_id=$2) OR id IN(SELECT asset_id FROM catalog.series_members WHERE series_id=$2))
+ ON CONFLICT(asset_id,principal_id) DO UPDATE SET permission=excluded.permission`, user(r), r.PathValue("id"), in.Principal, in.Permission)
+	// A work in multiple collections must not acquire a different ACL from its other parents.
+	if err == nil {
+		var conflict bool
+		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM catalog.series_members m JOIN catalog.assets a ON a.id=m.series_id JOIN catalog.assets b ON b.id=m.asset_id WHERE (SELECT coalesce(jsonb_object_agg(principal_id,permission),'{}') FROM catalog.grants WHERE asset_id=a.id)<>(SELECT coalesce(jsonb_object_agg(principal_id,permission),'{}') FROM catalog.grants WHERE asset_id=b.id))`).Scan(&conflict)
+		if err == nil && conflict {
+			platform.Error(w, 409, "SERIES_ACL_MISMATCH")
+			return
+		}
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		platform.RespondError(w, err)
+		return
+	}
+
 	platform.Audit(r.Context(), "asset.permission_changed", user(r), r.PathValue("id"))
 	w.WriteHeader(204)
 }

@@ -35,7 +35,7 @@
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.3",
+    "@biomejs/biome": "2.6.4",
     "@playwright/test": "1.64.1",
     "@storybook/addon-a11y": "10.6.5",
     "@storybook/addon-docs": "10.6.5",
@@ -52,8 +52,8 @@
     "msw-storybook-addon": "3.0.3",
     "storybook": "10.6.5",
     "tailwindcss": "4.3.3",
-    "typescript": "5.9.3",
-    "vite": "7.3.7",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
     "vitest": "5.0.5"
   },
   "lint-staged": {

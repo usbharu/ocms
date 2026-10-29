@@ -1,4 +1,5 @@
 import {
+  type AssetHit,
   type Kind,
   kinds,
   type Mode,
@@ -8,6 +9,7 @@ import {
 } from './assets';
 
 export type Section =
+  | 'series'
   | 'library'
   | 'tags'
   | 'characters'
@@ -18,6 +20,7 @@ export type RouteState = {
   context: SearchContext;
   sourceId?: string;
   assetId?: string;
+  hit: AssetHit;
   viewer: boolean;
   page: number;
   kind: Kind;
@@ -30,12 +33,20 @@ export function parseRoute(pathname: string, search: string): RouteState {
   const detail = /^\/assets\/([^/]+)(\/view)?$/.exec(pathname);
   const sections = [
     'library',
+    'series',
     'tags',
     'characters',
     'favorites',
     'recommendations',
   ];
-  const candidate = detail ? params.get('from') : pathname.slice(1);
+  const series = /^\/series(?:\/(?:new|[^/]+)(?:\/(?:edit|view))?)?$/.test(
+    pathname,
+  );
+  const candidate = series
+    ? 'series'
+    : detail
+      ? params.get('from')
+      : pathname.slice(1);
   const section = (
     candidate &&
     sections.includes(candidate) &&
@@ -86,7 +97,23 @@ export function parseRoute(pathname: string, search: string): RouteState {
   } catch {
     /* Invalid encoded path is an unknown route. */
   }
+  const hit: AssetHit = {};
+  if (detail && params.get('member'))
+    hit.matched_asset_id = params.get('member') || undefined;
+  for (const key of ['page_number', 'start_ms', 'end_ms'] as const) {
+    const raw = params.get(key);
+    const value = Number(raw);
+    if (
+      detail &&
+      raw !== null &&
+      /^\d+$/.test(raw) &&
+      Number.isSafeInteger(value) &&
+      (key !== 'page_number' || value > 0)
+    )
+      hit[key] = value;
+  }
   return {
+    hit,
     section,
     context: {
       mode,
@@ -110,6 +137,7 @@ export function parseRoute(pathname: string, search: string): RouteState {
         ? (params.get('view') as 'list' | 'graph')
         : 'cloud',
     known:
+      series ||
       pathname === '/' ||
       sections.includes(pathname.slice(1)) ||
       Boolean(
@@ -153,9 +181,14 @@ export function assetURL(
   context: SearchContext,
   page: number,
   kind: Kind,
+  hit?: AssetHit,
 ) {
   const collection = collectionURL(section, context, page, kind);
   const params = new URLSearchParams(collection.split('?')[1]);
   if (section !== 'library') params.set('from', section);
+  if (hit?.matched_asset_id) params.set('member', hit.matched_asset_id);
+  for (const key of ['page_number', 'start_ms', 'end_ms'] as const) {
+    if (hit?.[key] !== undefined) params.set(key, String(hit[key]));
+  }
   return `/assets/${encodeURIComponent(id)}${viewer ? '/view' : ''}${params.size ? `?${params}` : ''}`;
 }
