@@ -29,24 +29,28 @@ jobs:
       matrix:
         include:
           - image: ocms
+            description: '二次元コンテンツの整理・探索に重点を置いたコンテンツマネージャー。タグ・キャラクター推定、関連コンテンツ表示、柔軟な重複管理、サーバーサイド暗号化が特徴です。認証はOIDCのみに対応します。'
             suffix: ''
             tag_suffix: ''
             compat_alias: false
             build_args: ''
             dockerfile: Dockerfile
           - image: ocms-runtime-cpu
+            description: 'OCMSのタグ・キャラクター推定、意味検索、文字起こしと、お気に入りに基づく推薦に使う推論Runtime。CPU版とCUDAライブラリ同梱版を提供します。現在の推論はCPUで実行します。'
             suffix: '-runtime'
             tag_suffix: '-cpu'
             compat_alias: false
             build_args: RUNTIME_VARIANT=cpu
             dockerfile: runtime/Dockerfile
           - image: ocms-runtime-cuda
+            description: 'OCMSのタグ・キャラクター推定、意味検索、文字起こしと、お気に入りに基づく推薦に使う推論Runtime。CPU版とCUDAライブラリ同梱版を提供します。現在の推論はCPUで実行します。'
             suffix: '-runtime'
             tag_suffix: '-cuda'
             compat_alias: true
             build_args: RUNTIME_VARIANT=cuda
             dockerfile: runtime/Dockerfile
           - image: ocms-postgres
+            description: 'OCMSのファイル情報と検索索引を保存するPostgreSQL。日本語全文検索用のPGroongaと、ベクトル検索用のpgvectorを同梱しています。'
             suffix: '-postgres'
             tag_suffix: ''
             compat_alias: false
@@ -88,6 +92,7 @@ jobs:
             type=raw,value=latest,enable=${{ matrix.compat_alias && !github.event.release.prerelease }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=${{ matrix.description }}
       - uses: docker/build-push-action@v7
         with:
           context: .
