@@ -133,6 +133,7 @@ export function App() {
   const related = context.mode === 'recommendation';
   const personal = Boolean(context.personalized && !context.source);
   const [searching, setSearching] = useState(false);
+  const [viewerLoading, setViewerLoading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const uploadRunning = useRef(false);
@@ -377,7 +378,8 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: Run once per navigation or authenticated principal, not on fetched state updates.
   useEffect(() => {
     const principal = me?.principal_id;
-    if (lastPrincipal.current !== principal) {
+    const principalChanged = lastPrincipal.current !== principal;
+    if (principalChanged) {
       snapshots.current.clear();
       loadedCollection.current = '';
       lastPrincipal.current = principal;
@@ -393,8 +395,12 @@ export function App() {
     setAssetMissing(false);
     setAssetLoadFailed(false);
     setSection(route.section);
-    setViewerOpen(false);
-    setSelected(null);
+    setViewerLoading(Boolean(me && route.known && route.viewer));
+    // Keep the modal mounted while the next authorized asset is fetched.
+    if (principalChanged || !me || !route.known || !route.viewer) {
+      setViewerOpen(false);
+      setSelected(null);
+    }
     if (!me || !route.known) {
       setSearching(false);
       return;
@@ -450,6 +456,8 @@ export function App() {
         } catch (error) {
           if (active) {
             const status = (error as { status?: number }).status;
+            setSelected(null);
+            setViewerOpen(false);
             setAssetMissing(status === 404 || status === 403);
             setAssetLoadFailed(status !== 404 && status !== 403);
             setSearching(false);
@@ -501,7 +509,12 @@ export function App() {
           route.kind,
           Boolean(next.sessionId),
         );
-        if (!active || !result) return;
+        if (!active) return;
+        if (!result) {
+          setSelected(null);
+          setViewerOpen(false);
+          return;
+        }
       }
       readyRoute.current = location.key;
       setSearching(false);
@@ -519,6 +532,8 @@ export function App() {
         } catch (error) {
           if (active) {
             const status = (error as { status?: number }).status;
+            setSelected(null);
+            setViewerOpen(false);
             setAssetMissing(status === 404 || status === 403);
             setAssetLoadFailed(status !== 404 && status !== 403);
             setSearching(false);
@@ -526,12 +541,19 @@ export function App() {
         }
       }
     };
-    void load().catch((error: Error) => {
-      if (isActive()) {
-        loadedCollection.current = '';
-        setError(error.message);
-      }
-    });
+    void load()
+      .catch((error: Error) => {
+        if (isActive()) {
+          setSelected(null);
+          setViewerOpen(false);
+          setSearching(false);
+          loadedCollection.current = '';
+          setError(error.message);
+        }
+      })
+      .finally(() => {
+        if (active) setViewerLoading(false);
+      });
     // The request version invalidates old collection responses immediately on navigation.
     return () => {
       active = false;
@@ -825,7 +847,7 @@ export function App() {
   }
 
   async function moveViewer(direction: number) {
-    if (!selected || viewerMoving) return;
+    if (!selected || viewerMoving || viewerLoading) return;
     const index = selectedIndex;
     const next = pageAssets[index + direction];
     if (next) {
@@ -1385,11 +1407,13 @@ export function App() {
           navigationError={error}
           hasPrevious={
             !viewerMoving &&
+            !viewerLoading &&
             selectedIndex >= 0 &&
             (selectedIndex > 0 || currentPage > 1)
           }
           hasNext={
             !viewerMoving &&
+            !viewerLoading &&
             (selectedIndex < pageAssets.length - 1 ||
               (selectedIndex >= 0 && currentPage < pageCount))
           }
