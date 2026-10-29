@@ -532,3 +532,88 @@ for (const width of [1440, 390]) {
       });
   });
 }
+
+for (const width of [1440, 390, 320]) {
+  for (const view of ['list', 'grid', 'detailed-grid']) {
+    test(`series badges remain distinct from rating and favorites in ${view} at ${width}px`, async ({
+      page,
+    }) => {
+      await setup(page, false, true);
+      await page.route('**/api/v1/assets?**', (route) =>
+        route.fulfill({
+          json: {
+            assets: [{ ...composite, rating: 'explicit' }, collection, a],
+            total: 3,
+          },
+        }),
+      );
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/library');
+      await page.getByLabel('表示方法').selectOption(view);
+      for (const name of ['漫画', '作品集']) {
+        const card = page.getByRole('button', { name, exact: true });
+        await expect(card.locator('.series-badge')).toBeVisible();
+        await expect(card).toHaveAccessibleDescription('シリーズ');
+      }
+      await expect(
+        page
+          .getByRole('button', { name: a.filename, exact: true })
+          .locator('.series-badge'),
+      ).toHaveCount(0);
+      const card = page.getByRole('button', { name: '漫画', exact: true });
+      const badge = await card.locator('.series-badge').boundingBox();
+      const cardBox = await card.boundingBox();
+      if (!badge || !cardBox)
+        throw new Error('Series badge and card must be visible');
+      expect(badge.x).toBeGreaterThanOrEqual(cardBox.x);
+      expect(badge.y).toBeGreaterThanOrEqual(cardBox.y);
+      expect(badge.x + badge.width).toBeLessThanOrEqual(
+        cardBox.x + cardBox.width,
+      );
+      expect(badge.y + badge.height).toBeLessThanOrEqual(
+        cardBox.y + cardBox.height,
+      );
+      for (const indicator of [
+        card.locator('.rating-badge'),
+        card.locator('..').locator('.favorite-button'),
+      ]) {
+        const other = await indicator.boundingBox();
+        if (!other)
+          throw new Error('Rating and favorite indicators must be visible');
+        expect(
+          badge.x + badge.width <= other.x ||
+            other.x + other.width <= badge.x ||
+            badge.y + badge.height <= other.y ||
+            other.y + other.height <= badge.y,
+        ).toBe(true);
+      }
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      if (
+        process.env.OCMS_CAPTURE_SCREENSHOTS &&
+        (width === 1440 || (width === 390 && view === 'grid'))
+      )
+        await page.screenshot({
+          path: `../docs/series-badges-${view}-${width}.png`,
+          fullPage: true,
+        });
+    });
+  }
+}
+
+test('series badge is visible even when its cover preview is unavailable', async ({
+  page,
+}) => {
+  await setup(page, false, true);
+  await page.route('**/preview**', (route) =>
+    route.fulfill({ status: 404, body: '' }),
+  );
+  await page.goto('/library');
+  await page.getByLabel('表示方法').selectOption('grid');
+  const card = page.getByRole('button', { name: '漫画', exact: true });
+  await expect(card.locator('.thumbnail-placeholder')).toBeVisible();
+  await expect(card.locator('.series-badge')).toBeVisible();
+});

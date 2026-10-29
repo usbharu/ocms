@@ -1464,6 +1464,30 @@ summary .count {
   font-weight: 700;
   line-height: 1.4;
 }
+.series-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.view-grid .series-badge,
+.view-detailed-grid .series-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+}
+.view-grid .rating-badge + .series-badge,
+.view-detailed-grid .rating-badge + .series-badge {
+  top: 30px;
+}
 .metadata-editor #asset-rating {
   display: block;
   margin-bottom: 16px;
