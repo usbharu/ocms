@@ -1578,6 +1578,12 @@ summary .count {
 .series-members small {
   display: block;
 }
+.series-list-kind {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
 .series-submit-actions {
   margin-bottom: 1.5rem;
 }

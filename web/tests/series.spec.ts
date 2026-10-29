@@ -93,8 +93,21 @@ async function setup(page: Page, failure = false, logicalLibrary = false) {
       };
       return route.fulfill({ json: saved });
     }
-    if (path === '/api/v1/series')
-      return route.fulfill({ json: { assets: [collection], total: 1 } });
+    if (path === '/api/v1/series') {
+      const query = new URL(req.url()).searchParams;
+      const filtered = [saved, collection].filter(
+        (asset) =>
+          !query.get('series_kind') ||
+          asset.series_kind === query.get('series_kind'),
+      );
+      const offset = Number(query.get('offset'));
+      return route.fulfill({
+        json: {
+          assets: filtered.slice(offset, offset + 200),
+          total: filtered.length,
+        },
+      });
+    }
     if (path === '/api/v1/series/comic') return route.fulfill({ json: saved });
     if (path === '/api/v1/series/collection')
       return route.fulfill({ json: collection });
@@ -387,6 +400,12 @@ for (const width of [1440, 390]) {
       }),
     );
     await page.goto('/series/comic/edit');
+    await expect(
+      page
+        .locator('.series-editor > section')
+        .nth(1)
+        .locator('.series-members > li'),
+    ).toHaveCount(120);
     const save = page.getByRole('button', { name: '保存', exact: true });
     await expect(save).toBeEnabled();
     const nameBox = await page.getByLabel('シリーズ名').boundingBox();
@@ -402,5 +421,114 @@ for (const width of [1440, 390]) {
     expect(
       await page.evaluate(() => document.documentElement.scrollHeight),
     ).toBeGreaterThan(740);
+  });
+}
+
+test('series tab shows a composite-only library and keeps its type filter in the URL', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.route('**/api/v1/series?**', (route) => {
+    const kind = new URL(route.request().url()).searchParams.get('series_kind');
+    return route.fulfill({
+      json: {
+        assets: kind === 'collection' ? [] : [composite],
+        total: kind === 'collection' ? 0 : 1,
+      },
+    });
+  });
+  await page.goto('/series');
+  await expect(
+    page.getByRole('link', { name: '漫画', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('シリーズがありません', { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel('シリーズの種類')).toHaveValue('');
+  await page.getByLabel('シリーズの種類').selectOption('collection');
+  await expect(
+    page.getByText('通常シリーズがありません', { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('シリーズの種類').selectOption('composite');
+  await expect(page).toHaveURL(/series_kind=composite/);
+  await expect(
+    page.getByRole('link', { name: '漫画', exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('シリーズの種類')).toHaveValue('composite');
+  await page.getByLabel('シリーズの種類').selectOption('');
+  await expect(page).toHaveURL(/\/series$/);
+  await page.goBack();
+  await expect(page.getByLabel('シリーズの種類')).toHaveValue('composite');
+});
+
+test('series type is applied before pagination and changing type returns to the first page', async ({
+  page,
+}) => {
+  await setup(page);
+  const entries = Array.from({ length: 402 }, (_, i) => ({
+    ...composite,
+    asset_id: `series-${i}`,
+    filename: `シリーズ ${i}`,
+    series_kind: i % 2 ? 'collection' : 'composite',
+  }));
+  await page.route('**/api/v1/series?**', (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    const kind = query.get('series_kind');
+    const filtered = entries.filter(
+      (asset) => !kind || asset.series_kind === kind,
+    );
+    const offset = Number(query.get('offset'));
+    return route.fulfill({
+      json: {
+        assets: filtered.slice(offset, offset + 200),
+        total: filtered.length,
+      },
+    });
+  });
+  await page.goto('/series?series_kind=composite');
+  await expect(
+    page.getByRole('link', { name: 'シリーズ 0', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: 'シリーズ 1', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('link', { name: '次へ', exact: true }).click();
+  await expect(page).toHaveURL(/series_kind=composite&page=2/);
+  await expect(
+    page.getByRole('link', { name: 'シリーズ 400', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('シリーズの種類').selectOption('collection');
+  await expect(page).toHaveURL(/series_kind=collection$/);
+  await expect(
+    page.getByRole('link', { name: 'シリーズ 1', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: '前へ', exact: true }),
+  ).toHaveCount(0);
+});
+
+for (const width of [1440, 390]) {
+  test(`series list shows both kinds at ${width}px`, async ({ page }) => {
+    await setup(page);
+    await page.setViewportSize({ width, height: 740 });
+    await page.goto('/series');
+    await expect(
+      page.getByRole('link', { name: '漫画', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: '作品集', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel('シリーズの種類')).toHaveValue('');
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    if (process.env.OCMS_CAPTURE_SCREENSHOTS)
+      await page.screenshot({
+        path: `../docs/series-list-${width}.png`,
+        fullPage: true,
+      });
   });
 }

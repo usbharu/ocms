@@ -838,7 +838,7 @@ GET /api/v1/recommendations?kind=image&ratings=general,sensitive&session_id=<ses
 
 | メソッド・パス | 契約 |
 |---|---|
-| `GET /api/v1/series` | 通常シリーズ一覧。`limit`・`offset` はAsset一覧と共通 |
+| `GET /api/v1/series` | 通常・一体型シリーズ一覧。`series_kind` は省略時に両方、`collection`・`composite` で種類を指定。`limit`・`offset` はAsset一覧と共通 |
 | `POST /api/v1/series` | `name`・`kind`・順序付き `member_ids` で作成 |
 | `GET /api/v1/series/{id}` | 集約Asset、順序付き `members`、所有者の編集可否 `editable` |
 | `PATCH /api/v1/series/{id}` | `name`・`kind`・`member_ids`・取得時の `version` で一括保存 |
@@ -943,7 +943,7 @@ SPAのナビゲーションはライブラリ・シリーズ・タグ・キャ�
 
 ### 12.3 シリーズ画面と連続閲覧
 
-ヘッダーの「シリーズ」は `/series` の通常シリーズ一覧を開く。作成は `/series/new`、詳細・閲覧は通常Assetと同じ `/assets/{id}`・`/assets/{id}/view`、構成編集は `/series/{id}/edit`。従来の `/series/{id}`・`/series/{id}/view` は通常AssetのURLへ置換遷移する。Asset詳細の「シリーズを作成」は `source` に対象Assetを指定して作成画面を開き、選択済みとする。画像以外からの一体型作成は禁止する。
+ヘッダーの「シリーズ」は `/series` で通常・一体型の両方を表示する。「種類」で両方・通常・一体型を切り替え、選択を `series_kind` クエリへ保存する。種類変更時は先頭ページへ戻し、ページ送りでは種類を維持する。作成は `/series/new`、詳細・閲覧は通常Assetと同じ `/assets/{id}`・`/assets/{id}/view`、構成編集は `/series/{id}/edit`。従来の `/series/{id}`・`/series/{id}/view` は通常AssetのURLへ置換遷移する。Asset詳細の「シリーズを作成」は `source` に対象Assetを指定して作成画面を開き、選択済みとする。画像以外からの一体型作成は禁止する。
 
 ライブラリ・検索・おすすめ・シリーズ一覧からの選択は、通常コンテンツと共通の詳細パネルで表示する。集約メタデータは読み取り専用とし、所有者の「シリーズを編集」から構成・名前・元画像のメタデータを変更する。プレビュー・閲覧には実際の構成Assetを使い、Blobのないシリーズ自身の配信・Job・派生ファイルAPIは呼び出さない。
 

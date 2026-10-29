@@ -6,6 +6,7 @@ import { AssetViewer } from '../library/AssetViewer';
 import { FavoriteButton } from '../library/FavoriteButton';
 import { Thumbnail } from '../library/Thumbnail';
 import { Button } from '../ui/button';
+import { NativeSelect } from '../ui/native-select';
 
 type Series = Asset & { members: Asset[]; editable: boolean };
 type Suggestion = Asset & { reasons?: string[] };
@@ -21,6 +22,11 @@ export function SeriesPage({ request }: { request: Request }) {
   const id = creating ? '' : parts[2];
   const params = new URLSearchParams(location.search);
   const source = params.get('source') || '';
+  const listKind = ['collection', 'composite'].includes(
+    params.get('series_kind') || '',
+  )
+    ? params.get('series_kind') || ''
+    : '';
   const initialMember = params.get('member') || '';
   const initialLocation: Pick<Asset, 'page_number' | 'start_ms' | 'end_ms'> =
     {};
@@ -53,6 +59,13 @@ export function SeriesPage({ request }: { request: Request }) {
   const [index, setIndex] = useState(0);
   const [total, setTotal] = useState(0);
   const page = Math.max(1, Number(params.get('page')) || 1);
+
+  function seriesListURL(nextPage = 1, nextKind = listKind) {
+    const query = new URLSearchParams();
+    if (nextKind) query.set('series_kind', nextKind);
+    if (nextPage > 1) query.set('page', String(nextPage));
+    return `/series${query.size ? `?${query}` : ''}`;
+  }
 
   // Fetches are scoped to this route; stale responses cannot replace a new draft.
   // biome-ignore lint/correctness/useExhaustiveDependencies: request uses the current authenticated session.
@@ -96,7 +109,7 @@ export function SeriesPage({ request }: { request: Request }) {
         }
       } else {
         const value = (await request(
-          `/api/v1/series?limit=200&offset=${(page - 1) * 200}`,
+          `/api/v1/series?limit=200&offset=${(page - 1) * 200}${listKind ? `&series_kind=${listKind}` : ''}`,
         )) as { assets: Asset[]; total: number };
         if (active) {
           setItems(value.assets);
@@ -114,7 +127,7 @@ export function SeriesPage({ request }: { request: Request }) {
     return () => {
       active = false;
     };
-  }, [id, creating, source, initialMember, page, retry]);
+  }, [id, creating, source, initialMember, page, listKind, retry]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: request uses the current authenticated session.
   useEffect(() => {
@@ -556,8 +569,27 @@ export function SeriesPage({ request }: { request: Request }) {
           <Link to="/series/new">シリーズを作成</Link>
         </Button>
       </div>
+      <label className="series-list-kind" htmlFor="series-list-kind">
+        種類{' '}
+        <NativeSelect
+          id="series-list-kind"
+          aria-label="シリーズの種類"
+          value={listKind}
+          onChange={(event) => navigate(seriesListURL(1, event.target.value))}
+        >
+          <option value="">すべて</option>
+          <option value="collection">通常シリーズ</option>
+          <option value="composite">一体型シリーズ</option>
+        </NativeSelect>
+      </label>
       {items.length === 0 ? (
-        <p>シリーズがありません</p>
+        <p>
+          {listKind === 'collection'
+            ? '通常シリーズがありません'
+            : listKind === 'composite'
+              ? '一体型シリーズがありません'
+              : 'シリーズがありません'}
+        </p>
       ) : (
         <ul className="series-members">
           {items.map((asset) => (
@@ -569,15 +601,16 @@ export function SeriesPage({ request }: { request: Request }) {
               >
                 {asset.filename}
               </Link>
+              <small>
+                {asset.series_kind === 'composite' ? '一体型' : '通常'}
+              </small>
             </li>
           ))}
         </ul>
       )}
       <div className="series-actions">
-        {page > 1 && <Link to={`/series?page=${page - 1}`}>前へ</Link>}
-        {page * 200 < total && (
-          <Link to={`/series?page=${page + 1}`}>次へ</Link>
-        )}
+        {page > 1 && <Link to={seriesListURL(page - 1)}>前へ</Link>}
+        {page * 200 < total && <Link to={seriesListURL(page + 1)}>次へ</Link>}
       </div>
     </section>
   );

@@ -61,9 +61,6 @@ func validSeries(in seriesInput) bool {
 func (s *Service) seriesList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	q.Set("kind", "series")
-	if q.Get("series_kind") == "" {
-		q.Set("series_kind", "collection")
-	}
 	r.URL.RawQuery = q.Encode()
 	s.list(w, r)
 }

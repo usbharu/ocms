@@ -322,14 +322,18 @@ func (s *Service) detail(w http.ResponseWriter, r *http.Request) {
 }
 
 type listOptions struct {
-	limit   int
-	offset  int
-	kind    string
-	ratings []string
+	seriesKind string
+	limit      int
+	offset     int
+	kind       string
+	ratings    []string
 }
 
 func parseListOptions(r *http.Request) (listOptions, error) {
-	options := listOptions{limit: 200, kind: r.URL.Query().Get("kind")}
+	options := listOptions{limit: 200, kind: r.URL.Query().Get("kind"), seriesKind: r.URL.Query().Get("series_kind")}
+	if len(r.URL.Query()["series_kind"]) > 1 || (options.seriesKind != "" && options.seriesKind != "collection" && options.seriesKind != "composite") {
+		return options, errors.New("invalid series kind")
+	}
 	for key, target := range map[string]*int{"limit": &options.limit, "offset": &options.offset} {
 		if values, ok := r.URL.Query()[key]; ok {
 			if len(values) != 1 {
@@ -373,8 +377,10 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_FAVORITES")
 		return
 	}
-	if r.URL.Query().Get("series_kind") == "collection" {
+	if options.seriesKind == "collection" {
 		where += ` AND a.series_kind='collection'`
+	} else if options.seriesKind == "composite" {
+		where += ` AND a.series_kind='composite'`
 	}
 	order := ` ORDER BY a.created_at DESC,a.id DESC`
 	if favorites {

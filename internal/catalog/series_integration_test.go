@@ -129,6 +129,23 @@ func TestSeriesDatabase(t *testing.T) {
 		Assets []catalog.Asset
 		Total  int
 	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/series", owner, nil, 200), &list)
+	if list.Total != 1 || len(list.Assets) != 1 || list.Assets[0].ID != comp.ID {
+		t.Fatal("series tab hid the only composite")
+	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/series", other, nil, 200), &list)
+	if list.Total != 0 || len(list.Assets) != 0 {
+		t.Fatal("series list leaked unauthorized composites")
+	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/series?series_kind=collection", owner, nil, 200), &list)
+	if list.Total != 0 {
+		t.Fatal("collection filter included a composite")
+	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/series?series_kind=composite", owner, nil, 200), &list)
+	if list.Total != 1 || list.Assets[0].ID != comp.ID {
+		t.Fatal("composite filter hid a composite")
+	}
+	call(cat.URL, "GET", "/api/v1/series?series_kind=unknown", owner, nil, 400)
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets", owner, nil, 200), &list)
 	if list.Total != 2 {
 		t.Fatalf("expected 2 logical works, got %d", list.Total)
@@ -288,6 +305,18 @@ func TestSeriesDatabase(t *testing.T) {
 	call(cat.URL, "POST", "/api/v1/series", owner, map[string]any{"name": "acl mismatch", "kind": "collection", "member_ids": []string{comp.ID, c.ID}}, 409)
 	call(cat.URL, "POST", "/internal/assets/"+c.ID+"/grants", owner, map[string]any{"principal_id": other, "permission": "read"}, 204)
 	collection := create("collection", "collection", []string{comp.ID, c.ID})
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/series", owner, nil, 200), &list)
+	if list.Total != 2 || len(list.Assets) != 2 {
+		t.Fatal("series list must include both kinds")
+	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/series?series_kind=collection", owner, nil, 200), &list)
+	if list.Total != 1 || list.Assets[0].ID != collection.ID {
+		t.Fatal("collection filter must exclude composites")
+	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/series?limit=1&offset=1", owner, nil, 200), &list)
+	if list.Total != 2 || len(list.Assets) != 1 {
+		t.Fatal("series pagination lost a kind")
+	}
 	call(cat.URL, "POST", "/api/v1/series", owner, map[string]any{"name": "nested collection", "kind": "collection", "member_ids": []string{collection.ID, c.ID}}, 400)
 	// Two writers with the same version: exactly one may commit.
 	statuses := make(chan int, 2)
