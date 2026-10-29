@@ -7,7 +7,7 @@ import (
 	"ocms/internal/platform"
 )
 
-const favoriteCondition = `EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.asset_id=a.id AND f.principal_id=$1)`
+const favoriteCondition = `EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND ((f.asset_id=a.id AND NOT EXISTS(SELECT 1 FROM catalog.series s WHERE s.asset_id=a.id AND s.kind='composite')) OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite)))`
 
 func favoriteFilter(r *http.Request) (bool, error) {
 	values, ok := r.URL.Query()["favorites"]
@@ -34,6 +34,10 @@ func (s *Service) favorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	if err = seriesLock(r.Context(), tx); err != nil {
+		platform.RespondError(w, err)
+		return
+	}
 	// Lock the Asset against concurrent logical deletion.
 	var id string
 	err = tx.QueryRow(r.Context(), `SELECT a.id FROM catalog.assets a WHERE `+allowed+` AND a.id=$2 FOR UPDATE OF a`, user(r), r.PathValue("id")).Scan(&id)
@@ -41,9 +45,12 @@ func (s *Service) favorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPut {
-		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_favorites(principal_id,asset_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, user(r), id)
+		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_favorites(principal_id,asset_id) SELECT $1,$2::uuid WHERE NOT EXISTS(SELECT 1 FROM catalog.series WHERE asset_id=$2 AND kind='composite') ON CONFLICT DO NOTHING`, user(r), id)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_favorites(principal_id,asset_id) SELECT $1,m.asset_id FROM catalog.series_members m WHERE m.series_id=$2 AND m.composite ON CONFLICT DO NOTHING`, user(r), id)
+		}
 	} else {
-		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_favorites WHERE principal_id=$1 AND asset_id=$2`, user(r), id)
+		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_favorites WHERE principal_id=$1 AND (asset_id=$2 OR asset_id IN (SELECT asset_id FROM catalog.series_members WHERE series_id=$2 AND composite))`, user(r), id)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

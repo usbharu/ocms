@@ -41,6 +41,21 @@ class RecommendationServerTests(unittest.TestCase):
             self.assertTrue(slot.acquire(blocking=False))
             slot.release()
 
+    def test_series_blob_identity_survives_request_validation(self):
+        item = RecommendationInput(assets=[
+            {'asset_id': 'series', 'series_kind': 'composite',
+             'blob_ids': ['first', 'second'], 'tags': ['x'], 'is_favorite': True},
+            {'asset_id': 'copy', 'blob_id': 'second', 'tags': ['x']},
+            {'asset_id': 'candidate', 'blob_id': 'third', 'tags': ['x']},
+        ])
+        with patch.dict(os.environ, {'INTERNAL_TOKEN': 'r' * 32}):
+            result = recommendations(item, 'r' * 32)
+        self.assertEqual([a['asset_id'] for a in result['candidates']], ['candidate'])
+        labels = [str(i) for i in range(513)]
+        RecommendationInput(assets=[{'asset_id': 'series', 'series_kind': 'composite', 'tags': labels}])
+        with self.assertRaises(ValueError):
+            RecommendationInput(assets=[{'asset_id': 'single', 'tags': labels}])
+
     def test_validation_response_does_not_echo_input(self):
         result = asyncio.run(invalid_request(None, None))
         self.assertEqual(result.body, b'{"error":"INVALID_REQUEST"}')

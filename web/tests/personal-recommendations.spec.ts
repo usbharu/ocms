@@ -195,6 +195,10 @@ for (const width of [1440, 375, 320]) {
     // Safari's native keyboard preference uses Option+Tab to include links.
     await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
     await expect(
+      nav.getByRole('link', { name: 'シリーズ', exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+    await expect(
       nav.getByRole('link', { name: 'タグ', exact: true }),
     ).toBeFocused();
   });

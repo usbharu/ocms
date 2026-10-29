@@ -38,6 +38,7 @@ func TestSPARoutesAndStaticBoundaries(t *testing.T) {
 	}{
 		{"/", 200, true}, {"/library?q=sample&page=2", 200, true}, {"/tags", 200, true},
 		{"/characters", 200, true}, {"/favorites", 200, true}, {"/recommendations", 200, true},
+		{"/series", 200, true}, {"/series/new?source=id", 200, true}, {"/series/id", 200, true}, {"/series/id/edit", 200, true}, {"/series/id/view?member=page", 200, true},
 		{"/assets/id", 200, true}, {"/assets/id/view?from=favorites", 200, true},
 		{"/unknown", 404, true}, {"/unknown/nested", 404, true},
 		{"/assets/app.js", 200, false}, {"/pdfjs/cmaps/map.bcmap", 200, false},
@@ -69,7 +70,7 @@ func TestSPARoutesAndStaticBoundaries(t *testing.T) {
 }
 
 func TestReturnTargets(t *testing.T) {
-	for _, raw := range []string{"", "/", "/library?q=sample", "/tags?view=graph", "/assets/id/view?from=favorites&page=2"} {
+	for _, raw := range []string{"", "/", "/library?q=sample", "/tags?view=graph", "/series/new?source=id", "/series/id/edit", "/series/id/view?member=page", "/assets/id/view?from=favorites&page=2"} {
 		if target, ok := returnTarget(raw); !ok || target == "" {
 			t.Error("valid return target rejected")
 		}

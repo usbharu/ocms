@@ -32,6 +32,7 @@ func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/v1/recommendations", s.personalRecommendations)
 	m.HandleFunc("POST /api/v1/search", s.search)
+	m.HandleFunc("POST /api/v1/series/suggestions", s.seriesSuggestions)
 	m.HandleFunc("GET /api/v1/assets/{id}/similar", s.similar)
 	m.HandleFunc("GET /api/v1/assets/{id}/recommendations", s.recommendations)
 	m.HandleFunc("POST /internal/index", s.index)
@@ -229,8 +230,18 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 		}
 		_, directMatch := directRanks[a.ID]
 		contentMatch := false
-		if a.BlobID != nil {
-			_, contentMatch = candidates[*a.BlobID]
+		for _, blob := range assetBlobs(a) {
+			if _, ok := candidates[blob]; ok {
+				contentMatch = true
+			}
+		}
+		if !directMatch && a.SeriesKind == "composite" {
+			for _, id := range a.MemberIDs {
+				if directRanks[id] > 0 {
+					directRanks[a.ID] = max(directRanks[a.ID], directRanks[id])
+					directMatch = true
+				}
+			}
 		}
 		if !directMatch && !contentMatch {
 			continue
@@ -240,7 +251,7 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 		}
 		allowedType := len(in.Types) == 0
 		for _, t := range in.Types {
-			if strings.HasPrefix(a.MIME, t+"/") || t == "pdf" && a.MIME == "application/pdf" {
+			if strings.HasPrefix(a.MIME, t+"/") || t == "pdf" && a.MIME == "application/pdf" || t == "series" && a.SeriesKind != "" {
 				allowedType = true
 			}
 		}
@@ -249,9 +260,20 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 		}
 		seen[a.ID] = true
 		item := result{Asset: a}
-		if a.BlobID != nil {
-			c := candidates[*a.BlobID]
+		if blobs := assetBlobs(a); len(blobs) > 0 {
+			c := candidate{}
+			for _, blob := range blobs {
+				if next, ok := candidates[blob]; ok && next.rank >= c.rank {
+					c = next
+				}
+			}
 			text := []rune(c.content)
+			for i, blob := range a.BlobIDs {
+				if blob == c.blob && i < len(a.BlobAssetIDs) {
+					item.MatchedAssetID = a.BlobAssetIDs[i]
+					break
+				}
+			}
 			item.Snippet = string(text[:min(200, len(text))])
 			item.Page = c.page
 			item.Start = c.start
@@ -261,10 +283,11 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		rank := func(a result) float64 {
-			if a.BlobID == nil {
-				return directRanks[a.ID]
+			best := 0.0
+			for _, blob := range assetBlobs(a.Asset) {
+				best = max(best, candidates[blob].rank)
 			}
-			return candidates[*a.BlobID].rank + directRanks[a.ID]
+			return best + directRanks[a.ID]
 		}
 		if rank(out[i]) == rank(out[j]) {
 			return out[i].ID < out[j].ID
@@ -298,6 +321,26 @@ func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID str
 	}
 	if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets/"+url.PathEscape(assetID), r.Header.Get("X-Principal"), nil, &a); err != nil {
 		platform.RespondError(w, err)
+		return
+	}
+	if a.CompositeID != "" {
+		var parent catalog.Asset
+		if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets/"+url.PathEscape(a.CompositeID), r.Header.Get("X-Principal"), nil, &parent); err != nil {
+			platform.RespondError(w, err)
+			return
+		}
+		a = parent
+	}
+	if a.SeriesKind != "" {
+		hashes, _, err := s.recommendationHashes(r, a)
+		if err != nil {
+			platform.RespondError(w, err)
+			return
+		}
+		for _, blob := range assetBlobs(a) {
+			delete(hashes, blob)
+		}
+		s.respond(w, r, query{Mode: "perceptual", Limit: limit, Favorites: favorites, Ratings: ratings}, hashes, nil)
 		return
 	}
 	if a.BlobID == nil {

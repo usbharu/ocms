@@ -2,6 +2,10 @@ package contracts
 
 // RecommendationInput contains only metadata needed by the isolated engine.
 type RecommendationInput struct {
+	BlobIDs    []string `json:"blob_ids,omitempty"`
+	SeriesKind string   `json:"series_kind,omitempty"`
+	MemberIDs  []string `json:"member_ids,omitempty"`
+	Version    int64    `json:"series_version,omitempty"`
 	ID         string   `json:"asset_id"`
 	BlobID     *string  `json:"blob_id"`
 	Tags       []string `json:"tags"`

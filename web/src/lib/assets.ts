@@ -10,6 +10,13 @@ export const ratingLabel = (rating: Rating) =>
   rating === 'unrated' ? '未判定' : rating;
 
 export type Asset = {
+  series_kind?: 'collection' | 'composite';
+  series_version?: number;
+  member_ids?: string[];
+  composite_id?: string;
+  cover_asset_id?: string;
+  blob_asset_ids?: string[];
+  matched_asset_id?: string;
   is_favorite?: boolean;
   asset_id: string;
   filename: string;
@@ -23,6 +30,11 @@ export type Asset = {
   start_ms?: number;
   end_ms?: number;
 };
+export type AssetHit = Pick<
+  Asset,
+  'matched_asset_id' | 'page_number' | 'start_ms' | 'end_ms'
+>;
+
 export type AssetChanges = {
   filename?: string;
   tags?: string[];
@@ -63,7 +75,7 @@ export type SearchContext = {
   ratings?: Rating[];
 };
 export type View = 'list' | 'grid' | 'detailed-grid';
-export type Kind = 'all' | 'image' | 'video' | 'audio' | 'document';
+export type Kind = 'all' | 'image' | 'video' | 'audio' | 'document' | 'series';
 export const statuses: Record<string, string> = {
   pending: 'アップロード待ち',
   uploading: 'アップロード中',
@@ -78,6 +90,7 @@ export const statuses: Record<string, string> = {
 };
 export const kinds: { id: Kind; label: string }[] = [
   { id: 'all', label: 'すべて' },
+  { id: 'series', label: 'シリーズ' },
   { id: 'image', label: '画像' },
   { id: 'video', label: '動画' },
   { id: 'audio', label: '音声' },
@@ -87,6 +100,7 @@ export const pageSize = 200;
 export const allFiles: SearchContext = { mode: 'keyword', query: '' };
 
 export function kindOf(asset: Asset): Kind {
+  if (asset.series_kind) return 'series';
   const type = asset.mime_type.split('/')[0];
   return type === 'image' || type === 'video' || type === 'audio'
     ? type

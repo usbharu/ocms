@@ -5,6 +5,7 @@ export function Thumbnail({ asset }: { asset: Asset }) {
   const [failed, setFailed] = useState(false);
   const kind = kindOf(asset);
   const hasPreview =
+    Boolean(asset.cover_asset_id) ||
     kind === 'image' ||
     kind === 'video' ||
     asset.mime_type === 'application/pdf';
@@ -12,7 +13,7 @@ export function Thumbnail({ asset }: { asset: Asset }) {
   if (asset.mime_type === 'application/pdf') query.set('thumbnail', '1');
   if (asset.page_number !== undefined)
     query.set('page', String(asset.page_number));
-  const url = `/api/v1/assets/${asset.asset_id}/preview${query.size ? `?${query}` : ''}`;
+  const url = `/api/v1/assets/${asset.cover_asset_id || asset.asset_id}/preview${query.size ? `?${query}` : ''}`;
   return (
     <span className="thumbnail" aria-hidden="true">
       {hasPreview && !failed ? (
