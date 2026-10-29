@@ -104,7 +104,7 @@ func (s *Service) listTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) listCharacters(w http.ResponseWriter, r *http.Request) {
-	s.listLabels(w, r, "characters", `JOIN catalog.asset_characters t ON t.asset_id=a.id`)
+	s.listLabels(w, r, "characters", `CROSS JOIN LATERAL unnest(a.characters) t(name)`)
 }
 
 func (s *Service) listLabels(w http.ResponseWriter, r *http.Request, key, source string) {
@@ -113,8 +113,8 @@ func (s *Service) listLabels(w http.ResponseWriter, r *http.Request, key, source
 	}
 	var result json.RawMessage
 	err := s.DB.QueryRow(r.Context(), `WITH visible AS MATERIALIZED (
- SELECT DISTINCT a.id,t.name FROM catalog.assets a `+source+`
- WHERE `+allowed+` AND btrim(t.name)<>''
+ SELECT DISTINCT a.id,t.name FROM catalog.display_assets a `+source+`
+ WHERE `+displayed+` AND btrim(t.name)<>''
  ), counts AS MATERIALIZED (
  SELECT name,count(*) AS asset_count FROM visible WHERE strpos(lower(name),lower($2))>0 GROUP BY name
  ), top_tags AS MATERIALIZED (

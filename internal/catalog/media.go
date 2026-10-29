@@ -108,7 +108,7 @@ func (s *Service) authorizeBlobs(w http.ResponseWriter, r *http.Request) {
 	if in.Favorites {
 		filter = ` AND ` + favoriteCondition
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND (o.blob_id=ANY($2::uuid[]) OR a.id=ANY($3::uuid[]))`+filter+` ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs)
+	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND (a.blob_ids && $2::text[] OR a.id=ANY($3::uuid[]) OR (a.series_kind='composite' AND a.member_ids && $3::text[]))`+filter+` ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

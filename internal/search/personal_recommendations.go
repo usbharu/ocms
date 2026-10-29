@@ -91,8 +91,10 @@ func sampleRecommendations(pool []contracts.RecommendationScore, features map[st
 func personalCandidates(cache personalCache, conditions personalConditions) ([]contracts.RecommendationScore, map[string][]string) {
 	favorites := map[string]bool{}
 	for _, a := range cache.Assets {
-		if a.Favorite && a.BlobID != nil {
-			favorites[*a.BlobID] = true
+		if a.Favorite {
+			for _, blob := range inputBlobs(a) {
+				favorites[blob] = true
+			}
 		}
 	}
 	allowed := map[string]bool{}
@@ -102,7 +104,16 @@ func personalCandidates(cache personalCache, conditions personalConditions) ([]c
 		if kind != "image" && kind != "video" && kind != "audio" {
 			kind = "document"
 		}
-		if a.Favorite || (a.BlobID != nil && favorites[*a.BlobID]) || (conditions.Kind != "all" && kind != conditions.Kind) || !contracts.MatchesRating(a.Rating, conditions.Ratings) {
+		if a.SeriesKind != "" {
+			kind = "series"
+		}
+		duplicate := false
+		for _, blob := range inputBlobs(a) {
+			if favorites[blob] {
+				duplicate = true
+			}
+		}
+		if a.Favorite || duplicate || (conditions.Kind != "all" && kind != conditions.Kind) || !contracts.MatchesRating(a.Rating, conditions.Ratings) {
 			continue
 		}
 		allowed[a.ID] = true
@@ -138,7 +149,7 @@ func (s *Service) personalRecommendations(w http.ResponseWriter, r *http.Request
 	if kind == "" {
 		kind = "all"
 	}
-	if kind != "all" && kind != "image" && kind != "video" && kind != "audio" && kind != "document" {
+	if kind != "all" && kind != "image" && kind != "video" && kind != "audio" && kind != "document" && kind != "series" {
 		platform.Error(w, 400, "INVALID_KIND")
 		return
 	}

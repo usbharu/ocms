@@ -10,9 +10,16 @@ export function AppHeader({
   onSectionChange,
 }: {
   children?: ReactNode;
-  section?: 'library' | 'tags' | 'characters' | 'favorites' | 'recommendations';
+  section?:
+    | 'series'
+    | 'library'
+    | 'tags'
+    | 'characters'
+    | 'favorites'
+    | 'recommendations';
   onSectionChange?: (
     section:
+      | 'series'
       | 'library'
       | 'tags'
       | 'characters'
@@ -33,6 +40,7 @@ export function AppHeader({
           {(
             [
               ['library', 'ライブラリ'],
+              ['series', 'シリーズ'],
               ['tags', 'タグ'],
               ['characters', 'キャラクター'],
               ['favorites', 'お気に入り'],
