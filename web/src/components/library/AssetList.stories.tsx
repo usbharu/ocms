@@ -149,3 +149,49 @@ export const Recommendations: Story = {
     ).toBeVisible();
   },
 };
+
+const seriesAssets = [
+  {
+    ...assets[0],
+    asset_id: 'series-collection',
+    filename: '作品集',
+    mime_type: 'application/vnd.ocms.series',
+    series_kind: 'collection' as const,
+    cover_asset_id: assets[0].asset_id,
+  },
+  {
+    ...assets[0],
+    asset_id: 'series-composite',
+    filename: '一体型作品',
+    mime_type: 'application/vnd.ocms.series',
+    series_kind: 'composite' as const,
+    cover_asset_id: assets[0].asset_id,
+    rating: 'explicit' as const,
+  },
+  assets[0],
+];
+export const SeriesList: Story = {
+  args: { assets: seriesAssets, resultCount: seriesAssets.length },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const button = canvas.getByRole('button', { name: '作品集' });
+    await expect(button).toHaveAccessibleDescription('シリーズ');
+    await expect(canvas.getAllByText('シリーズ', { exact: true })).toHaveLength(
+      2,
+    );
+  },
+};
+export const SeriesGrid: Story = {
+  args: {
+    assets: seriesAssets,
+    resultCount: seriesAssets.length,
+    view: 'grid',
+  },
+};
+export const SeriesDetailedGrid: Story = {
+  args: {
+    assets: seriesAssets,
+    resultCount: seriesAssets.length,
+    view: 'detailed-grid',
+  },
+};
