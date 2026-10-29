@@ -16,7 +16,9 @@ export function AssetMetadataEditor({
   onSave,
   onSearchTag,
   onSearchCharacter,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   onSearchTag: (tag: string) => void;
   onSearchCharacter: (character: string) => void;
   asset: Asset;
@@ -24,9 +26,11 @@ export function AssetMetadataEditor({
 }) {
   const rating = asset.rating ?? 'unrated';
   const [filename, setFilename] = useState(asset.filename);
-  const [tags, setTags] = useState(asset.tags);
+  const [savedTags, setTags] = useState(asset.tags);
+  const tags = readOnly ? asset.tags : savedTags;
   const [tagInput, setTagInput] = useState('');
-  const [characters, setCharacters] = useState(asset.characters ?? []);
+  const [savedCharacters, setCharacters] = useState(asset.characters ?? []);
+  const characters = readOnly ? (asset.characters ?? []) : savedCharacters;
   const [characterInput, setCharacterInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -118,50 +122,52 @@ export function AssetMetadataEditor({
 
   return (
     <div className="metadata-editor" aria-busy={saving}>
-      <details className="rename-field">
-        <summary>名前を変更</summary>
-        <Label htmlFor="asset-filename" className="visually-hidden">
-          ファイル名
-        </Label>
-        <Input
-          id="asset-filename"
-          value={filename}
-          disabled={saving}
-          onChange={(e) => {
-            setFilename(e.target.value);
-            clearFeedback();
-          }}
-          onBlur={saveFilename}
-          onCompositionStart={() => {
-            composing.current = true;
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
-          }}
-          onKeyDown={(e) => {
-            if (
-              e.nativeEvent.isComposing ||
-              composing.current ||
-              e.keyCode === 229
-            )
-              return;
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              saveFilename();
-            }
-            if (e.key === 'Escape') {
-              e.preventDefault();
-              setFilename(savedFilename.current);
+      {!readOnly && (
+        <details className="rename-field">
+          <summary>名前を変更</summary>
+          <Label htmlFor="asset-filename" className="visually-hidden">
+            ファイル名
+          </Label>
+          <Input
+            id="asset-filename"
+            value={filename}
+            disabled={saving}
+            onChange={(e) => {
+              setFilename(e.target.value);
               clearFeedback();
-            }
-          }}
-        />
-      </details>
+            }}
+            onBlur={saveFilename}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            onKeyDown={(e) => {
+              if (
+                e.nativeEvent.isComposing ||
+                composing.current ||
+                e.keyCode === 229
+              )
+                return;
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                saveFilename();
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setFilename(savedFilename.current);
+                clearFeedback();
+              }
+            }}
+          />
+        </details>
+      )}
       <Label htmlFor="asset-rating">コンテンツレーティング</Label>
       <NativeSelect
         id="asset-rating"
         value={rating}
-        disabled={saving}
+        disabled={saving || readOnly}
         onChange={(event) => {
           void save({ rating: event.target.value as Rating });
         }}
@@ -172,7 +178,7 @@ export function AssetMetadataEditor({
           </option>
         ))}
       </NativeSelect>
-      <Label htmlFor="asset-tag-input">タグ</Label>
+      <Label htmlFor={readOnly ? undefined : 'asset-tag-input'}>タグ</Label>
       {tags.length > 0 ? (
         <ul className="tag-chips" aria-label="登録済みタグ">
           {tags.map((tag, index) => (
@@ -187,64 +193,70 @@ export function AssetMetadataEditor({
               >
                 {tag}
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={saving}
-                aria-label={`タグ「${tag}」を削除`}
-                onClick={() => {
-                  void save({ tags: tags.filter((_, i) => i !== index) });
-                }}
-              >
-                <span aria-hidden="true">×</span>
-              </Button>
+              {!readOnly && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={saving}
+                  aria-label={`タグ「${tag}」を削除`}
+                  onClick={() => {
+                    void save({ tags: tags.filter((_, i) => i !== index) });
+                  }}
+                >
+                  <span aria-hidden="true">×</span>
+                </Button>
+              )}
             </li>
           ))}
         </ul>
       ) : (
         <p className="metadata-hint">タグはありません</p>
       )}
-      <form
-        className="tag-input"
-        onSubmit={(e) => {
-          e.preventDefault();
-          addTag();
-        }}
-      >
-        <Input
-          id="asset-tag-input"
-          onCompositionStart={() => {
-            composing.current = true;
+      {!readOnly && (
+        <form
+          className="tag-input"
+          onSubmit={(e) => {
+            e.preventDefault();
+            addTag();
           }}
-          onCompositionEnd={() => {
-            composing.current = false;
-          }}
-          value={tagInput}
-          disabled={saving}
-          placeholder="タグを追加"
-          onChange={(e) => {
-            setTagInput(e.target.value);
-            clearFeedback();
-          }}
-          onKeyDown={(e) => {
-            if (
-              e.key === 'Enter' &&
-              (e.nativeEvent.isComposing ||
-                composing.current ||
-                e.keyCode === 229)
-            )
-              e.preventDefault();
-          }}
-        />
-        <Button
-          variant="outline"
-          type="submit"
-          disabled={saving || !tagInput.trim()}
         >
-          追加
-        </Button>
-      </form>
-      <Label htmlFor="asset-character-input">キャラクター</Label>
+          <Input
+            id="asset-tag-input"
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            value={tagInput}
+            disabled={saving}
+            placeholder="タグを追加"
+            onChange={(e) => {
+              setTagInput(e.target.value);
+              clearFeedback();
+            }}
+            onKeyDown={(e) => {
+              if (
+                e.key === 'Enter' &&
+                (e.nativeEvent.isComposing ||
+                  composing.current ||
+                  e.keyCode === 229)
+              )
+                e.preventDefault();
+            }}
+          />
+          <Button
+            variant="outline"
+            type="submit"
+            disabled={saving || !tagInput.trim()}
+          >
+            追加
+          </Button>
+        </form>
+      )}
+      <Label htmlFor={readOnly ? undefined : 'asset-character-input'}>
+        キャラクター
+      </Label>
       {characters.length > 0 ? (
         <ul className="tag-chips" aria-label="登録済みキャラクター">
           {characters.map((character, index) => (
@@ -259,66 +271,70 @@ export function AssetMetadataEditor({
               >
                 {character}
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={saving}
-                aria-label={`キャラクター「${character}」を削除`}
-                onClick={() => {
-                  void save({
-                    characters: characters.filter((_, i) => i !== index),
-                  });
-                }}
-              >
-                <span aria-hidden="true">×</span>
-              </Button>
+              {!readOnly && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={saving}
+                  aria-label={`キャラクター「${character}」を削除`}
+                  onClick={() => {
+                    void save({
+                      characters: characters.filter((_, i) => i !== index),
+                    });
+                  }}
+                >
+                  <span aria-hidden="true">×</span>
+                </Button>
+              )}
             </li>
           ))}
         </ul>
       ) : (
         <p className="metadata-hint">キャラクターはありません</p>
       )}
-      <form
-        className="tag-input"
-        onSubmit={(e) => {
-          e.preventDefault();
-          addCharacter();
-        }}
-      >
-        <Input
-          id="asset-character-input"
-          onCompositionStart={() => {
-            composing.current = true;
+      {!readOnly && (
+        <form
+          className="tag-input"
+          onSubmit={(e) => {
+            e.preventDefault();
+            addCharacter();
           }}
-          onCompositionEnd={() => {
-            composing.current = false;
-          }}
-          value={characterInput}
-          disabled={saving}
-          placeholder="キャラクターを追加"
-          onChange={(e) => {
-            setCharacterInput(e.target.value);
-            clearFeedback();
-          }}
-          onKeyDown={(e) => {
-            if (
-              e.key === 'Enter' &&
-              (e.nativeEvent.isComposing ||
-                composing.current ||
-                e.keyCode === 229)
-            )
-              e.preventDefault();
-          }}
-        />
-        <Button
-          variant="outline"
-          type="submit"
-          aria-label="キャラクターを追加"
-          disabled={saving || !characterInput.trim()}
         >
-          追加
-        </Button>
-      </form>
+          <Input
+            id="asset-character-input"
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            value={characterInput}
+            disabled={saving}
+            placeholder="キャラクターを追加"
+            onChange={(e) => {
+              setCharacterInput(e.target.value);
+              clearFeedback();
+            }}
+            onKeyDown={(e) => {
+              if (
+                e.key === 'Enter' &&
+                (e.nativeEvent.isComposing ||
+                  composing.current ||
+                  e.keyCode === 229)
+              )
+                e.preventDefault();
+            }}
+          />
+          <Button
+            variant="outline"
+            type="submit"
+            aria-label="キャラクターを追加"
+            disabled={saving || !characterInput.trim()}
+          >
+            追加
+          </Button>
+        </form>
+      )}
       <div role={message ? 'status' : undefined} className="metadata-status">
         {message}
       </div>
