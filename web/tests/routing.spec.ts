@@ -13,6 +13,95 @@ const files = Array.from({ length: 202 }, (_, i) => ({
 const picture =
   '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="#8dbba8"/></svg>';
 
+for (const start of [0, 199]) {
+  test(`viewer stays open during delayed forward and backward navigation from ${start}`, async ({
+    page,
+  }) => {
+    await setup(page);
+    await page.goto(`/assets/file-${start}/view`);
+    const viewer = page.getByRole('dialog', { name: 'ファイル閲覧' });
+    await expect(viewer.getByRole('heading')).toHaveText(files[start].filename);
+    const original = await viewer.elementHandle();
+    if (!original) throw new Error('Viewer did not open');
+
+    for (const [target, direction] of [
+      [start + 1, '次のファイル'],
+      [start, '前のファイル'],
+    ] as const) {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = false;
+      const endpoint = `**/api/v1/assets/file-${target}`;
+      await page.route(endpoint, async (route) => {
+        started = true;
+        await held;
+        await route.fulfill({ json: files[target] });
+      });
+      await viewer.getByRole('button', { name: direction }).click();
+      await expect.poll(() => started).toBe(true);
+      // The original top-layer dialog must remain open while the response is held.
+      expect(
+        await original.evaluate(
+          (element: HTMLDialogElement) =>
+            element.isConnected && element.open && element.matches(':modal'),
+        ),
+      ).toBe(true);
+      expect(await page.evaluate(() => document.body.style.overflow)).toBe(
+        'hidden',
+      );
+      await expect(
+        viewer.getByRole('button', { name: direction }),
+      ).toBeDisabled();
+      if (start === 0 && target === 1)
+        await page.screenshot({
+          path: 'test-results/viewer-navigation-pending.png',
+        });
+      release();
+      await expect(viewer.getByRole('heading')).toHaveText(
+        files[target].filename,
+      );
+      expect(
+        await original.evaluate(
+          (element: HTMLDialogElement) => element.isConnected && element.open,
+        ),
+      ).toBe(true);
+      await page.unroute(endpoint);
+    }
+    await page.keyboard.press('Escape');
+    await expect(viewer).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => document.body.style.overflow))
+      .toBe('');
+  });
+}
+
+for (const status of [403, 404, 503]) {
+  test(`failed viewer navigation (${status}) closes the previous asset`, async ({
+    page,
+  }) => {
+    await setup(page);
+    await page.goto('/assets/file-0/view');
+    const viewer = page.getByRole('dialog');
+    await expect(viewer).toBeVisible();
+    await page.route('**/api/v1/assets/file-1', (route) =>
+      route.fulfill({ status, json: { error: 'unavailable' } }),
+    );
+    await viewer.getByRole('button', { name: '次のファイル' }).click();
+    await expect(viewer).toHaveCount(0);
+    await expect(page.locator('.details')).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', {
+        name:
+          status === 503
+            ? 'ファイルを読み込めません'
+            : 'ファイルが見つかりません',
+      }),
+    ).toBeVisible();
+  });
+}
+
 async function setup(
   page: Page,
   state = { authenticated: true, denied: false },
