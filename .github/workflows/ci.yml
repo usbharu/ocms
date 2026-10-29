@@ -13,7 +13,7 @@ permissions:
 jobs:
   go:
     name: Go tests and vet
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -28,7 +28,7 @@ jobs:
 
   web:
     name: SPA and Storybook
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     defaults:
       run:
@@ -62,19 +62,22 @@ jobs:
 
   runtime:
     name: Runtime unit tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
       - run: python3 -m venv .venv
       - run: .venv/bin/pip install -r runtime/requirements.txt onnxruntime==1.23.2
       - run: .venv/bin/python -m unittest discover -s runtime -p 'test_*.py'
 
   migrations:
     name: PostgreSQL migrations and startup gating
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -101,7 +104,7 @@ jobs:
     name: Build ${{ matrix.image }}
     # Release runs the build with push enabled after the checks above succeed.
     if: github.event_name != 'release'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -138,7 +141,7 @@ jobs:
     name: CI Status
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs: [go, web, runtime, migrations, images]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check all jobs succeeded
         env:
