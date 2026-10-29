@@ -318,6 +318,27 @@ export function SeriesPage({ request }: { request: Request }) {
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
+            <div className="series-actions series-submit-actions">
+              <Button
+                type="submit"
+                disabled={
+                  members.length < 2 || !name.trim() || candidateLoading
+                }
+              >
+                {busy ? '保存中…' : '保存'}
+              </Button>
+              <Link
+                to={
+                  id
+                    ? `/series/${id}`
+                    : source
+                      ? `/assets/${source}`
+                      : '/series'
+                }
+              >
+                キャンセル
+              </Link>
+            </div>
             <div className="series-editor">
               <section>
                 <h2>選択済み（{members.length}）</h2>
@@ -432,27 +453,6 @@ export function SeriesPage({ request }: { request: Request }) {
                   </ul>
                 )}
               </section>
-            </div>
-            <div className="series-actions">
-              <Button
-                type="submit"
-                disabled={
-                  members.length < 2 || !name.trim() || candidateLoading
-                }
-              >
-                {busy ? '保存中…' : '保存'}
-              </Button>
-              <Link
-                to={
-                  id
-                    ? `/series/${id}`
-                    : source
-                      ? `/assets/${source}`
-                      : '/series'
-                }
-              >
-                キャンセル
-              </Link>
             </div>
           </fieldset>
         </form>

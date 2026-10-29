@@ -368,3 +368,39 @@ test('series playback failures can retry inside the standard viewer', async ({
     a.filename,
   );
 });
+
+for (const width of [1440, 390]) {
+  test(`save stays directly below the name with long lists at ${width}px`, async ({
+    page,
+  }) => {
+    await setup(page);
+    await page.setViewportSize({ width, height: 740 });
+    await page.route('**/api/v1/series/suggestions', (route) =>
+      route.fulfill({
+        json: {
+          assets: Array.from({ length: 120 }, (_, i) => ({
+            ...a,
+            asset_id: `candidate-${i}`,
+            filename: `候補 ${i}.png`,
+          })),
+        },
+      }),
+    );
+    await page.goto('/series/comic/edit');
+    const save = page.getByRole('button', { name: '保存', exact: true });
+    await expect(save).toBeEnabled();
+    const nameBox = await page.getByLabel('シリーズ名').boundingBox();
+    const saveBox = await save.boundingBox();
+    const listBox = await page
+      .getByRole('heading', { name: '選択済み（2）' })
+      .boundingBox();
+    if (!nameBox || !saveBox || !listBox)
+      throw new Error('Editor controls must be visible');
+    expect(saveBox.y).toBeGreaterThanOrEqual(nameBox.y + nameBox.height);
+    expect(saveBox.y + saveBox.height).toBeLessThanOrEqual(listBox.y);
+    expect(saveBox.y + saveBox.height).toBeLessThanOrEqual(740);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollHeight),
+    ).toBeGreaterThan(740);
+  });
+}
