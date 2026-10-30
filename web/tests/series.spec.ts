@@ -973,3 +973,33 @@ test('new series has no delete action', async ({ page }) => {
     page.getByRole('button', { name: 'シリーズを削除', exact: true }),
   ).toHaveCount(0);
 });
+
+test('member navigation reuses the loaded series and keeps the viewer mounted', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.clock.install();
+  await page.goto('/assets/collection/view?member=page-a');
+  const viewer = page.getByRole('dialog');
+  await expect(viewer.getByRole('heading')).toHaveText(a.filename);
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/v1/series/'))
+      requests.push(request.url());
+  });
+  const original = await viewer.elementHandle();
+  for (const [button, filename] of [
+    ['次のファイル', b.filename],
+    ['前のファイル', a.filename],
+  ]) {
+    await viewer.getByRole('button', { name: button }).click();
+    await expect(viewer.getByRole('heading')).toHaveText(filename);
+    await expect(page).toHaveURL(/member=page-/);
+  }
+  expect(requests).toHaveLength(0);
+  expect(await original?.evaluate((element) => element.isConnected)).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+    a.filename,
+  );
+});
