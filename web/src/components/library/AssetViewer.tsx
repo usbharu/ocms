@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Asset, Rendition } from '../../lib/assets';
 import { Button } from '../ui/button';
 import { FavoriteButton } from './FavoriteButton';
+import { PageNavigation } from './PageNavigation';
 
 const PDFViewer = lazy(() => import('./PDFViewer'));
 
@@ -14,6 +15,11 @@ export type AssetViewerProps = {
   favoriteBusy?: boolean;
   onClose: () => void;
   navigationError: string;
+  pagination?: {
+    page: number;
+    total: number;
+    onChange: (page: number) => void;
+  };
   continuous?: boolean;
   autoAdvance?: boolean;
   onMemberChange?: (member: Asset) => void;
@@ -32,6 +38,7 @@ export function AssetViewer({
   continuous = false,
   autoAdvance = continuous && hasNext,
   status,
+  pagination,
 }: AssetViewerProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -254,7 +261,7 @@ export function AssetViewer({
           <div
             className="viewer-content"
             style={
-              asset.mime_type.startsWith('image/')
+              asset.mime_type.startsWith('image/') && !pagination
                 ? {
                     transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
                   }
@@ -262,13 +269,32 @@ export function AssetViewer({
             }
           >
             {asset.mime_type.startsWith('image/') ? (
-              <img
-                key={contentURL}
-                src={contentURL}
-                alt={asset.filename}
-                draggable={false}
-                onError={() => setError('画像を表示できません。')}
-              />
+              pagination ? (
+                <div className="pdf-viewer">
+                  <div className="pdf-page">
+                    <img
+                      className="viewer-page-image"
+                      key={contentURL}
+                      src={contentURL}
+                      alt={asset.filename}
+                      draggable={false}
+                      style={{
+                        transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+                      }}
+                      onError={() => setError('画像を表示できません。')}
+                    />
+                  </div>
+                  <PageNavigation {...pagination} label="シリーズ" />
+                </div>
+              ) : (
+                <img
+                  key={contentURL}
+                  src={contentURL}
+                  alt={asset.filename}
+                  draggable={false}
+                  onError={() => setError('画像を表示できません。')}
+                />
+              )
             ) : asset.mime_type === 'application/pdf' ? (
               <Suspense fallback={<p role="status">PDFを読み込み中…</p>}>
                 <PDFViewer

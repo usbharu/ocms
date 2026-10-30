@@ -638,6 +638,93 @@ test('series badge is visible even when its cover preview is unavailable', async
   await expect(card.locator('.series-badge')).toBeVisible();
 });
 
+for (const width of [1440, 390]) {
+  test(`composite page controls match PDF pagination at ${width}px`, async ({
+    page,
+  }) => {
+    await setup(page, false, true);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/assets/comic/view');
+    const navigation = page.getByRole('navigation', {
+      name: 'シリーズページ操作',
+    });
+    await expect(navigation).toHaveText('‹1 / 2 ページ›');
+    await expect(
+      navigation.getByRole('button', { name: '前のシリーズページ' }),
+    ).toBeDisabled();
+    await navigation
+      .getByRole('button', { name: '次のシリーズページ' })
+      .click();
+    await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+      b.filename,
+    );
+    await expect(navigation).toContainText('2 / 2 ページ');
+    await expect(
+      navigation.getByRole('button', { name: '次のシリーズページ' }),
+    ).toBeDisabled();
+    await expect(page).toHaveURL(/member=page-b/);
+    await page.reload();
+    await expect(navigation).toContainText('2 / 2 ページ');
+    await navigation
+      .getByRole('button', { name: '前のシリーズページ' })
+      .click();
+    await expect(navigation).toContainText('1 / 2 ページ');
+    await page.keyboard.press('ArrowRight');
+    await expect(navigation).toContainText('2 / 2 ページ');
+    await page.getByRole('button', { name: '拡大', exact: true }).click();
+    await expect(navigation).toBeVisible();
+    const image = await page.locator('.viewer-page-image').boundingBox();
+    const controls = await navigation.boundingBox();
+    if (!image || !controls)
+      throw new Error('Image and page controls must be visible');
+    expect(controls.x).toBeGreaterThanOrEqual(0);
+    expect(controls.x + controls.width).toBeLessThanOrEqual(width);
+    expect(controls.y + controls.height).toBeLessThanOrEqual(900);
+    await page.getByRole('button', { name: '画面に合わせる' }).click();
+    if (process.env.OCMS_CAPTURE_SCREENSHOTS)
+      await page.screenshot({ path: `../docs/series-viewer-${width}.png` });
+  });
+}
+
+test('nested composite page numbers exclude other collection members', async ({
+  page,
+}) => {
+  await setup(page);
+  const seriesRequests: string[] = [];
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/v1/series/collection' || path === '/api/v1/series/comic')
+      seriesRequests.push(path);
+  });
+  await page.goto('/assets/collection/view');
+  await expect(page.locator('video')).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'シリーズページ操作' }),
+  ).toHaveCount(0);
+  await page.locator('video').dispatchEvent('ended');
+  const navigation = page.getByRole('navigation', {
+    name: 'シリーズページ操作',
+  });
+  await expect(navigation).toContainText('1 / 2 ページ');
+  await expect(page).toHaveURL(/member=page-a/);
+  const loadedRequests = [...seriesRequests];
+  await expect(
+    navigation.getByRole('button', { name: '前のシリーズページ' }),
+  ).toBeDisabled();
+  await navigation.getByRole('button', { name: '次のシリーズページ' }).click();
+  await expect(navigation).toContainText('2 / 2 ページ');
+  await expect(page).toHaveURL(/member=page-b/);
+  // Page controls can be disabled or remounted as the member URL changes.
+  const close = page.getByRole('button', { name: '閲覧を閉じる' });
+  await close.press('ArrowLeft');
+  await expect(navigation).toContainText('1 / 2 ページ');
+  await close.press('ArrowLeft');
+  await expect(page.locator('video')).toBeVisible();
+  await expect(navigation).toHaveCount(0);
+  await expect(page).toHaveURL(/member=movie/);
+  expect(seriesRequests).toEqual(loadedRequests);
+});
+
 test('draft changes search only when re-search is pressed', async ({
   page,
 }) => {

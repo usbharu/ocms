@@ -4,7 +4,7 @@ import {
   type PDFDocumentProxy,
 } from 'pdfjs-dist';
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '../ui/button';
+import { PageNavigation } from './PageNavigation';
 
 GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -139,27 +139,12 @@ export default function PDFViewer({
         )}
       </div>
       {document && (
-        <nav className="pdf-navigation" aria-label="PDFページ操作">
-          <Button
-            variant="ghost"
-            aria-label="前のPDFページ"
-            disabled={page <= 1}
-            onClick={() => setPage(page - 1)}
-          >
-            ‹
-          </Button>
-          <span aria-live="polite">
-            {page} / {document.numPages} ページ
-          </span>
-          <Button
-            variant="ghost"
-            aria-label="次のPDFページ"
-            disabled={page >= document.numPages}
-            onClick={() => setPage(page + 1)}
-          >
-            ›
-          </Button>
-        </nav>
+        <PageNavigation
+          page={page}
+          total={document.numPages}
+          label="PDF"
+          onChange={setPage}
+        />
       )}
     </div>
   );
