@@ -520,3 +520,11 @@ Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォ�
 ```sh
 python3 scripts/upload-integration.py
 ```
+
+### 画面の先読みとbfcacheの確認
+
+タグ・キャラクター・シリーズ画面のコードは、ナビゲーションリンクへマウスやキーボードのフォーカスを移すと先読みします。データ節約設定や低速回線を検出すると省略します。APIやメディアは先読みしません。
+
+外部ページから戻ってbfcacheが使われた場合は、文書とJavaScriptを再利用し、セッションと現在のURLの表示データを再取得します。探索スナップショットと未保存の編集内容は破棄します。通常のSPA内の戻る・進むは既存の履歴復元を使います。
+
+`web/` で `npm run build` の後、`npm run test:routing` で先読みと復元イベントの回帰試験を実行できます。実際のbfcache採用は自動試験では保証しません。Chrome DevToolsのApplication → Back/forward cacheで確認し、別タブでログアウトした後に戻る場合もログイン画面になることを確認してください。

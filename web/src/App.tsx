@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Link,
   useLocation,
@@ -16,8 +24,6 @@ import { SearchForm } from './components/library/SearchForm';
 import { SeriesAssetViewer } from './components/library/SeriesAssetViewer';
 import { UploadControl } from './components/library/UploadControl';
 import { UploadProgress } from './components/library/UploadProgress';
-import { SeriesPage } from './components/series/SeriesPage';
-import { TagsPage } from './components/tags/TagsPage';
 import { Button } from './components/ui/button';
 import { NativeSelect } from './components/ui/native-select';
 import {
@@ -39,6 +45,7 @@ import {
   type SearchContext,
   type View,
 } from './lib/assets';
+import { loadSeriesPage, loadTagsPage } from './lib/pageModules';
 import {
   assetURL,
   collectionURL,
@@ -62,6 +69,9 @@ type ExplorationSnapshot = {
   mode: Mode;
   hashStatus: HashStatus | null;
 };
+
+const SeriesPage = lazy(loadSeriesPage);
+const TagsPage = lazy(loadTagsPage);
 
 const viewStorageKey = 'ocms.library.view';
 
@@ -353,11 +363,49 @@ export function App() {
       .then((r) => r.json())
       .then((c) => setDev(c.development))
       .catch(() => setError('接続できません'));
-    fetch('/api/v1/me')
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setMe)
-      .catch(() => setError('接続できません'))
-      .finally(() => setAuthLoading(false));
+    let controller: AbortController | undefined;
+    function checkSession() {
+      controller?.abort();
+      controller = new AbortController();
+      const { signal } = controller;
+      void fetch('/api/v1/me', { signal, cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((identity: Me | null) => {
+          if (!signal.aborted) setMe(identity);
+        })
+        .catch(() => {
+          if (!signal.aborted) {
+            setMe(null);
+            setError('接続できません');
+          }
+        })
+        .finally(() => {
+          if (!signal.aborted) {
+            controller = undefined;
+            setAuthLoading(false);
+          }
+        });
+    }
+    function restore(event: PageTransitionEvent) {
+      if (!event.persisted) return;
+      // A restored document can outlive its session and the ACLs it displayed.
+      // Reuse the document/modules, but discard authenticated UI snapshots.
+      ++requestVersion.current;
+      snapshots.current.clear();
+      loadedCollection.current = '';
+      setMe(null);
+      setAuthLoading(true);
+      setAssets([]);
+      setSelected(null);
+      setViewerOpen(false);
+      checkSession();
+    }
+    checkSession();
+    window.addEventListener('pageshow', restore);
+    return () => {
+      controller?.abort();
+      window.removeEventListener('pageshow', restore);
+    };
   }, []);
   const liveSnapshot = useRef<ExplorationSnapshot>({
     assets,
@@ -392,9 +440,9 @@ export function App() {
   }, [location.key]);
 
   // URL transitions own collection loading. Ordinary refreshes keep the current URL.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Run once per navigation or authenticated principal, not on fetched state updates.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Run once per navigation or authenticated session, not on collection state updates.
   useEffect(() => {
-    const principal = me?.principal_id;
+    const { principal_id: principal } = me ?? {};
     const principalChanged = lastPrincipal.current !== principal;
     if (principalChanged) {
       snapshots.current.clear();
@@ -611,7 +659,7 @@ export function App() {
       active = false;
       ++requestVersion.current;
     };
-  }, [location.key, me?.principal_id]);
+  }, [location.key, me]);
 
   function goCollection(
     next: SearchContext,
@@ -1299,18 +1347,34 @@ export function App() {
             </Link>
           </section>
         ) : route.section === 'series' ? (
-          <SeriesPage key={location.pathname} request={request} />
-        ) : section === 'tags' || section === 'characters' ? (
-          <TagsPage
-            key={section}
-            kind={section}
-            onOpen={(name) =>
-              openMetadataFilter(
-                section === 'characters' ? 'character' : 'tag',
-                name,
-              )
+          <Suspense
+            fallback={
+              <div className="empty" role="status">
+                読み込み中…
+              </div>
             }
-          />
+          >
+            <SeriesPage key={location.pathname} request={request} />
+          </Suspense>
+        ) : section === 'tags' || section === 'characters' ? (
+          <Suspense
+            fallback={
+              <div className="empty" role="status">
+                読み込み中…
+              </div>
+            }
+          >
+            <TagsPage
+              key={section}
+              kind={section}
+              onOpen={(name) =>
+                openMetadataFilter(
+                  section === 'characters' ? 'character' : 'tag',
+                  name,
+                )
+              }
+            />
+          </Suspense>
         ) : (
           <>
             {!related && (
