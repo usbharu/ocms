@@ -117,6 +117,19 @@ export function AssetList({
               const recommendation = recommendations?.find(
                 (item) => item.asset_id === a.asset_id,
               );
+              const seriesBadge = a.series_kind ? (
+                <span
+                  id={`asset-series-${a.asset_id}`}
+                  className="series-badge"
+                  title={
+                    a.series_kind === 'composite'
+                      ? '一体型シリーズ'
+                      : '通常シリーズ'
+                  }
+                >
+                  シリーズ
+                </span>
+              ) : null;
               return (
                 <div className="file-entry" key={a.asset_id}>
                   <Button
@@ -125,9 +138,16 @@ export function AssetList({
                     className={`file ${selectedId === a.asset_id ? 'active' : ''}`}
                     aria-label={a.filename}
                     aria-describedby={
-                      recommendation
-                        ? `recommendation-${a.asset_id}`
-                        : undefined
+                      [
+                        a.series_kind
+                          ? `asset-series-${a.asset_id}`
+                          : undefined,
+                        recommendation
+                          ? `recommendation-${a.asset_id}`
+                          : undefined,
+                      ]
+                        .filter(Boolean)
+                        .join(' ') || undefined
                     }
                     title={a.filename}
                     aria-pressed={selectedId === a.asset_id}
@@ -144,6 +164,7 @@ export function AssetList({
                       a.rating !== 'unrated' && (
                         <span className="rating-badge">R-18</span>
                       )}
+                    {view !== 'list' && seriesBadge}
                     <Thumbnail
                       key={`${a.asset_id}:${a.status}:${a.page_number ?? 1}`}
                       asset={a}
@@ -158,7 +179,8 @@ export function AssetList({
                       {view === 'list' && (
                         <>
                           <span className="file-meta">
-                            {kinds.find((k) => k.id === kindOf(a))?.label}
+                            {seriesBadge ||
+                              kinds.find((k) => k.id === kindOf(a))?.label}
                             {a.tags.length > 0 && (
                               <span className="file-tags">
                                 {a.tags.join(' · ')}

@@ -15,7 +15,7 @@ services:
       - ./infra/verify/collector.yaml:/etc/otelcol/config.yaml:ro
       - ./.cache/otel:/evidence
   hydra:
-    image: oryd/hydra:v2.3.0
+    image: oryd/hydra:v26.2.0
     command: serve all --dev
     environment:
       DSN: memory
