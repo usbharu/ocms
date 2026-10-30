@@ -1023,7 +1023,8 @@ summary .count {
 }
 /* biome-ignore lint/style/noDescendingSpecificity: Viewer media is separate from library thumbnails. */
 .viewer-content > img,
-.viewer-content > video {
+.viewer-content > video,
+.viewer-page-image {
   display: block;
   width: 100%;
   height: 100%;
@@ -1037,7 +1038,8 @@ summary .count {
 }
 /* biome-ignore lint/style/noDescendingSpecificity: Viewer media is separate from library thumbnails. */
 .viewer-content > img,
-.pdf-page canvas {
+.pdf-page canvas,
+.viewer-page-image {
   pointer-events: none;
 }
 .viewer-audio {
