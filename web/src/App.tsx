@@ -45,7 +45,11 @@ import {
   parseRoute,
   type Section,
 } from './lib/routes';
-import { type UploadTask, uploadFile } from './lib/uploads';
+import {
+  filterDuplicateUploadFiles,
+  type UploadTask,
+  uploadFile,
+} from './lib/uploads';
 
 type ExplorationSnapshot = {
   assets: Asset[];
@@ -788,7 +792,7 @@ export function App() {
     };
   }, [selected?.asset_id, me]);
 
-  async function processUploads(tasks: UploadTask[]) {
+  async function processUploads(tasks: UploadTask[], filterDuplicates = false) {
     if (!me || uploadRunning.current) return;
     uploadRunning.current = true;
     setError('');
@@ -814,6 +818,13 @@ export function App() {
       }
     };
     try {
+      if (filterDuplicates) {
+        const retained = new Set(
+          await filterDuplicateUploadFiles(tasks.map((task) => task.file)),
+        );
+        tasks = tasks.filter((task) => retained.has(task.file));
+        setUploadTasks(tasks);
+      }
       await Promise.all(
         Array.from({ length: Math.min(10, tasks.length) }, () => worker()),
       );
@@ -843,8 +854,8 @@ export function App() {
       state: 'waiting',
       progress: 0,
     }));
-    setUploadTasks(tasks);
-    void processUploads(tasks);
+    setUploadTasks([]);
+    void processUploads(tasks, true);
   }
 
   const run = (action: () => Promise<unknown>) =>
