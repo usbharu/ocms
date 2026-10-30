@@ -166,8 +166,8 @@ func (s *Service) seriesSuggestions(w http.ResponseWriter, r *http.Request) {
 		}
 		return out[i].Score > out[j].Score
 	})
-	if len(out) > 200 {
-		out = out[:200]
+	if len(out) > 20 {
+		out = out[:20]
 	}
 	platform.JSON(w, 200, map[string]any{"assets": out})
 }

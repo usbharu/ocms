@@ -238,7 +238,14 @@ test('suggestion failure preserves the draft', async ({ page }) => {
   await expect(page.getByLabel('シリーズ名')).toHaveValue('作成中');
   await expect(
     page.getByRole('button', { name: '保存', exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('alert').first()).toContainText('作品を2件以上');
+  await page.getByRole('button', { name: '再試行', exact: true }).click();
+  await expect(page.getByLabel('シリーズ名')).toHaveValue('作成中');
+  await expect(
+    page.getByRole('heading', { name: '選択済み（1）' }),
+  ).toBeVisible();
 });
 
 for (const width of [1440, 390]) {
@@ -629,6 +636,73 @@ test('series badge is visible even when its cover preview is unavailable', async
   const card = page.getByRole('button', { name: '漫画', exact: true });
   await expect(card.locator('.thumbnail-placeholder')).toBeVisible();
   await expect(card.locator('.series-badge')).toBeVisible();
+});
+
+test('draft changes search only when re-search is pressed', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.clock.install();
+  const searches: { kind: string; member_ids: string[]; query: string }[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/series/suggestions'))
+      searches.push(request.postDataJSON());
+  });
+  await page.goto('/series/new?source=page-a');
+  await expect(page.getByText('タイトルが近い')).toBeVisible();
+  expect(searches).toHaveLength(1);
+  await page.getByLabel('種類', { exact: true }).selectOption('composite');
+  await page.getByLabel('シリーズ名').fill('手動検索');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  await page.getByRole('button', { name: '漫画 002.pngを上へ' }).click();
+  await page.getByLabel('タイトルを検索').fill('別のタイトル');
+  await page.clock.runFor(1000);
+  expect(searches).toHaveLength(1);
+  await expect(
+    page.getByRole('button', { name: '追加', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: '外す', exact: true }).first().click();
+  await expect(
+    page.getByRole('button', { name: '追加', exact: true }),
+  ).toHaveCount(1);
+  await page.clock.runFor(1000);
+  expect(searches).toHaveLength(1);
+  await page.getByRole('button', { name: '再検索', exact: true }).click();
+  await expect.poll(() => searches.length).toBe(2);
+  expect(searches[1]).toMatchObject({
+    kind: 'composite',
+    member_ids: ['page-a'],
+    query: '別のタイトル',
+  });
+});
+
+test('saving works while re-search is pending', async ({ page }) => {
+  const saves = await setup(page);
+  await page.goto('/series/new?source=page-a');
+  await page.getByLabel('シリーズ名').fill('検索中でも保存');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  let releaseSearch = () => {};
+  const pending = new Promise<void>((resolve) => {
+    releaseSearch = resolve;
+  });
+  await page.route('**/api/v1/series/suggestions', async (route) => {
+    await pending;
+    await route.fulfill({ json: { assets: [] } });
+  });
+  await page.getByRole('button', { name: '再検索', exact: true }).click();
+  await expect(page.getByText('候補を読み込み中…')).toBeVisible();
+  const save = page.getByRole('button', { name: '保存', exact: true });
+  await expect(save).toBeEnabled();
+  try {
+    await save.click();
+    await expect(page).toHaveURL(/assets\/comic$/);
+    expect(saves[0]).toMatchObject({
+      name: '検索中でも保存',
+      member_ids: ['page-a', 'page-b'],
+    });
+  } finally {
+    releaseSearch();
+  }
 });
 
 for (const kind of ['composite', 'collection'] as const) {
