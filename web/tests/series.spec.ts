@@ -712,6 +712,8 @@ test('nested composite page numbers exclude other collection members', async ({
   await close.press('ArrowLeft');
   await expect(page.locator('video')).toBeVisible();
   await expect(navigation).toHaveCount(0);
+});
+
 test('draft changes search only when re-search is pressed', async ({
   page,
 }) => {
