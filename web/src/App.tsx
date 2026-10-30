@@ -3,6 +3,7 @@ import {
   Suspense,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -73,6 +74,11 @@ const SeriesPage = lazy(loadSeriesPage);
 const TagsPage = lazy(loadTagsPage);
 
 const viewStorageKey = 'ocms.library.view';
+
+// Polling responses contain JSON values; retain references when nothing changed.
+function retainUnchanged<T>(current: T, next: T): T {
+  return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
 
 function savedView(): View {
   try {
@@ -754,6 +760,9 @@ export function App() {
     setNotice('');
     if (!selected || !me) return;
     let active = true;
+    let timer: number | undefined;
+    const controller = new AbortController();
+    const get = (path: string) => request(path, { signal: controller.signal });
     const update = async () => {
       const version = metadataVersion.current;
       let ds: { renditions: Rendition[] };
@@ -761,32 +770,39 @@ export function App() {
       let asset: Asset & { editable?: boolean };
       let preview: Asset | null = null;
       if (selected.series_kind) {
-        asset = await request(`/api/v1/series/${selected.asset_id}`);
+        asset = await get(`/api/v1/series/${selected.asset_id}`);
         const previewID =
           selected.matched_asset_id &&
           asset.blob_asset_ids?.includes(selected.matched_asset_id)
             ? selected.matched_asset_id
             : asset.cover_asset_id;
         if (previewID) {
-          preview = await request(`/api/v1/assets/${previewID}`);
-          ds = await request(`/api/v1/assets/${previewID}/renditions`);
+          preview = await get(`/api/v1/assets/${previewID}`);
+          ds = await get(`/api/v1/assets/${previewID}/renditions`);
         } else ds = { renditions: [] };
         js = { jobs: [] };
       } else {
-        [ds, js, asset] = await Promise.all([
-          request(`/api/v1/assets/${selected.asset_id}/renditions`),
-          request(`/api/v1/assets/${selected.asset_id}/jobs`),
-          request(`/api/v1/assets/${selected.asset_id}`),
-        ]);
+        const [renditionResult, jobResult, assetResult] =
+          await Promise.allSettled([
+            get(`/api/v1/assets/${selected.asset_id}/renditions`),
+            get(`/api/v1/assets/${selected.asset_id}/jobs`),
+            get(`/api/v1/assets/${selected.asset_id}`),
+          ]);
+        if (renditionResult.status === 'rejected') throw renditionResult.reason;
+        if (jobResult.status === 'rejected') throw jobResult.reason;
+        if (assetResult.status === 'rejected') throw assetResult.reason;
+        ds = renditionResult.value;
+        js = jobResult.value;
+        asset = assetResult.value;
       }
       if (active && version === metadataVersion.current) {
-        setRenditions(ds.renditions);
-        setJobs(js.jobs);
-        setPreviewAsset(preview);
+        setRenditions((current) => retainUnchanged(current, ds.renditions));
+        setJobs((current) => retainUnchanged(current, js.jobs));
+        setPreviewAsset((current) => retainUnchanged(current, preview));
         setSeriesEditable(Boolean(asset.editable));
         setSelected((current) =>
           current
-            ? {
+            ? retainUnchanged(current, {
                 ...current,
                 ...(current.series_kind
                   ? {
@@ -799,16 +815,23 @@ export function App() {
                   : {}),
                 status: asset.status,
                 rating: asset.rating,
-              }
+              })
             : null,
         );
-        setAssets((current) =>
-          current.map((a) =>
+        setAssets((current) => {
+          const next = current.map((a) =>
             a.asset_id === asset.asset_id
-              ? { ...a, status: asset.status, rating: asset.rating }
+              ? retainUnchanged(a, {
+                  ...a,
+                  status: asset.status,
+                  rating: asset.rating,
+                })
               : a,
-          ),
-        );
+          );
+          return next.every((a, index) => a === current[index])
+            ? current
+            : next;
+        });
       }
     };
     const handleFailure = (
@@ -828,14 +851,20 @@ export function App() {
         setError(error.message);
       }
     };
-    update().catch((error) => handleFailure(error, true));
-    const timer = window.setInterval(
-      () => update().catch((error) => handleFailure(error)),
-      5000,
-    );
+    const poll = async (initial = false) => {
+      try {
+        await update();
+      } catch (error) {
+        handleFailure(error as Error & { status?: number }, initial);
+      } finally {
+        if (active) timer = window.setTimeout(() => void poll(), 5000);
+      }
+    };
+    void poll(true);
     return () => {
       active = false;
-      clearInterval(timer);
+      controller.abort();
+      window.clearTimeout(timer);
     };
   }, [selected?.asset_id, me]);
 
@@ -956,10 +985,14 @@ export function App() {
       );
   }
 
-  const visibleAssets = assets.filter(
-    (a) =>
-      (kind === 'all' || kindOf(a) === kind) &&
-      (!context.ratings || context.ratings.includes(a.rating ?? 'unrated')),
+  const visibleAssets = useMemo(
+    () =>
+      assets.filter(
+        (a) =>
+          (kind === 'all' || kindOf(a) === kind) &&
+          (!context.ratings || context.ratings.includes(a.rating ?? 'unrated')),
+      ),
+    [assets, kind, context.ratings],
   );
   const isResult = Boolean(
     (context.query && !context.tag && !context.character) || context.source,
@@ -968,13 +1001,16 @@ export function App() {
     !isResult && total !== null ? total : visibleAssets.length;
   const pageCount = Math.max(1, Math.ceil(resultCount / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const pageAssets =
-    !isResult && total !== null
-      ? visibleAssets
-      : visibleAssets.slice(
-          (currentPage - 1) * pageSize,
-          currentPage * pageSize,
-        );
+  const pageAssets = useMemo(
+    () =>
+      !isResult && total !== null
+        ? visibleAssets
+        : visibleAssets.slice(
+            (currentPage - 1) * pageSize,
+            currentPage * pageSize,
+          ),
+    [isResult, total, visibleAssets, currentPage],
+  );
 
   const selectedIndex = pageAssets.findIndex(
     (asset) => asset.asset_id === selected?.asset_id,
@@ -1169,7 +1205,21 @@ export function App() {
         ? { ...current, source: { ...current.source, ...metadata } }
         : current,
     );
-    if (selectedId.current === assetId && requestVersion.current === version) {
+    // Unfiltered library rows already contain the saved metadata. Requery only
+    // when the edit can affect membership or ranking of the current results.
+    const affectsResults = Boolean(
+      context.query ||
+        context.tag ||
+        context.character ||
+        context.source ||
+        context.personalized ||
+        (context.ratings && changes.rating !== undefined),
+    );
+    if (
+      affectsResults &&
+      selectedId.current === assetId &&
+      requestVersion.current === version
+    ) {
       const next =
         context.source?.asset_id === assetId
           ? { ...context, source: { ...context.source, ...metadata } }
