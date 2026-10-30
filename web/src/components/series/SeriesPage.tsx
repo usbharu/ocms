@@ -52,6 +52,8 @@ export function SeriesPage({ request }: { request: Request }) {
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deletingId, setDeletingId] = useState('');
   const [candidateError, setCandidateError] = useState('');
   const [retry, setRetry] = useState(0);
   const [candidateSearch, setCandidateSearch] = useState(0);
@@ -221,21 +223,42 @@ export function SeriesPage({ request }: { request: Request }) {
     }
   }
 
-  async function dissolve() {
-    if (
-      !series ||
-      !confirm('シリーズを解除しますか？ 元のファイルは残ります。')
-    )
-      return;
+  async function dissolve(target: Asset) {
+    if (busy) return;
     setBusy(true);
-    setError('');
+    setDeletingId(target.asset_id);
+    setDeleteError('');
     try {
-      await request(`/api/v1/series/${series.asset_id}`, { method: 'DELETE' });
-      navigate('/series');
+      const detail =
+        series?.asset_id === target.asset_id
+          ? series
+          : ((await request(
+              `/api/v1/series/${encodeURIComponent(target.asset_id)}`,
+            )) as Series);
+      if (!detail.editable) {
+        setDeleteError('シリーズを削除できるのは所有者だけです。');
+        return;
+      }
+      if (
+        !confirm(
+          `「${detail.filename}」を削除しますか？ 元のファイルは残ります。`,
+        )
+      )
+        return;
+      await request(`/api/v1/series/${encodeURIComponent(target.asset_id)}`, {
+        method: 'DELETE',
+      });
+      if (id) navigate('/series');
+      else if (items.length === 1 && page > 1)
+        navigate(seriesListURL(page - 1));
+      else setRetry((value) => value + 1);
     } catch {
-      setError('解除できません。再試行してください。');
+      setDeleteError(
+        'シリーズを削除できません。もう一度削除をお試しください。',
+      );
     } finally {
       setBusy(false);
+      setDeletingId('');
     }
   }
 
@@ -328,7 +351,9 @@ export function SeriesPage({ request }: { request: Request }) {
               />
             </label>
             <div className="series-actions series-submit-actions">
-              <Button type="submit">{busy ? '保存中…' : '保存'}</Button>
+              <Button type="submit">
+                {busy && !deletingId ? '保存中…' : '保存'}
+              </Button>
               <Link
                 to={
                   id
@@ -341,6 +366,18 @@ export function SeriesPage({ request }: { request: Request }) {
                 キャンセル
               </Link>
             </div>
+            {!creating && series?.editable && (
+              <div className="series-delete-actions">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => void dissolve(series)}
+                >
+                  {deletingId ? '削除中…' : 'シリーズを削除'}
+                </Button>
+              </div>
+            )}
+            {deleteError && <p role="alert">{deleteError}</p>}
             <div className="series-editor">
               <section>
                 <h2>選択済み（{members.length}）</h2>
@@ -478,12 +515,13 @@ export function SeriesPage({ request }: { request: Request }) {
           {series.editable && (
             <>
               <Link to={`/series/${series.asset_id}/edit`}>編集</Link>
-              <Button disabled={busy} onClick={() => void dissolve()}>
+              <Button disabled={busy} onClick={() => void dissolve(series)}>
                 シリーズを解除
               </Button>
             </>
           )}
         </div>
+        {deleteError && <p role="alert">{deleteError}</p>}
         <p>
           {series.tags.join('・')} {series.characters?.join('・')}{' '}
           {series.rating}
@@ -547,6 +585,7 @@ export function SeriesPage({ request }: { request: Request }) {
           <option value="composite">一体型シリーズ</option>
         </NativeSelect>
       </label>
+      {deleteError && <p role="alert">{deleteError}</p>}
       {items.length === 0 ? (
         <p>
           {listKind === 'collection'
@@ -556,7 +595,7 @@ export function SeriesPage({ request }: { request: Request }) {
               : 'シリーズがありません'}
         </p>
       ) : (
-        <ul className="series-members">
+        <ul className="series-members series-list">
           {items.map((asset) => (
             <li key={asset.asset_id}>
               <Thumbnail asset={asset} />
@@ -569,6 +608,14 @@ export function SeriesPage({ request }: { request: Request }) {
               <small>
                 {asset.series_kind === 'composite' ? '一体型' : '通常'}
               </small>
+              <Button
+                variant="destructive"
+                disabled={busy}
+                aria-label={`${asset.filename}のシリーズを削除`}
+                onClick={() => void dissolve(asset)}
+              >
+                {deletingId === asset.asset_id ? '削除中…' : 'シリーズを削除'}
+              </Button>
             </li>
           ))}
         </ul>
