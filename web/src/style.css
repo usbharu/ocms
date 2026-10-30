@@ -1611,6 +1611,9 @@ summary .count {
 .series-submit-actions {
   margin-bottom: 1.5rem;
 }
+.series-delete-actions {
+  margin-bottom: 1.5rem;
+}
 .series-actions {
   display: flex;
   align-items: center;
@@ -1618,6 +1621,17 @@ summary .count {
   gap: 0.5rem;
 }
 @media (max-width: 760px) {
+  .series-list li {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr) auto;
+  }
+  .series-list li > a {
+    min-width: 0;
+  }
+  .series-list li > button {
+    grid-column: 2 / -1;
+    justify-self: end;
+  }
   .series-editor {
     grid-template-columns: 1fr;
     gap: 1rem;

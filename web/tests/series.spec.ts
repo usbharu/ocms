@@ -525,6 +525,19 @@ for (const width of [1440, 390]) {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
+    await expect
+      .poll(() =>
+        page
+          .locator('.series-list img')
+          .evaluateAll((images) =>
+            images.every(
+              (image) =>
+                (image as HTMLImageElement).complete &&
+                (image as HTMLImageElement).naturalWidth > 0,
+            ),
+          ),
+      )
+      .toBe(true);
     if (process.env.OCMS_CAPTURE_SCREENSHOTS)
       await page.screenshot({
         path: `../docs/series-list-${width}.png`,
@@ -616,4 +629,186 @@ test('series badge is visible even when its cover preview is unavailable', async
   const card = page.getByRole('button', { name: '漫画', exact: true });
   await expect(card.locator('.thumbnail-placeholder')).toBeVisible();
   await expect(card.locator('.series-badge')).toBeVisible();
+});
+
+for (const kind of ['composite', 'collection'] as const) {
+  for (const origin of ['list', 'editor'] as const) {
+    test(`delete ${kind} from ${origin} preserves source files`, async ({
+      page,
+    }) => {
+      await setup(page);
+      const target = kind === 'composite' ? composite : collection;
+      const deleted: string[] = [];
+      await page.route('**/api/v1/series?**', (route) =>
+        route.fulfill({
+          json: {
+            assets: deleted.length ? [] : [target],
+            total: deleted.length ? 0 : 1,
+          },
+        }),
+      );
+      await page.route(`**/api/v1/series/${target.asset_id}`, (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        expect(route.request().headers()['x-csrf-token']).toBe('test');
+        deleted.push(target.asset_id);
+        return route.fulfill({ status: 204 });
+      });
+      const fileDeletes: string[] = [];
+      page.on('request', (request) => {
+        if (
+          request.method() === 'DELETE' &&
+          request.url().includes('/api/v1/assets/')
+        )
+          fileDeletes.push(request.url());
+      });
+      await page.goto(
+        origin === 'editor'
+          ? `/series/${target.asset_id}/edit`
+          : `/series?series_kind=${kind}`,
+      );
+      const remove = page.getByRole('button', {
+        name:
+          origin === 'editor'
+            ? 'シリーズを削除'
+            : `${target.filename}のシリーズを削除`,
+        exact: true,
+      });
+      page.once('dialog', async (dialog) => {
+        expect(dialog.message()).toContain(target.filename);
+        expect(dialog.message()).toContain('元のファイルは残ります');
+        await dialog.dismiss();
+      });
+      await remove.click();
+      await expect(remove).toBeEnabled();
+      expect(deleted).toEqual([]);
+      page.once('dialog', (dialog) => dialog.accept());
+      await remove.click();
+      await expect(
+        page.getByText(
+          kind === 'composite' && origin === 'list'
+            ? '一体型シリーズがありません'
+            : kind === 'collection' && origin === 'list'
+              ? '通常シリーズがありません'
+              : 'シリーズがありません',
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(page).toHaveURL(
+        origin === 'editor' ? /\/series$/ : new RegExp(`series_kind=${kind}$`),
+      );
+      expect(deleted).toEqual([target.asset_id]);
+      expect(fileDeletes).toEqual([]);
+    });
+  }
+}
+
+for (const origin of ['list', 'editor'] as const) {
+  test(`failed deletion in ${origin} keeps the current work and can retry`, async ({
+    page,
+  }) => {
+    await setup(page);
+    let attempts = 0;
+    await page.route('**/api/v1/series/comic', (route) => {
+      if (route.request().method() !== 'DELETE') return route.fallback();
+      attempts++;
+      return route.fulfill({
+        status: 503,
+        json: { error: 'SERVICE_UNAVAILABLE' },
+      });
+    });
+    await page.goto(origin === 'editor' ? '/series/comic/edit' : '/series');
+    if (origin === 'editor')
+      await page.getByLabel('シリーズ名').fill('未保存の名前');
+    page.on('dialog', (dialog) => dialog.accept());
+    const remove = page.getByRole('button', {
+      name: origin === 'editor' ? 'シリーズを削除' : '漫画のシリーズを削除',
+      exact: true,
+    });
+    await remove.click();
+    await expect(page.getByRole('alert')).toContainText(
+      'シリーズを削除できません',
+    );
+    if (origin === 'editor')
+      await expect(page.getByLabel('シリーズ名')).toHaveValue('未保存の名前');
+    else
+      await expect(
+        page.getByRole('link', { name: '作品集', exact: true }),
+      ).toBeVisible();
+    await expect(remove).toBeEnabled();
+    await remove.click();
+    await expect(remove).toBeEnabled();
+    expect(attempts).toBe(2);
+  });
+}
+
+test('shared series cannot be deleted from the list or editor', async ({
+  page,
+}) => {
+  await setup(page);
+  const deletes: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'DELETE') deletes.push(r.url());
+  });
+  await page.route('**/api/v1/series/comic', (route) =>
+    route.fulfill({ json: { ...composite, editable: false } }),
+  );
+  await page.goto('/series');
+  await page
+    .getByRole('button', { name: '漫画のシリーズを削除', exact: true })
+    .click();
+  await expect(page.getByRole('alert')).toHaveText(
+    'シリーズを削除できるのは所有者だけです。',
+  );
+  await page.goto('/series/comic/edit');
+  await expect(page.getByLabel('シリーズ名')).toHaveValue('漫画');
+  await expect(
+    page.getByRole('button', { name: 'シリーズを削除', exact: true }),
+  ).toHaveCount(0);
+  expect(deletes).toEqual([]);
+});
+
+test('deleting the last series on a page returns to the preceding filtered page', async ({
+  page,
+}) => {
+  await setup(page);
+  let deleted = false;
+  await page.route('**/api/v1/series?**', (route) =>
+    route.fulfill({
+      json: {
+        assets: deleted
+          ? [
+              {
+                ...composite,
+                asset_id: 'remaining',
+                filename: '残りのシリーズ',
+              },
+            ]
+          : [composite],
+        total: deleted ? 200 : 201,
+      },
+    }),
+  );
+  await page.route('**/api/v1/series/comic', (route) => {
+    if (route.request().method() !== 'DELETE') return route.fallback();
+    deleted = true;
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto('/series?series_kind=composite&page=2');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: '漫画のシリーズを削除', exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/series\?series_kind=composite$/);
+  await expect(
+    page.getByRole('link', { name: '残りのシリーズ', exact: true }),
+  ).toBeVisible();
+});
+
+test('new series has no delete action', async ({ page }) => {
+  await setup(page);
+  await page.goto('/series/new');
+  await expect(page.getByLabel('シリーズ名')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'シリーズを削除', exact: true }),
+  ).toHaveCount(0);
 });
