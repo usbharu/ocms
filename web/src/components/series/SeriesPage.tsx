@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import type { Asset, AssetChanges } from '../../lib/assets';
-import { AssetMetadataEditor } from '../library/AssetMetadataEditor';
+import type { Asset } from '../../lib/assets';
 import { AssetViewer } from '../library/AssetViewer';
 import { FavoriteButton } from '../library/FavoriteButton';
 import { Thumbnail } from '../library/Thumbnail';
@@ -56,7 +55,6 @@ export function SeriesPage({ request }: { request: Request }) {
   const [candidateError, setCandidateError] = useState('');
   const [retry, setRetry] = useState(0);
   const [candidateSearch, setCandidateSearch] = useState(0);
-  const [metadata, setMetadata] = useState<Asset | null>(null);
   const [index, setIndex] = useState(0);
   const [total, setTotal] = useState(0);
   const page = Math.max(1, Number(params.get('page')) || 1);
@@ -241,19 +239,6 @@ export function SeriesPage({ request }: { request: Request }) {
     }
   }
 
-  async function saveMetadata(changes: AssetChanges) {
-    if (!metadata) throw new Error('画像を選択してください');
-    const value = (await request(`/api/v1/assets/${metadata.asset_id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(changes),
-    })) as Asset;
-    setMetadata(value);
-    setMembers((current) =>
-      current.map((a) => (a.asset_id === value.asset_id ? value : a)),
-    );
-    return value;
-  }
-
   async function deleteMember(asset: Asset) {
     if (!confirm('この画像を削除しますか？')) return;
     setBusy(true);
@@ -396,21 +381,13 @@ export function SeriesPage({ request }: { request: Request }) {
                           外す
                         </Button>
                         {!creating && kind === 'composite' && (
-                          <>
-                            <Button
-                              type="button"
-                              onClick={() => setMetadata(asset)}
-                            >
-                              画像を編集
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="destructive"
-                              onClick={() => void deleteMember(asset)}
-                            >
-                              画像を削除
-                            </Button>
-                          </>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={() => void deleteMember(asset)}
+                          >
+                            画像を削除
+                          </Button>
                         )}
                       </div>
                     </li>
@@ -474,23 +451,6 @@ export function SeriesPage({ request }: { request: Request }) {
             </div>
           </fieldset>
         </form>
-        {metadata && (
-          <section>
-            <h2>{metadata.filename}</h2>
-            <AssetMetadataEditor
-              key={metadata.asset_id}
-              asset={metadata}
-              onSave={saveMetadata}
-              onSearchTag={(tag) =>
-                navigate(`/library?tag=${encodeURIComponent(tag)}`)
-              }
-              onSearchCharacter={(character) =>
-                navigate(`/library?character=${encodeURIComponent(character)}`)
-              }
-            />
-            <Button onClick={() => setMetadata(null)}>編集を閉じる</Button>
-          </section>
-        )}
       </section>
     );
   if (series)
