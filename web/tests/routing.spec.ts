@@ -539,3 +539,62 @@ test('header links navigate without reloading the document and open independentl
   await expect(page).toHaveURL(/\/favorites$/);
   await other.close();
 });
+
+// Synthetic events cover restore handling, not browser bfcache eligibility.
+test('bfcache restore checks the session and clears expired private UI', async ({
+  page,
+}) => {
+  const state = { authenticated: true, denied: false };
+  await setup(page, state);
+  await page.goto('/library');
+  await expect(page.locator('.file').first()).toBeVisible();
+  let checks = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/v1/me') checks++;
+  });
+  const refreshed = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/api/v1/assets',
+  );
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent('pageshow', { persisted: true }),
+    ),
+  );
+  await refreshed;
+  await expect.poll(() => checks).toBe(1);
+  await expect(page.locator('.file').first()).toBeVisible();
+  state.authenticated = false;
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent('pageshow', { persisted: true }),
+    ),
+  );
+  await expect.poll(() => checks).toBe(2);
+  await expect(
+    page.getByRole('heading', { name: 'ライブラリにログイン' }),
+  ).toBeVisible();
+  await expect(page.locator('.file')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/library$/);
+});
+
+test('navigation intent preloads code without fetching private data', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto('/library');
+  const link = page.getByRole('link', { name: 'タグ', exact: true });
+  await expect(link).toBeVisible();
+  const requests: string[] = [];
+  page.on('request', (request) =>
+    requests.push(new URL(request.url()).pathname),
+  );
+  await link.focus();
+  await expect
+    .poll(() =>
+      requests.some((path) => /\/assets\/TagsPage-.*\.js$/.test(path)),
+    )
+    .toBe(true);
+  expect(requests.includes('/api/v1/tags')).toBe(false);
+  await link.click();
+  await expect.poll(() => requests.includes('/api/v1/tags')).toBe(true);
+});
