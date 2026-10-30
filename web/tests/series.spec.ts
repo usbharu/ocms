@@ -690,6 +690,12 @@ test('nested composite page numbers exclude other collection members', async ({
   page,
 }) => {
   await setup(page);
+  const seriesRequests: string[] = [];
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/v1/series/collection' || path === '/api/v1/series/comic')
+      seriesRequests.push(path);
+  });
   await page.goto('/assets/collection/view');
   await expect(page.locator('video')).toBeVisible();
   await expect(
@@ -700,11 +706,14 @@ test('nested composite page numbers exclude other collection members', async ({
     name: 'シリーズページ操作',
   });
   await expect(navigation).toContainText('1 / 2 ページ');
+  await expect(page).toHaveURL(/member=page-a/);
+  const loadedRequests = [...seriesRequests];
   await expect(
     navigation.getByRole('button', { name: '前のシリーズページ' }),
   ).toBeDisabled();
   await navigation.getByRole('button', { name: '次のシリーズページ' }).click();
   await expect(navigation).toContainText('2 / 2 ページ');
+  await expect(page).toHaveURL(/member=page-b/);
   // Page controls can be disabled or remounted as the member URL changes.
   const close = page.getByRole('button', { name: '閲覧を閉じる' });
   await close.press('ArrowLeft');
@@ -712,6 +721,8 @@ test('nested composite page numbers exclude other collection members', async ({
   await close.press('ArrowLeft');
   await expect(page.locator('video')).toBeVisible();
   await expect(navigation).toHaveCount(0);
+  await expect(page).toHaveURL(/member=movie/);
+  expect(seriesRequests).toEqual(loadedRequests);
 });
 
 test('draft changes search only when re-search is pressed', async ({

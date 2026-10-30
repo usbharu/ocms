@@ -48,20 +48,24 @@ export function SeriesAssetViewer(props: AssetViewerProps) {
             : item,
         );
       setItems(leaves);
-      setIndex(
-        Math.max(
-          0,
-          leaves.findIndex(
-            (member) => member.asset.asset_id === asset.matched_asset_id,
-          ),
-        ),
-      );
     };
     void load().catch(() => {
       if (!controller.signal.aborted) setError('シリーズを読み込めません。');
     });
     return () => controller.abort();
-  }, [asset.asset_id, asset.matched_asset_id, retry]);
+  }, [asset.asset_id, asset.series_kind, retry]);
+
+  useEffect(() => {
+    if (!items) return;
+    setIndex(
+      Math.max(
+        0,
+        items.findIndex(
+          (member) => member.asset.asset_id === asset.matched_asset_id,
+        ),
+      ),
+    );
+  }, [items, asset.matched_asset_id]);
 
   const position = items?.[index];
   const current = position?.asset;
