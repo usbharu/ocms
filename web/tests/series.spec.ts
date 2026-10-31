@@ -669,7 +669,14 @@ for (const width of [1440, 390]) {
       .getByRole('button', { name: '前のシリーズページ' })
       .click();
     await expect(navigation).toContainText('1 / 2 ページ');
-    await page.keyboard.press('ArrowRight');
+    await expect(
+      navigation.getByRole('button', { name: '前のシリーズページ' }),
+    ).toBeDisabled();
+    // The clicked previous-page button is now disabled. Keep the keyboard
+    // target inside the dialog regardless of the browser's focus handling.
+    await page
+      .getByRole('button', { name: '閲覧を閉じる' })
+      .press('ArrowRight');
     await expect(navigation).toContainText('2 / 2 ページ');
     await page.getByRole('button', { name: '拡大', exact: true }).click();
     await expect(navigation).toBeVisible();
