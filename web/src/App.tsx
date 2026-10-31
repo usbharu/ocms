@@ -13,6 +13,8 @@ import {
   useNavigate,
   useNavigationType,
 } from 'react-router';
+import { AssetGroupsEditor } from './components/groups/AssetGroupsEditor';
+import { GroupsPage } from './components/groups/GroupsPage';
 import { AppHeader } from './components/library/AppHeader';
 import { AssetDetails } from './components/library/AssetDetails';
 import { AssetList } from './components/library/AssetList';
@@ -238,6 +240,7 @@ export function App() {
         };
       } else if (next.source) {
         const params = new URLSearchParams({
+          ...(next.groupId ? { group_id: next.groupId } : {}),
           ...(next.favorites ? { favorites: 'true' } : {}),
           ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
         });
@@ -248,6 +251,7 @@ export function App() {
         res = await request('/api/v1/search', {
           method: 'POST',
           body: JSON.stringify({
+            group_id: next.groupId,
             query: next.query,
             mode: next.mode,
             limit: 200,
@@ -261,6 +265,7 @@ export function App() {
         });
       } else {
         const params = new URLSearchParams({
+          ...(next.groupId ? { group_id: next.groupId } : {}),
           ...(next.favorites ? { favorites: 'true' } : {}),
           ...(next.tag ? { tag: next.tag } : {}),
           ...(next.character ? { character: next.character } : {}),
@@ -486,6 +491,7 @@ export function App() {
     }
     if (route.section === 'series') snapshots.current.clear();
     if (
+      (route.section === 'groups' && !route.context.groupId) ||
       route.section === 'series' ||
       route.section === 'tags' ||
       route.section === 'characters'
@@ -668,6 +674,11 @@ export function App() {
     nextSection: Section = section,
     keepSelection = false,
   ) {
+    if (
+      nextSection === section &&
+      (section === 'library' || section === 'groups')
+    )
+      next = { ...next, groupId: next.groupId ?? context.groupId };
     snapshots.current.set(location.key, liveSnapshot.current);
     capturedSnapshot.current = location.key;
     setSearching(true);
@@ -911,7 +922,22 @@ export function App() {
         const asset = await request(`/api/v1/assets/${lastAsset}`);
         loadedCollection.current = '';
         navigate(
-          assetURL(asset.asset_id, false, 'library', allFiles, 1, 'all'),
+          assetURL(
+            asset.asset_id,
+            false,
+            (tasks.find((task) => task.session?.asset_id === lastAsset)
+              ?.groupId ?? 'default') === 'default'
+              ? 'library'
+              : 'groups',
+            {
+              ...allFiles,
+              groupId:
+                tasks.find((task) => task.session?.asset_id === lastAsset)
+                  ?.groupId ?? 'default',
+            },
+            1,
+            'all',
+          ),
         );
       }
     } catch (e) {
@@ -926,6 +952,7 @@ export function App() {
     if (uploadRunning.current) return;
     const tasks: UploadTask[] = files.map((file) => ({
       id: crypto.randomUUID(),
+      groupId: context.groupId ?? 'default',
       file,
       state: 'waiting',
       progress: 0,
@@ -950,6 +977,7 @@ export function App() {
         source: selected,
         ratings: context.ratings,
         favorites: context.favorites,
+        groupId: context.groupId,
       },
       1,
       'all',
@@ -979,6 +1007,7 @@ export function App() {
         collectionURL(section, {
           ...allFiles,
           favorites: context.favorites,
+          groupId: context.groupId,
           personalized: section === 'recommendations',
         }),
         { replace: true },
@@ -1105,10 +1134,18 @@ export function App() {
 
   function openMetadataFilter(field: 'tag' | 'character', name: string) {
     goCollection(
-      { mode: 'keyword', query: '', [field]: name },
+      {
+        mode: 'keyword',
+        query: '',
+        [field]: name,
+        groupId:
+          section === 'library' || section === 'groups'
+            ? context.groupId
+            : undefined,
+      },
       1,
       'all',
-      'library',
+      section === 'groups' ? 'groups' : 'library',
     );
   }
 
@@ -1267,7 +1304,11 @@ export function App() {
         collectionURL(
           section,
           context.source?.asset_id === selected.asset_id
-            ? { ...allFiles, favorites: context.favorites }
+            ? {
+                ...allFiles,
+                favorites: context.favorites,
+                groupId: context.groupId,
+              }
             : context,
           page,
           kind,
@@ -1286,13 +1327,16 @@ export function App() {
         onLogout={logout}
         section={section}
       >
-        {me && section === 'library' && !related && (
-          <UploadControl
-            uploadInput={uploadInput}
-            busy={progress !== null}
-            onUpload={upload}
-          />
-        )}
+        {me &&
+          (section === 'library' || section === 'groups') &&
+          !related &&
+          (section !== 'groups' || context.groupId) && (
+            <UploadControl
+              uploadInput={uploadInput}
+              busy={progress !== null}
+              onUpload={upload}
+            />
+          )}
       </AppHeader>
       <main>
         {error && (
@@ -1341,11 +1385,14 @@ export function App() {
               to={collectionURL(section, {
                 ...allFiles,
                 favorites: section === 'favorites',
+                groupId: context.groupId,
               })}
             >
               一覧に戻る
             </Link>
           </section>
+        ) : section === 'groups' && !route.context.groupId ? (
+          <GroupsPage request={request} />
         ) : route.section === 'series' ? (
           <Suspense
             fallback={
@@ -1377,6 +1424,9 @@ export function App() {
           </Suspense>
         ) : (
           <>
+            {section === 'groups' && (
+              <GroupHeading groupId={context.groupId} request={request} />
+            )}
             {!related && (
               <h1 className="visually-hidden">
                 {personal
@@ -1591,6 +1641,18 @@ export function App() {
               {selected && (
                 <AssetDetails
                   key={selected.asset_id}
+                  groupEditor={
+                    <AssetGroupsEditor
+                      assetId={selected.asset_id}
+                      series={Boolean(selected.series_kind)}
+                      request={request}
+                      onSaved={() => {
+                        snapshots.current.clear();
+                        loadedCollection.current = '';
+                        void refresh();
+                      }}
+                    />
+                  }
                   selected={selected}
                   onFavorite={(asset) => {
                     void toggleFavorite(asset);
@@ -1660,6 +1722,41 @@ export function App() {
           onClose={() => closeAsset(true)}
         />
       )}
+    </div>
+  );
+}
+
+function GroupHeading({
+  groupId,
+  request,
+}: {
+  groupId?: string;
+  request: (path: string) => Promise<unknown>;
+}) {
+  const api = useRef(request);
+  api.current = request;
+  const [name, setName] = useState(groupId ?? '');
+  useEffect(() => {
+    let active = true;
+    void api
+      .current('/api/v1/groups')
+      .then((result) => {
+        const group = (
+          result as { groups: { group_id: string; name: string }[] }
+        ).groups.find((item) => item.group_id === groupId);
+        if (active) setName(group?.name ?? 'グループが見つかりません');
+      })
+      .catch(() => {
+        if (active) setName('グループ');
+      });
+    return () => {
+      active = false;
+    };
+  }, [groupId]);
+  return (
+    <div className="group-heading">
+      <h1>{name}</h1>
+      <Link to="/groups">グループ一覧</Link>
     </div>
   );
 }

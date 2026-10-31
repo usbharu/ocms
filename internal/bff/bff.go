@@ -257,7 +257,7 @@ func (s *Service) proxy(w http.ResponseWriter, r *http.Request) {
 		upstream = os.Getenv("TRANSFER_URL")
 	case strings.HasPrefix(path, "/api/v1/jobs/") || strings.HasSuffix(path, "/renditions") || strings.HasSuffix(path, "/jobs"):
 		upstream = os.Getenv("MEDIA_URL")
-	case strings.HasPrefix(path, "/api/v1/series") || path == "/api/v1/tags" || path == "/api/v1/characters" || strings.HasPrefix(path, "/api/v1/assets") || strings.HasPrefix(path, "/api/v1/uploads"):
+	case path == "/api/v1/groups" || strings.HasPrefix(path, "/api/v1/groups/") || strings.HasPrefix(path, "/api/v1/series") || path == "/api/v1/tags" || path == "/api/v1/characters" || strings.HasPrefix(path, "/api/v1/assets") || strings.HasPrefix(path, "/api/v1/uploads"):
 	default:
 		platform.Error(w, 404, "NOT_FOUND")
 		return

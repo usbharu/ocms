@@ -43,6 +43,18 @@ async function mockAPI(page: Page) {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();
+    if (path === '/api/v1/groups')
+      return route.fulfill({
+        json: {
+          groups: ['default', 'all'].map((id) => ({
+            group_id: id,
+            name: id,
+            builtin: true,
+          })),
+        },
+      });
+    if (/^\/api\/v1\/assets\/[^/]+\/groups$/.test(path))
+      return route.fulfill({ json: { group_ids: ['default', 'all'] } });
     if (path === '/api/v1/uploads')
       return route.fulfill({
         json: { upload_id: 'upload-1', asset_id: 'new-image' },
@@ -245,6 +257,7 @@ test('search modes use text API; tag editing preserves the match time', async ({
     const search = page.waitForRequest((r) => r.url().endsWith('/search'));
     await page.getByRole('button', { name: '検索', exact: true }).click();
     expect((await search).postDataJSON()).toEqual({
+      group_id: 'default',
       query: 'sample',
       mode,
       limit: 200,
@@ -275,10 +288,12 @@ test('comparison actions stay attached to the selected source', async ({
     ['完全一致ファイル', 'duplicates'],
   ]) {
     const comparison = page.waitForRequest((r) =>
-      r.url().endsWith(`/image/${endpoint}`),
+      new URL(r.url()).pathname.endsWith(`/image/${endpoint}`),
     );
     await page.getByRole('button', { name: label, exact: true }).click();
-    await comparison;
+    expect(new URL((await comparison).url()).searchParams.get('group_id')).toBe(
+      'default',
+    );
     await expect(
       page.getByRole('heading', { name: `${label}：山の風景.png` }),
     ).toBeVisible();
@@ -821,7 +836,7 @@ test('search and comparison results paginate and filters reset the page', async 
   await page.route('**/api/v1/search', (route) =>
     route.fulfill({ json: { assets: results } }),
   );
-  await page.route('**/api/v1/assets/*/duplicates', (route) =>
+  await page.route('**/api/v1/assets/*/duplicates?**', (route) =>
     route.fulfill({ json: { assets: results } }),
   );
   await page.getByRole('searchbox').fill('pdf');
@@ -1474,7 +1489,7 @@ test('blur saves filename, comparison heading updates and refresh failure is sep
     page.getByRole('heading', { name: '類似ファイル：比較元の新しい名前.png' }),
   ).toBeVisible();
   await expect(page.locator('.metadata-status')).toHaveText('保存しました');
-  await page.route('**/api/v1/assets/image/similar', (route) =>
+  await page.route('**/api/v1/assets/image/similar?**', (route) =>
     route.fulfill({ status: 503, json: { error: 'unavailable' } }),
   );
   await name.fill('保存は成功.png');
@@ -1594,7 +1609,7 @@ for (const [field, label] of [
       await page.route('**/api/v1/search', (route) =>
         route.fulfill({ json: { assets } }),
       );
-      await page.route('**/api/v1/assets/*/duplicates', (route) =>
+      await page.route('**/api/v1/assets/*/duplicates?**', (route) =>
         route.fulfill({ json: { assets } }),
       );
       await page.reload();
@@ -1630,6 +1645,7 @@ for (const [field, label] of [
         .click();
       const params = new URL((await request).url()).searchParams;
       expect(Object.fromEntries(params)).toEqual({
+        group_id: 'default',
         [field]: tag,
         limit: '200',
         offset: '0',
@@ -1753,6 +1769,7 @@ test('detail character deletion stays separate and long names support keyboard s
   await expect.poll(() => requests.length).toBe(1);
   const params = new URL(requests[0]).searchParams;
   expect(Object.fromEntries(params)).toEqual({
+    group_id: 'default',
     character,
     limit: '200',
     offset: '0',

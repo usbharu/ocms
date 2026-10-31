@@ -155,7 +155,7 @@ func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var dataset contracts.RecommendationDataset
-	if err := platform.Call(ctx, "GET", s.Catalog+"/internal/recommendation-dataset", principal, nil, &dataset); err != nil {
+	if err := platform.Call(ctx, "GET", s.Catalog+"/internal/recommendation-dataset?"+strings.TrimPrefix(groupQuery(r.URL.Query().Get("group_id")), "&"), principal, nil, &dataset); err != nil {
 		platform.RespondError(w, err)
 		return
 	}
@@ -185,6 +185,7 @@ func (s *Service) recommendations(w http.ResponseWriter, r *http.Request) {
 		var authorized struct {
 			Assets []catalog.Asset `json:"assets"`
 		}
+		input["group_id"] = r.URL.Query().Get("group_id")
 		if err = platform.Call(ctx, "POST", s.Catalog+"/internal/authorize-blobs", principal, input, &authorized); err != nil {
 			platform.RespondError(w, err)
 			return

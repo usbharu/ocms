@@ -10,11 +10,11 @@ import (
 
 func spaPath(p string) bool {
 	switch p {
-	case "/", "/library", "/tags", "/characters", "/favorites", "/recommendations", "/series", "/series/new":
+	case "/groups", "/", "/library", "/tags", "/characters", "/favorites", "/recommendations", "/series", "/series/new":
 		return true
 	}
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	return strings.HasPrefix(p, "/") && (len(parts) == 2 || len(parts) == 3 && (parts[2] == "view" || parts[0] == "series" && parts[2] == "edit")) && (parts[0] == "assets" || parts[0] == "series") && parts[1] != "" && parts[1] != "." && parts[1] != ".."
+	return strings.HasPrefix(p, "/") && (len(parts) == 2 || len(parts) == 3 && (parts[2] == "view" || parts[0] == "series" && parts[2] == "edit")) && (parts[0] == "assets" || parts[0] == "series" || parts[0] == "groups" && len(parts) == 2) && parts[1] != "" && parts[1] != "." && parts[1] != ".."
 }
 
 // Return targets are local application routes, never arbitrary redirect URLs.

@@ -18,13 +18,17 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 	if !guard(w, r) {
 		return
 	}
+	group, ok := s.requestGroup(w, r)
+	if !ok {
+		return
+	}
 	tx, err := s.DB.BeginTx(r.Context(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), selectAsset+`WHERE `+displayed+` ORDER BY a.id`, user(r))
+	rows, err := tx.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND `+groupCondition(2)+` ORDER BY a.id`, user(r), group)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
