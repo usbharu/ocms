@@ -2,7 +2,7 @@
 # The login fixture deliberately omits real identity verification; never deploy it.
 services:
   lgtm:
-    image: grafana/otel-lgtm:0.38.1
+    image: grafana/otel-lgtm:0.39.0
     ports: ["127.0.0.1:3000:3000"]
     volumes:
       - verify-telemetry:/data
