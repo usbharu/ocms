@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import type { Asset, AssetChanges } from '../../lib/assets';
-import { AssetMetadataEditor } from '../library/AssetMetadataEditor';
+import type { Asset } from '../../lib/assets';
 import { AssetViewer } from '../library/AssetViewer';
 import { FavoriteButton } from '../library/FavoriteButton';
 import { Thumbnail } from '../library/Thumbnail';
@@ -53,9 +52,11 @@ export function SeriesPage({ request }: { request: Request }) {
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deletingId, setDeletingId] = useState('');
   const [candidateError, setCandidateError] = useState('');
   const [retry, setRetry] = useState(0);
-  const [metadata, setMetadata] = useState<Asset | null>(null);
+  const [candidateSearch, setCandidateSearch] = useState(0);
   const [index, setIndex] = useState(0);
   const [total, setTotal] = useState(0);
   const page = Math.max(1, Number(params.get('page')) || 1);
@@ -129,41 +130,38 @@ export function SeriesPage({ request }: { request: Request }) {
     };
   }, [id, creating, source, initialMember, page, listKind, retry]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: request uses the current authenticated session.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Read the current draft only on initial load or an explicit search, never on draft changes.
   useEffect(() => {
     if (!editing || loading) return;
     let active = true;
     setCandidateLoading(true);
     setCandidateError('');
-    const timer = window.setTimeout(() => {
-      void request('/api/v1/series/suggestions', {
-        method: 'POST',
-        body: JSON.stringify({
-          kind,
-          member_ids: members.map((a) => a.asset_id),
-          source_id: source,
-          editing_id: id || '',
-          query,
-        }),
+    void request('/api/v1/series/suggestions', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind,
+        member_ids: members.map((a) => a.asset_id),
+        source_id: source,
+        editing_id: id || '',
+        query,
+      }),
+    })
+      .then((value) => {
+        if (active) setCandidates((value as { assets: Suggestion[] }).assets);
       })
-        .then((value) => {
-          if (active) setCandidates((value as { assets: Suggestion[] }).assets);
-        })
-        .catch(() => {
-          if (active) {
-            setCandidates([]);
-            setCandidateError('候補を取得できません。再試行してください。');
-          }
-        })
-        .finally(() => {
-          if (active) setCandidateLoading(false);
-        });
-    }, 250);
+      .catch(() => {
+        if (active) {
+          setCandidates([]);
+          setCandidateError('候補を取得できません。再試行してください。');
+        }
+      })
+      .finally(() => {
+        if (active) setCandidateLoading(false);
+      });
     return () => {
       active = false;
-      window.clearTimeout(timer);
     };
-  }, [editing, loading, members, kind, query, source, id, retry]);
+  }, [editing, loading, source, id, candidateSearch]);
 
   function reorder(position: number, delta: number) {
     setMembers((current) => {
@@ -177,6 +175,11 @@ export function SeriesPage({ request }: { request: Request }) {
   }
 
   async function save() {
+    if (busy) return;
+    if (!name.trim() || members.length < 2) {
+      setError('シリーズ名を入力し、作品を2件以上選択してください。');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -220,35 +223,43 @@ export function SeriesPage({ request }: { request: Request }) {
     }
   }
 
-  async function dissolve() {
-    if (
-      !series ||
-      !confirm('シリーズを解除しますか？ 元のファイルは残ります。')
-    )
-      return;
+  async function dissolve(target: Asset) {
+    if (busy) return;
     setBusy(true);
-    setError('');
+    setDeletingId(target.asset_id);
+    setDeleteError('');
     try {
-      await request(`/api/v1/series/${series.asset_id}`, { method: 'DELETE' });
-      navigate('/series');
+      const detail =
+        series?.asset_id === target.asset_id
+          ? series
+          : ((await request(
+              `/api/v1/series/${encodeURIComponent(target.asset_id)}`,
+            )) as Series);
+      if (!detail.editable) {
+        setDeleteError('シリーズを削除できるのは所有者だけです。');
+        return;
+      }
+      if (
+        !confirm(
+          `「${detail.filename}」を削除しますか？ 元のファイルは残ります。`,
+        )
+      )
+        return;
+      await request(`/api/v1/series/${encodeURIComponent(target.asset_id)}`, {
+        method: 'DELETE',
+      });
+      if (id) navigate('/series');
+      else if (items.length === 1 && page > 1)
+        navigate(seriesListURL(page - 1));
+      else setRetry((value) => value + 1);
     } catch {
-      setError('解除できません。再試行してください。');
+      setDeleteError(
+        'シリーズを削除できません。もう一度削除をお試しください。',
+      );
     } finally {
       setBusy(false);
+      setDeletingId('');
     }
-  }
-
-  async function saveMetadata(changes: AssetChanges) {
-    if (!metadata) throw new Error('画像を選択してください');
-    const value = (await request(`/api/v1/assets/${metadata.asset_id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(changes),
-    })) as Asset;
-    setMetadata(value);
-    setMembers((current) =>
-      current.map((a) => (a.asset_id === value.asset_id ? value : a)),
-    );
-    return value;
   }
 
   async function deleteMember(asset: Asset) {
@@ -265,6 +276,15 @@ export function SeriesPage({ request }: { request: Request }) {
       setBusy(false);
     }
   }
+
+  const availableCandidates = candidates.filter(
+    (asset) =>
+      !members.some((member) => member.asset_id === asset.asset_id) &&
+      (kind === 'collection' ||
+        (asset.mime_type.startsWith('image/') &&
+          !asset.series_kind &&
+          !asset.composite_id)),
+  );
 
   if (loading) return <p role="status">読み込み中…</p>;
   if (error && !editing)
@@ -300,7 +320,6 @@ export function SeriesPage({ request }: { request: Request }) {
                 disabled={!creating}
                 onChange={(event) => {
                   setKind(event.target.value as typeof kind);
-                  setCandidates([]);
                 }}
               >
                 <option value="collection">通常シリーズ</option>
@@ -332,13 +351,8 @@ export function SeriesPage({ request }: { request: Request }) {
               />
             </label>
             <div className="series-actions series-submit-actions">
-              <Button
-                type="submit"
-                disabled={
-                  members.length < 2 || !name.trim() || candidateLoading
-                }
-              >
-                {busy ? '保存中…' : '保存'}
+              <Button type="submit">
+                {busy && !deletingId ? '保存中…' : '保存'}
               </Button>
               <Link
                 to={
@@ -352,6 +366,18 @@ export function SeriesPage({ request }: { request: Request }) {
                 キャンセル
               </Link>
             </div>
+            {!creating && series?.editable && (
+              <div className="series-delete-actions">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => void dissolve(series)}
+                >
+                  {deletingId ? '削除中…' : 'シリーズを削除'}
+                </Button>
+              </div>
+            )}
+            {deleteError && <p role="alert">{deleteError}</p>}
             <div className="series-editor">
               <section>
                 <h2>選択済み（{members.length}）</h2>
@@ -392,21 +418,13 @@ export function SeriesPage({ request }: { request: Request }) {
                           外す
                         </Button>
                         {!creating && kind === 'composite' && (
-                          <>
-                            <Button
-                              type="button"
-                              onClick={() => setMetadata(asset)}
-                            >
-                              画像を編集
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="destructive"
-                              onClick={() => void deleteMember(asset)}
-                            >
-                              画像を削除
-                            </Button>
-                          </>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={() => void deleteMember(asset)}
+                          >
+                            画像を削除
+                          </Button>
                         )}
                       </div>
                     </li>
@@ -423,6 +441,12 @@ export function SeriesPage({ request }: { request: Request }) {
                     onChange={(event) => setQuery(event.target.value)}
                   />
                 </label>
+                <Button
+                  type="button"
+                  onClick={() => setCandidateSearch((value) => value + 1)}
+                >
+                  再検索
+                </Button>
                 {candidateLoading ? (
                   <p role="status">候補を読み込み中…</p>
                 ) : candidateError ? (
@@ -430,16 +454,16 @@ export function SeriesPage({ request }: { request: Request }) {
                     {candidateError}
                     <Button
                       type="button"
-                      onClick={() => setRetry((v) => v + 1)}
+                      onClick={() => setCandidateSearch((value) => value + 1)}
                     >
                       再試行
                     </Button>
                   </p>
-                ) : candidates.length === 0 ? (
+                ) : availableCandidates.length === 0 ? (
                   <p>追加できる作品がありません</p>
                 ) : (
                   <ul className="series-members">
-                    {candidates.map((asset) => (
+                    {availableCandidates.map((asset) => (
                       <li key={asset.asset_id}>
                         <Thumbnail asset={asset} />
                         <span>
@@ -452,11 +476,6 @@ export function SeriesPage({ request }: { request: Request }) {
                           type="button"
                           onClick={() => {
                             setMembers((current) => [...current, asset]);
-                            setCandidates((current) =>
-                              current.filter(
-                                (a) => a.asset_id !== asset.asset_id,
-                              ),
-                            );
                           }}
                         >
                           追加
@@ -469,23 +488,6 @@ export function SeriesPage({ request }: { request: Request }) {
             </div>
           </fieldset>
         </form>
-        {metadata && (
-          <section>
-            <h2>{metadata.filename}</h2>
-            <AssetMetadataEditor
-              key={metadata.asset_id}
-              asset={metadata}
-              onSave={saveMetadata}
-              onSearchTag={(tag) =>
-                navigate(`/library?tag=${encodeURIComponent(tag)}`)
-              }
-              onSearchCharacter={(character) =>
-                navigate(`/library?character=${encodeURIComponent(character)}`)
-              }
-            />
-            <Button onClick={() => setMetadata(null)}>編集を閉じる</Button>
-          </section>
-        )}
       </section>
     );
   if (series)
@@ -513,12 +515,13 @@ export function SeriesPage({ request }: { request: Request }) {
           {series.editable && (
             <>
               <Link to={`/series/${series.asset_id}/edit`}>編集</Link>
-              <Button disabled={busy} onClick={() => void dissolve()}>
+              <Button disabled={busy} onClick={() => void dissolve(series)}>
                 シリーズを解除
               </Button>
             </>
           )}
         </div>
+        {deleteError && <p role="alert">{deleteError}</p>}
         <p>
           {series.tags.join('・')} {series.characters?.join('・')}{' '}
           {series.rating}
@@ -582,6 +585,7 @@ export function SeriesPage({ request }: { request: Request }) {
           <option value="composite">一体型シリーズ</option>
         </NativeSelect>
       </label>
+      {deleteError && <p role="alert">{deleteError}</p>}
       {items.length === 0 ? (
         <p>
           {listKind === 'collection'
@@ -591,7 +595,7 @@ export function SeriesPage({ request }: { request: Request }) {
               : 'シリーズがありません'}
         </p>
       ) : (
-        <ul className="series-members">
+        <ul className="series-members series-list">
           {items.map((asset) => (
             <li key={asset.asset_id}>
               <Thumbnail asset={asset} />
@@ -604,6 +608,14 @@ export function SeriesPage({ request }: { request: Request }) {
               <small>
                 {asset.series_kind === 'composite' ? '一体型' : '通常'}
               </small>
+              <Button
+                variant="destructive"
+                disabled={busy}
+                aria-label={`${asset.filename}のシリーズを削除`}
+                onClick={() => void dissolve(asset)}
+              >
+                {deletingId === asset.asset_id ? '削除中…' : 'シリーズを削除'}
+              </Button>
             </li>
           ))}
         </ul>

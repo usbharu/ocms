@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Link,
   useLocation,
@@ -16,8 +24,6 @@ import { SearchForm } from './components/library/SearchForm';
 import { SeriesAssetViewer } from './components/library/SeriesAssetViewer';
 import { UploadControl } from './components/library/UploadControl';
 import { UploadProgress } from './components/library/UploadProgress';
-import { SeriesPage } from './components/series/SeriesPage';
-import { TagsPage } from './components/tags/TagsPage';
 import { Button } from './components/ui/button';
 import { NativeSelect } from './components/ui/native-select';
 import {
@@ -39,13 +45,18 @@ import {
   type SearchContext,
   type View,
 } from './lib/assets';
+import { loadSeriesPage, loadTagsPage } from './lib/pageModules';
 import {
   assetURL,
   collectionURL,
   parseRoute,
   type Section,
 } from './lib/routes';
-import { type UploadTask, uploadFile } from './lib/uploads';
+import {
+  filterDuplicateUploadFiles,
+  type UploadTask,
+  uploadFile,
+} from './lib/uploads';
 
 type ExplorationSnapshot = {
   assets: Asset[];
@@ -59,7 +70,15 @@ type ExplorationSnapshot = {
   hashStatus: HashStatus | null;
 };
 
+const SeriesPage = lazy(loadSeriesPage);
+const TagsPage = lazy(loadTagsPage);
+
 const viewStorageKey = 'ocms.library.view';
+
+// Polling responses contain JSON values; retain references when nothing changed.
+function retainUnchanged<T>(current: T, next: T): T {
+  return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
 
 function savedView(): View {
   try {
@@ -344,11 +363,49 @@ export function App() {
       .then((r) => r.json())
       .then((c) => setDev(c.development))
       .catch(() => setError('接続できません'));
-    fetch('/api/v1/me')
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setMe)
-      .catch(() => setError('接続できません'))
-      .finally(() => setAuthLoading(false));
+    let controller: AbortController | undefined;
+    function checkSession() {
+      controller?.abort();
+      controller = new AbortController();
+      const { signal } = controller;
+      void fetch('/api/v1/me', { signal, cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((identity: Me | null) => {
+          if (!signal.aborted) setMe(identity);
+        })
+        .catch(() => {
+          if (!signal.aborted) {
+            setMe(null);
+            setError('接続できません');
+          }
+        })
+        .finally(() => {
+          if (!signal.aborted) {
+            controller = undefined;
+            setAuthLoading(false);
+          }
+        });
+    }
+    function restore(event: PageTransitionEvent) {
+      if (!event.persisted) return;
+      // A restored document can outlive its session and the ACLs it displayed.
+      // Reuse the document/modules, but discard authenticated UI snapshots.
+      ++requestVersion.current;
+      snapshots.current.clear();
+      loadedCollection.current = '';
+      setMe(null);
+      setAuthLoading(true);
+      setAssets([]);
+      setSelected(null);
+      setViewerOpen(false);
+      checkSession();
+    }
+    checkSession();
+    window.addEventListener('pageshow', restore);
+    return () => {
+      controller?.abort();
+      window.removeEventListener('pageshow', restore);
+    };
   }, []);
   const liveSnapshot = useRef<ExplorationSnapshot>({
     assets,
@@ -383,9 +440,9 @@ export function App() {
   }, [location.key]);
 
   // URL transitions own collection loading. Ordinary refreshes keep the current URL.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Run once per navigation or authenticated principal, not on fetched state updates.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Run once per navigation or authenticated session, not on collection state updates.
   useEffect(() => {
-    const principal = me?.principal_id;
+    const { principal_id: principal } = me ?? {};
     const principalChanged = lastPrincipal.current !== principal;
     if (principalChanged) {
       snapshots.current.clear();
@@ -602,7 +659,7 @@ export function App() {
       active = false;
       ++requestVersion.current;
     };
-  }, [location.key, me?.principal_id]);
+  }, [location.key, me]);
 
   function goCollection(
     next: SearchContext,
@@ -703,6 +760,9 @@ export function App() {
     setNotice('');
     if (!selected || !me) return;
     let active = true;
+    let timer: number | undefined;
+    const controller = new AbortController();
+    const get = (path: string) => request(path, { signal: controller.signal });
     const update = async () => {
       const version = metadataVersion.current;
       let ds: { renditions: Rendition[] };
@@ -710,32 +770,39 @@ export function App() {
       let asset: Asset & { editable?: boolean };
       let preview: Asset | null = null;
       if (selected.series_kind) {
-        asset = await request(`/api/v1/series/${selected.asset_id}`);
+        asset = await get(`/api/v1/series/${selected.asset_id}`);
         const previewID =
           selected.matched_asset_id &&
           asset.blob_asset_ids?.includes(selected.matched_asset_id)
             ? selected.matched_asset_id
             : asset.cover_asset_id;
         if (previewID) {
-          preview = await request(`/api/v1/assets/${previewID}`);
-          ds = await request(`/api/v1/assets/${previewID}/renditions`);
+          preview = await get(`/api/v1/assets/${previewID}`);
+          ds = await get(`/api/v1/assets/${previewID}/renditions`);
         } else ds = { renditions: [] };
         js = { jobs: [] };
       } else {
-        [ds, js, asset] = await Promise.all([
-          request(`/api/v1/assets/${selected.asset_id}/renditions`),
-          request(`/api/v1/assets/${selected.asset_id}/jobs`),
-          request(`/api/v1/assets/${selected.asset_id}`),
-        ]);
+        const [renditionResult, jobResult, assetResult] =
+          await Promise.allSettled([
+            get(`/api/v1/assets/${selected.asset_id}/renditions`),
+            get(`/api/v1/assets/${selected.asset_id}/jobs`),
+            get(`/api/v1/assets/${selected.asset_id}`),
+          ]);
+        if (renditionResult.status === 'rejected') throw renditionResult.reason;
+        if (jobResult.status === 'rejected') throw jobResult.reason;
+        if (assetResult.status === 'rejected') throw assetResult.reason;
+        ds = renditionResult.value;
+        js = jobResult.value;
+        asset = assetResult.value;
       }
       if (active && version === metadataVersion.current) {
-        setRenditions(ds.renditions);
-        setJobs(js.jobs);
-        setPreviewAsset(preview);
+        setRenditions((current) => retainUnchanged(current, ds.renditions));
+        setJobs((current) => retainUnchanged(current, js.jobs));
+        setPreviewAsset((current) => retainUnchanged(current, preview));
         setSeriesEditable(Boolean(asset.editable));
         setSelected((current) =>
           current
-            ? {
+            ? retainUnchanged(current, {
                 ...current,
                 ...(current.series_kind
                   ? {
@@ -748,16 +815,23 @@ export function App() {
                   : {}),
                 status: asset.status,
                 rating: asset.rating,
-              }
+              })
             : null,
         );
-        setAssets((current) =>
-          current.map((a) =>
+        setAssets((current) => {
+          const next = current.map((a) =>
             a.asset_id === asset.asset_id
-              ? { ...a, status: asset.status, rating: asset.rating }
+              ? retainUnchanged(a, {
+                  ...a,
+                  status: asset.status,
+                  rating: asset.rating,
+                })
               : a,
-          ),
-        );
+          );
+          return next.every((a, index) => a === current[index])
+            ? current
+            : next;
+        });
       }
     };
     const handleFailure = (
@@ -777,18 +851,24 @@ export function App() {
         setError(error.message);
       }
     };
-    update().catch((error) => handleFailure(error, true));
-    const timer = window.setInterval(
-      () => update().catch((error) => handleFailure(error)),
-      5000,
-    );
+    const poll = async (initial = false) => {
+      try {
+        await update();
+      } catch (error) {
+        handleFailure(error as Error & { status?: number }, initial);
+      } finally {
+        if (active) timer = window.setTimeout(() => void poll(), 5000);
+      }
+    };
+    void poll(true);
     return () => {
       active = false;
-      clearInterval(timer);
+      controller.abort();
+      window.clearTimeout(timer);
     };
   }, [selected?.asset_id, me]);
 
-  async function processUploads(tasks: UploadTask[]) {
+  async function processUploads(tasks: UploadTask[], filterDuplicates = false) {
     if (!me || uploadRunning.current) return;
     uploadRunning.current = true;
     setError('');
@@ -814,6 +894,13 @@ export function App() {
       }
     };
     try {
+      if (filterDuplicates) {
+        const retained = new Set(
+          await filterDuplicateUploadFiles(tasks.map((task) => task.file)),
+        );
+        tasks = tasks.filter((task) => retained.has(task.file));
+        setUploadTasks(tasks);
+      }
       await Promise.all(
         Array.from({ length: Math.min(10, tasks.length) }, () => worker()),
       );
@@ -843,8 +930,8 @@ export function App() {
       state: 'waiting',
       progress: 0,
     }));
-    setUploadTasks(tasks);
-    void processUploads(tasks);
+    setUploadTasks([]);
+    void processUploads(tasks, true);
   }
 
   const run = (action: () => Promise<unknown>) =>
@@ -898,10 +985,14 @@ export function App() {
       );
   }
 
-  const visibleAssets = assets.filter(
-    (a) =>
-      (kind === 'all' || kindOf(a) === kind) &&
-      (!context.ratings || context.ratings.includes(a.rating ?? 'unrated')),
+  const visibleAssets = useMemo(
+    () =>
+      assets.filter(
+        (a) =>
+          (kind === 'all' || kindOf(a) === kind) &&
+          (!context.ratings || context.ratings.includes(a.rating ?? 'unrated')),
+      ),
+    [assets, kind, context.ratings],
   );
   const isResult = Boolean(
     (context.query && !context.tag && !context.character) || context.source,
@@ -910,13 +1001,16 @@ export function App() {
     !isResult && total !== null ? total : visibleAssets.length;
   const pageCount = Math.max(1, Math.ceil(resultCount / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const pageAssets =
-    !isResult && total !== null
-      ? visibleAssets
-      : visibleAssets.slice(
-          (currentPage - 1) * pageSize,
-          currentPage * pageSize,
-        );
+  const pageAssets = useMemo(
+    () =>
+      !isResult && total !== null
+        ? visibleAssets
+        : visibleAssets.slice(
+            (currentPage - 1) * pageSize,
+            currentPage * pageSize,
+          ),
+    [isResult, total, visibleAssets, currentPage],
+  );
 
   const selectedIndex = pageAssets.findIndex(
     (asset) => asset.asset_id === selected?.asset_id,
@@ -1111,7 +1205,21 @@ export function App() {
         ? { ...current, source: { ...current.source, ...metadata } }
         : current,
     );
-    if (selectedId.current === assetId && requestVersion.current === version) {
+    // Unfiltered library rows already contain the saved metadata. Requery only
+    // when the edit can affect membership or ranking of the current results.
+    const affectsResults = Boolean(
+      context.query ||
+        context.tag ||
+        context.character ||
+        context.source ||
+        context.personalized ||
+        (context.ratings && changes.rating !== undefined),
+    );
+    if (
+      affectsResults &&
+      selectedId.current === assetId &&
+      requestVersion.current === version
+    ) {
       const next =
         context.source?.asset_id === assetId
           ? { ...context, source: { ...context.source, ...metadata } }
@@ -1239,18 +1347,34 @@ export function App() {
             </Link>
           </section>
         ) : route.section === 'series' ? (
-          <SeriesPage key={location.pathname} request={request} />
-        ) : section === 'tags' || section === 'characters' ? (
-          <TagsPage
-            key={section}
-            kind={section}
-            onOpen={(name) =>
-              openMetadataFilter(
-                section === 'characters' ? 'character' : 'tag',
-                name,
-              )
+          <Suspense
+            fallback={
+              <div className="empty" role="status">
+                読み込み中…
+              </div>
             }
-          />
+          >
+            <SeriesPage key={location.pathname} request={request} />
+          </Suspense>
+        ) : section === 'tags' || section === 'characters' ? (
+          <Suspense
+            fallback={
+              <div className="empty" role="status">
+                読み込み中…
+              </div>
+            }
+          >
+            <TagsPage
+              key={section}
+              kind={section}
+              onOpen={(name) =>
+                openMetadataFilter(
+                  section === 'characters' ? 'character' : 'tag',
+                  name,
+                )
+              }
+            />
+          </Suspense>
         ) : (
           <>
             {!related && (

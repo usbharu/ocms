@@ -1023,7 +1023,8 @@ summary .count {
 }
 /* biome-ignore lint/style/noDescendingSpecificity: Viewer media is separate from library thumbnails. */
 .viewer-content > img,
-.viewer-content > video {
+.viewer-content > video,
+.viewer-page-image {
   display: block;
   width: 100%;
   height: 100%;
@@ -1037,7 +1038,8 @@ summary .count {
 }
 /* biome-ignore lint/style/noDescendingSpecificity: Viewer media is separate from library thumbnails. */
 .viewer-content > img,
-.pdf-page canvas {
+.pdf-page canvas,
+.viewer-page-image {
   pointer-events: none;
 }
 .viewer-audio {
@@ -1611,6 +1613,9 @@ summary .count {
 .series-submit-actions {
   margin-bottom: 1.5rem;
 }
+.series-delete-actions {
+  margin-bottom: 1.5rem;
+}
 .series-actions {
   display: flex;
   align-items: center;
@@ -1618,6 +1623,17 @@ summary .count {
   gap: 0.5rem;
 }
 @media (max-width: 760px) {
+  .series-list li {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr) auto;
+  }
+  .series-list li > a {
+    min-width: 0;
+  }
+  .series-list li > button {
+    grid-column: 2 / -1;
+    justify-self: end;
+  }
   .series-editor {
     grid-template-columns: 1fr;
     gap: 1rem;
