@@ -1303,7 +1303,10 @@ test('metadata autosaves, validates and keeps tags as individual chips', async (
   const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
   const tag = page.getByRole('textbox', { name: 'タグ', exact: true });
   const patches: unknown[] = [];
+  const collectionRequests: string[] = [];
   page.on('request', (r) => {
+    if (new URL(r.url()).pathname === '/api/v1/assets')
+      collectionRequests.push(r.url());
     if (r.method() === 'PATCH') patches.push(r.postDataJSON());
   });
   await name.fill('新しい名前.png');
@@ -1339,6 +1342,7 @@ test('metadata autosaves, validates and keeps tags as individual chips', async (
   await tag.fill('未確定');
   await tag.blur();
   expect(patches).toHaveLength(3);
+  expect(collectionRequests).toHaveLength(0);
 });
 
 test('metadata failure retains input and retries, pending response stays with its asset', async ({
@@ -1754,3 +1758,50 @@ test('detail character deletion stays separate and long names support keyboard s
     offset: '0',
   });
 });
+
+for (const failRenditions of [false, true]) {
+  test(`detail polling waits for all responses (rendition failure: ${failRenditions})`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requests = 0;
+    await page.route('**/api/v1/assets/image/renditions', (route) =>
+      failRenditions
+        ? route.fulfill({ status: 503, json: { error: 'unavailable' } })
+        : route.fulfill({
+            json: {
+              renditions: [
+                {
+                  rendition_id: 'thumbnail',
+                  profile_id: 'thumbnail-v1',
+                  mime_type: 'image/png',
+                },
+              ],
+            },
+          }),
+    );
+    await page.route('**/api/v1/assets/image/jobs', async (route) => {
+      requests++;
+      if (requests === 1) await held;
+      await route.fulfill({ json: { jobs: [] } });
+    });
+    await page
+      .locator('.file')
+      .filter({ hasText: fixtures[0].filename })
+      .click();
+    await expect.poll(() => requests).toBe(1);
+    await page.clock.runFor(15000);
+    expect(requests).toBe(1);
+    release();
+    // Rendering the rendition links proves that the whole polling batch completed.
+    if (failRenditions)
+      await expect(page.locator('.error')).toContainText('unavailable');
+    else await expect(page.locator('.renditions a')).toHaveCount(1);
+    await page.clock.runFor(5000);
+    await expect.poll(() => requests).toBe(2);
+  });
+}

@@ -10,6 +10,64 @@ export type UploadTask = {
 
 type Request = (path: string, options?: RequestInit) => Promise<unknown>;
 
+export async function filterDuplicateUploadFiles(
+  files: File[],
+): Promise<File[]> {
+  const byName = new Map<string, File[]>();
+  for (const file of files) {
+    const group = byName.get(file.name) ?? [];
+    group.push(file);
+    byName.set(file.name, group);
+  }
+  const hashes = new Map<File, Promise<string | undefined>>();
+  const hash = (file: File) => {
+    let result = hashes.get(file);
+    if (!result) {
+      result = (async () => {
+        try {
+          const digest = await crypto.subtle.digest(
+            'SHA-256',
+            await file.arrayBuffer(),
+          );
+          return Array.from(new Uint8Array(digest), (byte) =>
+            byte.toString(16).padStart(2, '0'),
+          ).join('');
+        } catch {
+          // Keep files when their contents cannot be verified locally.
+          return undefined;
+        }
+      })();
+      hashes.set(file, result);
+    }
+    return result;
+  };
+  const retained: File[] = [];
+  for (const file of files) {
+    const match = file.name.match(
+      /^(.*?)\s*(?:\([+-]?\d+\)|（[+-]?\d+）)(\.[^.]*)?$/u,
+    );
+    const originals = match
+      ? (byName.get(`${match[1]}${match[2] ?? ''}`) ?? []).filter(
+          (original) => original.size === file.size,
+        )
+      : [];
+    let duplicate = false;
+    if (originals.length) {
+      const candidateHash = await hash(file);
+      if (candidateHash !== undefined) {
+        for (const original of originals) {
+          if ((await hash(original)) === candidateHash) {
+            duplicate = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!duplicate) retained.push(file);
+  }
+  return retained;
+}
+
 function send(
   path: string,
   body: Blob,

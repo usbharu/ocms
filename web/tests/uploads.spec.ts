@@ -2,6 +2,122 @@ import { expect, type Route, test } from '@playwright/test';
 
 const partSize = 8 * 1024 * 1024;
 
+for (const mode of ['original-first', 'numbered-first', 'hash-failure']) {
+  test(`番号付きの完全一致ファイルだけを通知せず除外する: ${mode}`, async ({
+    page,
+  }) => {
+    if (mode === 'hash-failure') {
+      await page.addInitScript(() => {
+        crypto.subtle.digest = async () => {
+          throw new Error('Hash unavailable');
+        };
+      });
+    }
+    const uploads: { name: string; content?: string }[] = [];
+    await page.route('**/auth/config', (route) =>
+      route.fulfill({ json: { development: true } }),
+    );
+    await page.route('**/api/v1/**', async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      if (path === '/api/v1/me')
+        return route.fulfill({
+          json: { principal_id: 'alice', csrf_token: 'csrf' },
+        });
+      if (path === '/api/v1/uploads') {
+        const id = String(uploads.length);
+        uploads.push({ name: request.postDataJSON().filename });
+        return route.fulfill({ json: { upload_id: id, asset_id: id } });
+      }
+      const content = path.match(/^\/api\/v1\/uploads\/(\d+)\/content$/);
+      if (content) {
+        uploads[Number(content[1])].content =
+          request.postDataBuffer()?.toString() ?? '';
+        return route.fulfill({ json: {} });
+      }
+      if (path === '/api/v1/assets')
+        return route.fulfill({ json: { assets: [], total: 0 } });
+      const asset = path.match(/^\/api\/v1\/assets\/(\d+)$/);
+      if (asset)
+        return route.fulfill({
+          json: {
+            asset_id: asset[1],
+            filename: uploads[Number(asset[1])].name,
+            status: 'stored',
+            mime_type: 'image/png',
+            tags: [],
+          },
+        });
+      return route.fulfill({ json: { renditions: [], jobs: [] } });
+    });
+    const retained = [
+      ['hoge.png', 'same'],
+      ['hoge(8).png', 'diff'], // Same size, different hash.
+      ['hoge(9).png', 'longer'],
+      ['alone(1).png', 'same'],
+      ['other.png', 'same'],
+      ['hoge(1).jpg', 'same'],
+      ['hoge(text).png', 'same'],
+      ['empty.png', ''],
+      ['archive.tar.gz', 'same'],
+      ['no-extension', 'same'],
+    ];
+    const duplicates = [
+      ['hoge(1).png', 'same'],
+      ['hoge (2).png', 'same'],
+      ['hoge（3）.png', 'same'],
+      ['hoge　（42）.png', 'same'],
+      ['hoge(-7).png', 'same'],
+      ['hoge(+5).png', 'same'],
+      ['hoge(0).png', 'same'],
+      ['empty (1).png', ''],
+      ['archive.tar (1).gz', 'same'],
+      ['no-extension（1）', 'same'],
+    ];
+    const files =
+      mode === 'numbered-first'
+        ? [...duplicates, ...retained]
+        : [...retained, ...duplicates];
+    const expected = mode === 'hash-failure' ? files : retained;
+    const dialogs: string[] = [];
+    page.on('dialog', async (dialog) => {
+      dialogs.push(dialog.message());
+      await dialog.dismiss();
+    });
+    await page.goto('/');
+    const input = page.getByLabel('アップロードするファイル');
+    await input.setInputFiles(
+      files.map(([name, content]) => ({
+        name,
+        mimeType: 'image/png',
+        buffer: Buffer.from(content),
+      })),
+    );
+    const queue = page.getByRole('region', { name: 'アップロード状況' });
+    await expect(queue).toContainText(
+      `${expected.length} / ${expected.length} 件完了`,
+    );
+    expect(uploads).toEqual(
+      expected.map(([name, content]) => ({ name, content })),
+    );
+    await expect(queue.locator('li')).toHaveCount(expected.length);
+    expect(dialogs).toEqual([]);
+
+    // A separate selection must not be compared with an earlier batch.
+    await expect(
+      page.getByRole('button', { name: '＋ アップロード' }),
+    ).toBeEnabled();
+    await input.setInputFiles({
+      name: 'hoge(1).png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('same'),
+    });
+    await expect(queue).toContainText('1 / 1 件完了');
+    expect(uploads.at(-1)).toEqual({ name: 'hoge(1).png', content: 'same' });
+    expect(uploads).toHaveLength(expected.length + 1);
+  });
+}
+
 test('複数ファイルの失敗後も続行し、受信済み部分から再試行する', async ({
   page,
 }) => {
