@@ -238,7 +238,14 @@ test('suggestion failure preserves the draft', async ({ page }) => {
   await expect(page.getByLabel('シリーズ名')).toHaveValue('作成中');
   await expect(
     page.getByRole('button', { name: '保存', exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('alert').first()).toContainText('作品を2件以上');
+  await page.getByRole('button', { name: '再試行', exact: true }).click();
+  await expect(page.getByLabel('シリーズ名')).toHaveValue('作成中');
+  await expect(
+    page.getByRole('heading', { name: '選択済み（1）' }),
+  ).toBeVisible();
 });
 
 for (const width of [1440, 390]) {
@@ -525,6 +532,19 @@ for (const width of [1440, 390]) {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
+    await expect
+      .poll(() =>
+        page
+          .locator('.series-list img')
+          .evaluateAll((images) =>
+            images.every(
+              (image) =>
+                (image as HTMLImageElement).complete &&
+                (image as HTMLImageElement).naturalWidth > 0,
+            ),
+          ),
+      )
+      .toBe(true);
     if (process.env.OCMS_CAPTURE_SCREENSHOTS)
       await page.screenshot({
         path: `../docs/series-list-${width}.png`,
@@ -616,4 +636,370 @@ test('series badge is visible even when its cover preview is unavailable', async
   const card = page.getByRole('button', { name: '漫画', exact: true });
   await expect(card.locator('.thumbnail-placeholder')).toBeVisible();
   await expect(card.locator('.series-badge')).toBeVisible();
+});
+
+for (const width of [1440, 390]) {
+  test(`composite page controls match PDF pagination at ${width}px`, async ({
+    page,
+  }) => {
+    await setup(page, false, true);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/assets/comic/view');
+    const navigation = page.getByRole('navigation', {
+      name: 'シリーズページ操作',
+    });
+    await expect(navigation).toHaveText('‹1 / 2 ページ›');
+    await expect(
+      navigation.getByRole('button', { name: '前のシリーズページ' }),
+    ).toBeDisabled();
+    await navigation
+      .getByRole('button', { name: '次のシリーズページ' })
+      .click();
+    await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+      b.filename,
+    );
+    await expect(navigation).toContainText('2 / 2 ページ');
+    await expect(
+      navigation.getByRole('button', { name: '次のシリーズページ' }),
+    ).toBeDisabled();
+    await expect(page).toHaveURL(/member=page-b/);
+    await page.reload();
+    await expect(navigation).toContainText('2 / 2 ページ');
+    await navigation
+      .getByRole('button', { name: '前のシリーズページ' })
+      .click();
+    await expect(navigation).toContainText('1 / 2 ページ');
+    await page.keyboard.press('ArrowRight');
+    await expect(navigation).toContainText('2 / 2 ページ');
+    await page.getByRole('button', { name: '拡大', exact: true }).click();
+    await expect(navigation).toBeVisible();
+    const image = await page.locator('.viewer-page-image').boundingBox();
+    const controls = await navigation.boundingBox();
+    if (!image || !controls)
+      throw new Error('Image and page controls must be visible');
+    expect(controls.x).toBeGreaterThanOrEqual(0);
+    expect(controls.x + controls.width).toBeLessThanOrEqual(width);
+    expect(controls.y + controls.height).toBeLessThanOrEqual(900);
+    await page.getByRole('button', { name: '画面に合わせる' }).click();
+    if (process.env.OCMS_CAPTURE_SCREENSHOTS)
+      await page.screenshot({ path: `../docs/series-viewer-${width}.png` });
+  });
+}
+
+test('nested composite page numbers exclude other collection members', async ({
+  page,
+}) => {
+  await setup(page);
+  const seriesRequests: string[] = [];
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/v1/series/collection' || path === '/api/v1/series/comic')
+      seriesRequests.push(path);
+  });
+  await page.goto('/assets/collection/view');
+  await expect(page.locator('video')).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'シリーズページ操作' }),
+  ).toHaveCount(0);
+  await page.locator('video').dispatchEvent('ended');
+  const navigation = page.getByRole('navigation', {
+    name: 'シリーズページ操作',
+  });
+  await expect(navigation).toContainText('1 / 2 ページ');
+  await expect(page).toHaveURL(/member=page-a/);
+  const loadedRequests = [...seriesRequests];
+  await expect(
+    navigation.getByRole('button', { name: '前のシリーズページ' }),
+  ).toBeDisabled();
+  await navigation.getByRole('button', { name: '次のシリーズページ' }).click();
+  await expect(navigation).toContainText('2 / 2 ページ');
+  await expect(page).toHaveURL(/member=page-b/);
+  // Page controls can be disabled or remounted as the member URL changes.
+  const close = page.getByRole('button', { name: '閲覧を閉じる' });
+  await close.press('ArrowLeft');
+  await expect(navigation).toContainText('1 / 2 ページ');
+  await close.press('ArrowLeft');
+  await expect(page.locator('video')).toBeVisible();
+  await expect(navigation).toHaveCount(0);
+  await expect(page).toHaveURL(/member=movie/);
+  expect(seriesRequests).toEqual(loadedRequests);
+});
+
+test('draft changes search only when re-search is pressed', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.clock.install();
+  const searches: { kind: string; member_ids: string[]; query: string }[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/series/suggestions'))
+      searches.push(request.postDataJSON());
+  });
+  await page.goto('/series/new?source=page-a');
+  await expect(page.getByText('タイトルが近い')).toBeVisible();
+  expect(searches).toHaveLength(1);
+  await page.getByLabel('種類', { exact: true }).selectOption('composite');
+  await page.getByLabel('シリーズ名').fill('手動検索');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  await page.getByRole('button', { name: '漫画 002.pngを上へ' }).click();
+  await page.getByLabel('タイトルを検索').fill('別のタイトル');
+  await page.clock.runFor(1000);
+  expect(searches).toHaveLength(1);
+  await expect(
+    page.getByRole('button', { name: '追加', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: '外す', exact: true }).first().click();
+  await expect(
+    page.getByRole('button', { name: '追加', exact: true }),
+  ).toHaveCount(1);
+  await page.clock.runFor(1000);
+  expect(searches).toHaveLength(1);
+  await page.getByRole('button', { name: '再検索', exact: true }).click();
+  await expect.poll(() => searches.length).toBe(2);
+  expect(searches[1]).toMatchObject({
+    kind: 'composite',
+    member_ids: ['page-a'],
+    query: '別のタイトル',
+  });
+});
+
+test('saving works while re-search is pending', async ({ page }) => {
+  const saves = await setup(page);
+  await page.goto('/series/new?source=page-a');
+  await page.getByLabel('シリーズ名').fill('検索中でも保存');
+  await page.getByRole('button', { name: '追加', exact: true }).click();
+  let releaseSearch = () => {};
+  const pending = new Promise<void>((resolve) => {
+    releaseSearch = resolve;
+  });
+  await page.route('**/api/v1/series/suggestions', async (route) => {
+    await pending;
+    await route.fulfill({ json: { assets: [] } });
+  });
+  await page.getByRole('button', { name: '再検索', exact: true }).click();
+  await expect(page.getByText('候補を読み込み中…')).toBeVisible();
+  const save = page.getByRole('button', { name: '保存', exact: true });
+  await expect(save).toBeEnabled();
+  try {
+    await save.click();
+    await expect(page).toHaveURL(/assets\/comic$/);
+    expect(saves[0]).toMatchObject({
+      name: '検索中でも保存',
+      member_ids: ['page-a', 'page-b'],
+    });
+  } finally {
+    releaseSearch();
+  }
+});
+
+for (const kind of ['composite', 'collection'] as const) {
+  for (const origin of ['list', 'editor'] as const) {
+    test(`delete ${kind} from ${origin} preserves source files`, async ({
+      page,
+    }) => {
+      await setup(page);
+      const target = kind === 'composite' ? composite : collection;
+      const deleted: string[] = [];
+      await page.route('**/api/v1/series?**', (route) =>
+        route.fulfill({
+          json: {
+            assets: deleted.length ? [] : [target],
+            total: deleted.length ? 0 : 1,
+          },
+        }),
+      );
+      await page.route(`**/api/v1/series/${target.asset_id}`, (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        expect(route.request().headers()['x-csrf-token']).toBe('test');
+        deleted.push(target.asset_id);
+        return route.fulfill({ status: 204 });
+      });
+      const fileDeletes: string[] = [];
+      page.on('request', (request) => {
+        if (
+          request.method() === 'DELETE' &&
+          request.url().includes('/api/v1/assets/')
+        )
+          fileDeletes.push(request.url());
+      });
+      await page.goto(
+        origin === 'editor'
+          ? `/series/${target.asset_id}/edit`
+          : `/series?series_kind=${kind}`,
+      );
+      const remove = page.getByRole('button', {
+        name:
+          origin === 'editor'
+            ? 'シリーズを削除'
+            : `${target.filename}のシリーズを削除`,
+        exact: true,
+      });
+      page.once('dialog', async (dialog) => {
+        expect(dialog.message()).toContain(target.filename);
+        expect(dialog.message()).toContain('元のファイルは残ります');
+        await dialog.dismiss();
+      });
+      await remove.click();
+      await expect(remove).toBeEnabled();
+      expect(deleted).toEqual([]);
+      page.once('dialog', (dialog) => dialog.accept());
+      await remove.click();
+      await expect(
+        page.getByText(
+          kind === 'composite' && origin === 'list'
+            ? '一体型シリーズがありません'
+            : kind === 'collection' && origin === 'list'
+              ? '通常シリーズがありません'
+              : 'シリーズがありません',
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(page).toHaveURL(
+        origin === 'editor' ? /\/series$/ : new RegExp(`series_kind=${kind}$`),
+      );
+      expect(deleted).toEqual([target.asset_id]);
+      expect(fileDeletes).toEqual([]);
+    });
+  }
+}
+
+for (const origin of ['list', 'editor'] as const) {
+  test(`failed deletion in ${origin} keeps the current work and can retry`, async ({
+    page,
+  }) => {
+    await setup(page);
+    let attempts = 0;
+    await page.route('**/api/v1/series/comic', (route) => {
+      if (route.request().method() !== 'DELETE') return route.fallback();
+      attempts++;
+      return route.fulfill({
+        status: 503,
+        json: { error: 'SERVICE_UNAVAILABLE' },
+      });
+    });
+    await page.goto(origin === 'editor' ? '/series/comic/edit' : '/series');
+    if (origin === 'editor')
+      await page.getByLabel('シリーズ名').fill('未保存の名前');
+    page.on('dialog', (dialog) => dialog.accept());
+    const remove = page.getByRole('button', {
+      name: origin === 'editor' ? 'シリーズを削除' : '漫画のシリーズを削除',
+      exact: true,
+    });
+    await remove.click();
+    await expect(page.getByRole('alert')).toContainText(
+      'シリーズを削除できません',
+    );
+    if (origin === 'editor')
+      await expect(page.getByLabel('シリーズ名')).toHaveValue('未保存の名前');
+    else
+      await expect(
+        page.getByRole('link', { name: '作品集', exact: true }),
+      ).toBeVisible();
+    await expect(remove).toBeEnabled();
+    await remove.click();
+    await expect(remove).toBeEnabled();
+    expect(attempts).toBe(2);
+  });
+}
+
+test('shared series cannot be deleted from the list or editor', async ({
+  page,
+}) => {
+  await setup(page);
+  const deletes: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'DELETE') deletes.push(r.url());
+  });
+  await page.route('**/api/v1/series/comic', (route) =>
+    route.fulfill({ json: { ...composite, editable: false } }),
+  );
+  await page.goto('/series');
+  await page
+    .getByRole('button', { name: '漫画のシリーズを削除', exact: true })
+    .click();
+  await expect(page.getByRole('alert')).toHaveText(
+    'シリーズを削除できるのは所有者だけです。',
+  );
+  await page.goto('/series/comic/edit');
+  await expect(page.getByLabel('シリーズ名')).toHaveValue('漫画');
+  await expect(
+    page.getByRole('button', { name: 'シリーズを削除', exact: true }),
+  ).toHaveCount(0);
+  expect(deletes).toEqual([]);
+});
+
+test('deleting the last series on a page returns to the preceding filtered page', async ({
+  page,
+}) => {
+  await setup(page);
+  let deleted = false;
+  await page.route('**/api/v1/series?**', (route) =>
+    route.fulfill({
+      json: {
+        assets: deleted
+          ? [
+              {
+                ...composite,
+                asset_id: 'remaining',
+                filename: '残りのシリーズ',
+              },
+            ]
+          : [composite],
+        total: deleted ? 200 : 201,
+      },
+    }),
+  );
+  await page.route('**/api/v1/series/comic', (route) => {
+    if (route.request().method() !== 'DELETE') return route.fallback();
+    deleted = true;
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto('/series?series_kind=composite&page=2');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page
+    .getByRole('button', { name: '漫画のシリーズを削除', exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/series\?series_kind=composite$/);
+  await expect(
+    page.getByRole('link', { name: '残りのシリーズ', exact: true }),
+  ).toBeVisible();
+});
+
+test('new series has no delete action', async ({ page }) => {
+  await setup(page);
+  await page.goto('/series/new');
+  await expect(page.getByLabel('シリーズ名')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'シリーズを削除', exact: true }),
+  ).toHaveCount(0);
+});
+
+test('member navigation reuses the loaded series and keeps the viewer mounted', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.clock.install();
+  await page.goto('/assets/collection/view?member=page-a');
+  const viewer = page.getByRole('dialog');
+  await expect(viewer.getByRole('heading')).toHaveText(a.filename);
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/v1/series/'))
+      requests.push(request.url());
+  });
+  const original = await viewer.elementHandle();
+  for (const [button, filename] of [
+    ['次のファイル', b.filename],
+    ['前のファイル', a.filename],
+  ]) {
+    await viewer.getByRole('button', { name: button }).click();
+    await expect(viewer.getByRole('heading')).toHaveText(filename);
+    await expect(page).toHaveURL(/member=page-/);
+  }
+  expect(requests).toHaveLength(0);
+  expect(await original?.evaluate((element) => element.isConnected)).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('dialog').getByRole('heading')).toHaveText(
+    a.filename,
+  );
 });
