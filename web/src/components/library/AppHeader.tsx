@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
+import { prefetchPage } from '../../lib/pageModules';
 import { Button } from '../ui/button';
 
 export function AppHeader({
@@ -54,6 +55,8 @@ export function AppHeader({
               <Link
                 to={`/${id}`}
                 aria-current={section === id ? 'page' : undefined}
+                onPointerEnter={() => prefetchPage(id)}
+                onFocus={() => prefetchPage(id)}
                 onClick={() => onSectionChange?.(id)}
               >
                 {label}

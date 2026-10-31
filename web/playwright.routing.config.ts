@@ -3,6 +3,8 @@ import base from './playwright.config';
 
 export default defineConfig({
   ...base,
+  // API mocks must reach Playwright rather than an active service worker.
+  use: { ...base.use, serviceWorkers: 'block' },
   testMatch: [
     'routing.spec.ts',
     'personal-recommendations.spec.ts',
