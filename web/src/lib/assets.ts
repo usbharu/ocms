@@ -63,6 +63,7 @@ export type Mode =
   | 'exact_duplicate'
   | 'recommendation';
 export type SearchContext = {
+  groupId?: string;
   personalized?: boolean;
   sessionId?: string;
   recommendationStatus?: 'ready' | 'insufficient_information';

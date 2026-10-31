@@ -87,6 +87,7 @@ func (s *Service) authorizeBlobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		GroupID   string   `json:"group_id"`
 		Favorites bool     `json:"favorites"`
 		IDs       []string `json:"blob_ids"`
 		AssetIDs  []string `json:"asset_ids"`
@@ -104,11 +105,14 @@ func (s *Service) authorizeBlobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	filter := ""
-	if in.Favorites {
-		filter = ` AND ` + favoriteCondition
+	if assetError(w, s.checkGroup(r.Context(), user(r), in.GroupID)) {
+		return
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND (a.blob_ids && $2::text[] OR a.id=ANY($3::uuid[]) OR (a.series_kind='composite' AND a.member_ids && $3::text[]))`+filter+` ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs)
+	filter := ` AND ` + groupCondition(4)
+	if in.Favorites {
+		filter += ` AND ` + favoriteCondition
+	}
+	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND (a.blob_ids && $2::text[] OR a.id=ANY($3::uuid[]) OR (a.series_kind='composite' AND a.member_ids && $3::text[]))`+filter+` ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs, in.GroupID)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

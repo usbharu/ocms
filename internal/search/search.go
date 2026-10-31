@@ -55,6 +55,7 @@ type candidate struct {
 	rank          float64
 }
 type query struct {
+	GroupID   string   `json:"group_id,omitempty"`
 	Favorites bool     `json:"favorites"`
 	Query     string   `json:"query"`
 	Mode      string   `json:"mode"`
@@ -83,7 +84,7 @@ func (s *Service) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Mode == "perceptual" {
-		s.perceptual(w, r, in.AssetID, in.Limit, in.Favorites, in.Ratings)
+		s.perceptual(w, r, in.AssetID, in.Limit, in.Favorites, in.Ratings, in.GroupID)
 		return
 	}
 	if in.Mode != "keyword" && in.Mode != "semantic" && in.Mode != "hybrid" {
@@ -109,7 +110,7 @@ func (s *Service) search(w http.ResponseWriter, r *http.Request) {
 		var out struct {
 			Assets []catalog.Asset `json:"assets"`
 		}
-		if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets?q="+url.QueryEscape(in.Query)+"&favorites="+strconv.FormatBool(in.Favorites)+ratingQuery(in.Ratings), r.Header.Get("X-Principal"), nil, &out); err != nil {
+		if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets?q="+url.QueryEscape(in.Query)+"&favorites="+strconv.FormatBool(in.Favorites)+ratingQuery(in.Ratings)+groupQuery(in.GroupID), r.Header.Get("X-Principal"), nil, &out); err != nil {
 			platform.RespondError(w, err)
 			return
 		}
@@ -218,7 +219,7 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 		Assets []catalog.Asset `json:"assets"`
 	}
 	// BatchAuthorize is the final authority, after candidate generation in every mode.
-	if err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/authorize-blobs", r.Header.Get("X-Principal"), map[string]any{"blob_ids": ids, "asset_ids": directIDs, "favorites": in.Favorites}, &authorized); err != nil {
+	if err := platform.Call(r.Context(), "POST", s.Catalog+"/internal/authorize-blobs", r.Header.Get("X-Principal"), map[string]any{"blob_ids": ids, "asset_ids": directIDs, "favorites": in.Favorites, "group_id": in.GroupID}, &authorized); err != nil {
 		platform.RespondError(w, err)
 		return
 	}
@@ -311,9 +312,9 @@ func (s *Service) similar(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_FAVORITES")
 		return
 	}
-	s.perceptual(w, r, r.PathValue("id"), 20, favorites == "true", ratings)
+	s.perceptual(w, r, r.PathValue("id"), 20, favorites == "true", ratings, r.URL.Query().Get("group_id"))
 }
-func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID string, limit int, favorites bool, ratings []string) {
+func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID string, limit int, favorites bool, ratings []string, group string) {
 	var a catalog.Asset
 	if assetID == "" {
 		platform.Error(w, 400, "ASSET_REQUIRED")
@@ -340,7 +341,7 @@ func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID str
 		for _, blob := range assetBlobs(a) {
 			delete(hashes, blob)
 		}
-		s.respond(w, r, query{Mode: "perceptual", Limit: limit, Favorites: favorites, Ratings: ratings}, hashes, nil)
+		s.respond(w, r, query{Mode: "perceptual", Limit: limit, Favorites: favorites, Ratings: ratings, GroupID: group}, hashes, nil)
 		return
 	}
 	if a.BlobID == nil {
@@ -399,7 +400,7 @@ func (s *Service) perceptual(w http.ResponseWriter, r *http.Request, assetID str
 			return
 		}
 	}
-	s.respond(w, r, query{Mode: "perceptual", Limit: limit, Favorites: favorites, Ratings: ratings}, candidates, nil)
+	s.respond(w, r, query{Mode: "perceptual", Limit: limit, Favorites: favorites, Ratings: ratings, GroupID: group}, candidates, nil)
 }
 func audioDistance(a, b []int32) float64 {
 	best := 1.0
@@ -560,4 +561,11 @@ func ratingQuery(ratings []string) string {
 		return ""
 	}
 	return "&ratings=" + url.QueryEscape(strings.Join(ratings, ","))
+}
+
+func groupQuery(group string) string {
+	if group == "" {
+		return ""
+	}
+	return "&group_id=" + url.QueryEscape(group)
 }

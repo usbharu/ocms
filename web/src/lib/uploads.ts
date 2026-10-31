@@ -2,6 +2,7 @@ export const uploadPartSize = 8 * 1024 * 1024;
 
 export type UploadTask = {
   id: string;
+  groupId?: string;
   file: File;
   state: 'waiting' | 'uploading' | 'completed' | 'failed';
   progress: number;
@@ -105,6 +106,7 @@ export async function uploadFile(
     method: 'POST',
     headers: { 'Idempotency-Key': task.id },
     body: JSON.stringify({
+      group_id: task.groupId,
       filename: file.name,
       mime_type: file.type || 'application/octet-stream',
       size_bytes: file.size,

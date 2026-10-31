@@ -36,7 +36,7 @@ func TestSPARoutesAndStaticBoundaries(t *testing.T) {
 		status int
 		html   bool
 	}{
-		{"/", 200, true}, {"/library?q=sample&page=2", 200, true}, {"/tags", 200, true},
+		{"/groups", 200, true}, {"/groups/default", 200, true}, {"/groups/all", 200, true}, {"/", 200, true}, {"/library?q=sample&page=2", 200, true}, {"/tags", 200, true},
 		{"/characters", 200, true}, {"/favorites", 200, true}, {"/recommendations", 200, true},
 		{"/series", 200, true}, {"/series/new?source=id", 200, true}, {"/series/id", 200, true}, {"/series/id/edit", 200, true}, {"/series/id/view?member=page", 200, true},
 		{"/assets/id", 200, true}, {"/assets/id/view?from=favorites", 200, true},
@@ -70,7 +70,7 @@ func TestSPARoutesAndStaticBoundaries(t *testing.T) {
 }
 
 func TestReturnTargets(t *testing.T) {
-	for _, raw := range []string{"", "/", "/library?q=sample", "/tags?view=graph", "/series/new?source=id", "/series/id/edit", "/series/id/view?member=page", "/assets/id/view?from=favorites&page=2"} {
+	for _, raw := range []string{"", "/", "/groups/all", "/groups/default?q=sample", "/library?q=sample", "/tags?view=graph", "/series/new?source=id", "/series/id/edit", "/series/id/view?member=page", "/assets/id/view?from=favorites&page=2"} {
 		if target, ok := returnTarget(raw); !ok || target == "" {
 			t.Error("valid return target rejected")
 		}

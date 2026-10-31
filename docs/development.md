@@ -521,6 +521,22 @@ Goは `gofmt` を使います。TypeScriptは2スペース、シングルクォ�
 python3 scripts/upload-integration.py
 ```
 
+### グループとシリーズの回帰試験
+
+Docker、Go 1.26以降と `ocms-postgres:local` イメージを用意し、リポジトリルートで実行します。開発DBは使わず、使い捨てPostgreSQLへ全マイグレーションを適用します。グループのACL分離・複数所属・検索・シリーズ・アップロード再送に加え、既存のシリーズと検索のDB回帰試験も実行します。
+
+```sh
+python3 scripts/groups-integration.py
+```
+
+SPAのグループ導線は `web/` で `npm ci`、`npm run build` の後に検証します。Chromiumがない場合は初回のみ `npx playwright install chromium` を実行します。
+
+```sh
+npm run test:ui -- groups.spec.ts series.spec.ts routing.spec.ts
+```
+
+`UI_SCREENSHOTS=1` を付けるとグループ画面の確認用スクリーンショットを `docs/` に出力します。DB移行の検証には従来どおり `python3 scripts/migration-integration.py` を使います。
+
 ### 画面の先読みとbfcacheの確認
 
 タグ・キャラクター・シリーズ画面のコードは、ナビゲーションリンクへマウスやキーボードのフォーカスを移すと先読みします。データ節約設定や低速回線を検出すると省略します。APIやメディアは先読みしません。

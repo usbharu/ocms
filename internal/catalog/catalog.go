@@ -48,6 +48,7 @@ type Upload struct {
 func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
 	s.seriesRoutes(m)
+	s.groupRoutes(m)
 	m.HandleFunc("GET /internal/assets/{id}/authorize", s.authorizeAsset)
 	m.HandleFunc("GET /internal/assets/{id}/recommendation-candidates", s.recommendationCandidates)
 	m.HandleFunc("GET /internal/recommendation-dataset", s.recommendationDataset)
@@ -129,6 +130,7 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		GroupID  string `json:"group_id,omitempty"`
 		Filename string `json:"filename"`
 		MIME     string `json:"mime_type"`
 		Size     int64  `json:"size_bytes"`
@@ -175,9 +177,25 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.GroupID != "" && in.GroupID != "default" && in.GroupID != "all" && !validID(in.GroupID) {
+		platform.Error(w, 404, "NOT_FOUND")
+		return
+	}
+	if validID(in.GroupID) {
+		var locked string
+		if assetError(w, tx.QueryRow(r.Context(), `SELECT id FROM catalog.content_groups WHERE id=$1 AND principal_id=$2 FOR KEY SHARE`, in.GroupID, user(r)).Scan(&locked)) {
+			return
+		}
+	}
 	err = tx.QueryRow(r.Context(), `INSERT INTO catalog.assets(owner_id,filename,mime_type) VALUES($1,$2,$3) RETURNING id`, user(r), in.Filename, in.MIME).Scan(&out.AssetID)
 	if err == nil {
 		err = tx.QueryRow(r.Context(), `INSERT INTO catalog.upload_sessions(asset_id,expected_size,idempotency_key) VALUES($1,$2,NULLIF($3,'')) RETURNING id,state,expected_size`, out.AssetID, in.Size, r.Header.Get("Idempotency-Key")).Scan(&out.ID, &out.State, &out.Size)
+	}
+	if err == nil && in.GroupID != "" && in.GroupID != "default" {
+		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.default_group_exclusions(principal_id,asset_id) VALUES($1,$2)`, user(r), out.AssetID)
+		if err == nil && in.GroupID != "all" {
+			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_groups(group_id,principal_id,asset_id) VALUES($1,$2,$3)`, in.GroupID, user(r), out.AssetID)
+		}
 	}
 	if err == nil && key != "" {
 		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.upload_request_keys(principal_id,idempotency_key,upload_id,request) VALUES($1,$2,$3,$4::jsonb)`, user(r), key, out.ID, payload)
@@ -248,7 +266,15 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, pgx.ErrNoRows) {
 				err = nil
 			} else if err == nil {
-				_, err = tx.Exec(r.Context(), `UPDATE catalog.upload_sessions SET asset_id=$2 WHERE id=$1`, r.PathValue("id"), duplicate)
+				// Reusing a logical Asset must retain its existing memberships and
+				// also apply the upload destination from the temporary Asset.
+				_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_groups(group_id,principal_id,asset_id) SELECT group_id,principal_id,$3 FROM catalog.asset_groups WHERE principal_id=$1 AND asset_id=$2 ON CONFLICT DO NOTHING`, user(r), assetID, duplicate)
+				if err == nil {
+					_, err = tx.Exec(r.Context(), `DELETE FROM catalog.default_group_exclusions e WHERE e.principal_id=$1 AND e.asset_id=$3 AND NOT EXISTS(SELECT 1 FROM catalog.default_group_exclusions source WHERE source.principal_id=$1 AND source.asset_id=$2)`, user(r), assetID, duplicate)
+				}
+				if err == nil {
+					_, err = tx.Exec(r.Context(), `UPDATE catalog.upload_sessions SET asset_id=$2 WHERE id=$1`, r.PathValue("id"), duplicate)
+				}
 				if err == nil {
 					_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=$1`, assetID)
 				}
@@ -368,6 +394,10 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_PAGINATION")
 		return
 	}
+	group, ok := s.requestGroup(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query().Get("q")
 	where := `WHERE ` + displayed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM unnest(a.characters) c WHERE strpos(lower(c),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='series' AND a.series_kind<>'') OR ($3='document' AND a.series_kind='' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
 	where += ` AND ($4='' OR $4=ANY(a.tags)) AND ($5='' OR $5=ANY(a.characters))`
@@ -387,13 +417,14 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		where += ` AND ` + favoriteCondition
 		order = ` ORDER BY (SELECT max(f.created_at) FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND (f.asset_id=a.id OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite))) DESC,a.id DESC`
 	}
+	where += ` AND ` + groupCondition(7)
 	var total int
-	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.display_assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings).Scan(&total)
+	err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.display_assets a `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group).Scan(&total)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+where+order+` LIMIT $7 OFFSET $8`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, options.limit, options.offset)
+	rows, err := s.DB.Query(r.Context(), selectAsset+where+order+` LIMIT $8 OFFSET $9`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group, options.limit, options.offset)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -432,9 +463,13 @@ func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_FAVORITES")
 		return
 	}
-	filter := ""
+	group, ok := s.requestGroup(w, r)
+	if !ok {
+		return
+	}
+	filter := ` AND ` + groupCondition(5)
 	if favorites {
-		filter = ` AND ` + favoriteCondition
+		filter += ` AND ` + favoriteCondition
 	}
 	items := []Asset{}
 	sourceBlobs := a.BlobIDs
@@ -443,7 +478,7 @@ func (s *Service) duplicates(w http.ResponseWriter, r *http.Request) {
 		sourceID = a.CompositeID
 	}
 	if len(a.BlobIDs) > 0 {
-		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND a.blob_ids && $2::text[] AND a.id<>$3 AND ($4::text[] IS NULL OR a.rating=ANY($4))`+filter+` ORDER BY a.created_at LIMIT 200`, user(r), a.BlobIDs, sourceID, ratings)
+		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND a.blob_ids && $2::text[] AND a.id<>$3 AND ($4::text[] IS NULL OR a.rating=ANY($4))`+filter+` ORDER BY a.created_at LIMIT 200`, user(r), a.BlobIDs, sourceID, ratings, group)
 		if err != nil {
 			platform.RespondError(w, err)
 			return
