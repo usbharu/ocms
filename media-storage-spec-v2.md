@@ -92,7 +92,7 @@ flowchart TB
 | サービス | 責務 | 保持しない責務 |
 |---|---|---|
 | **BFF / Auth** | OIDC Code Flow、セッションCookie、CSRF、フロントエンド向けAPI、内部への認証主体伝搬 | S3 I/O、暗号鍵操作 |
-| **Catalog Service** | 論理Asset、シリーズ構成・表示単位の集約、所有者・ACL、アップロード状態、AssetとBlobの参照、重複結果へのアクセス制御、Asset別メタデータの認可済み推薦候補 | 暗号化・復号、モデル推論 |
+| **Catalog Service** | 論理Asset、利用者別グループと所属、シリーズ構成・表示単位の集約、所有者・ACL、アップロード状態、AssetとBlobの参照、重複結果へのアクセス制御、Asset別メタデータの認可済み推薦候補 | 暗号化・復号、モデル推論 |
 | **Transfer Service** | マスターキー読み込み、DEK生成/ラップ、AES-CTR暗号化・復号、S3 I/O、SHA-256計算、HTTP Range、Blob登録 | OCR、全文検索 |
 | **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、関連コンテンツ・個人向け推薦の統合、抽選・キャッシュ・履歴・セッション、Catalog経由の一括認可 | 平文ファイル保存 |
 | **推薦エンジン** | 認可済みタグ・キャラクターのTF-IDF学習と類似度計算。Python Runtimeと同じイメージの独立プロセス | DB・S3接続、ACL判断、メディア推論モデルの読み込み |
@@ -114,6 +114,7 @@ flowchart TB
 ### 4.1 概念
 
 - **Asset**：ユーザーが扱う論理ファイル。所有者、ファイル名、タグ、キャラクター、レーティング、ACLなどを持つ。同じ内容でもユーザーごとに独立する。
+- **Content Group**：Principalごとの階層を持たない整理単位。Assetは複数所属でき、ACLやBlobの共有とは独立する。組み込みの `default` と `all` を持つ。
 - **Favorite**：PrincipalとAssetの組で保持する個人のお気に入り。登録日時を持ち、Blobの共有やAssetのメタデータ編集から独立する。
 - **Blob**：バイト列そのものを表す不変のS3暗号化オブジェクト。同一平文バイナリは可能な限り一つのBlobにまとめる。
 - **Rendition**：既存Blobから変換された派生Blobと変換プロファイルの関係。
@@ -135,6 +136,11 @@ erDiagram
     ASSETS ||--o{ GRANTS : authorized_by
     ASSETS ||--o{ ASSET_FAVORITES : bookmarked_by
     PRINCIPALS ||--o{ ASSET_FAVORITES : saves
+    PRINCIPALS ||--o{ CONTENT_GROUPS : owns
+    CONTENT_GROUPS ||--o{ ASSET_GROUPS : contains
+    ASSETS ||--o{ ASSET_GROUPS : belongs_to
+    PRINCIPALS ||--o{ DEFAULT_GROUP_EXCLUSIONS : hides
+    ASSETS ||--o{ DEFAULT_GROUP_EXCLUSIONS : excluded_from_home
 ```
 
 完全一致Blobの共有と、AssetごとのACL・タグ・ファイル名は独立させる。検索インデックスは基本的にBlob単位、Asset固有の検索属性はCatalog側で管理する。
@@ -143,7 +149,7 @@ erDiagram
 
 | Schema | 主なテーブル | 所有 |
 |---|---|---|
-| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results`, `wd14_rating_results`, `asset_favorites` | Catalog |
+| `catalog` | `principals`, `assets`, `asset_originals`, `grants`, `upload_sessions`, `outbox_events`, `asset_characters`, `wd14_results`, `wd14_character_results`, `wd14_rating_results`, `asset_favorites`, `content_groups`, `asset_groups`, `default_group_exclusions` | Catalog |
 | `storage` | `blobs`, `upload_objects`, `upload_parts` | Transfer |
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings`, `recommendation_cache`, `recommendation_sessions`, `recommendation_history` | Search |
@@ -393,6 +399,18 @@ flowchart LR
 Catalogの共通表示ビューで、一体型への集約を認可・件数計算・ページ分割の前に適用する。シリーズは構成作品すべてを認可した場合だけ表示する。構成中の作品の個別ACL変更は拒否し、最上位シリーズからの共有変更を構成作品へ適用する。複数の通常シリーズのACLが不一致になる共有変更は拒否する。
 
 一体型のお気に入りは構成画像のいずれかが登録済みなら登録済みとし、登録・解除を全構成画像へ適用する。通常シリーズのお気に入りはシリーズ自身に保持する。画像削除で残り1枚以下になった一体型は解除し、通常シリーズ内の参照は残存画像へ保存順を保って置き換える。画像を一体型にまとめる際も、通常シリーズからの参照を一体型へまとめる。シリーズ解除では元Asset・Blobを削除しない。
+
+### 4.7 利用者別グループ
+
+移行012で `catalog.content_groups`（ID、Principal、名前）、`catalog.asset_groups`（グループ・Principal・Asset）、`catalog.default_group_exclusions`（Principal・Asset）を追加する。独自グループは名前を前後の空白除去後1〜100文字とし、利用者内で同名を禁止する。大文字小文字を問わず `default`・`all` は予約名とする。所属テーブルの複合外部キーでグループ所有者とPrincipalの一致を保証する。親グループは持たない。
+
+| グループ | 所属・表示 |
+|---|---|
+| `default` | 自分が除外していない閲覧可能Asset。トップページに表示する。既存コンテンツと新たな共有コンテンツも初期表示する |
+| `all` | 閲覧可能なシリーズ以外の全Assetが自動所属し、解除不可。一体型の構成画像は既存の集約ルールで一覧・検索から隠す |
+| 独自グループ | 自分が選んだAsset。複数所属可能。追加・除外はdefaultと独立する |
+
+組み込みグループは仮想的に扱い、全Principalと全Assetの所属行を生成しない。通常・一体型シリーズの所属はシリーズ自身に保存し、構成作品へ伝播しない。シリーズ作成時はdefaultに所属する。グループ削除では所属のみを削除し、元コンテンツとdefault除外状態を保つ。グループへ所属しても閲覧権限は付与しない。ACLを失うと所属・検索結果も取得できなくなる。
 
 ## 5. 暗号化と鍵管理
 
@@ -854,6 +872,23 @@ GET /api/v1/recommendations?kind=image&ratings=general,sensitive&session_id=<ses
 
 サジェストの候補生成と所有者・ACL・所属制約の判定はCatalog、知覚類似と順位付けはSearchが担う。一般起点はタイトル40%・タグ30%・キャラクター30%、詳細起点は知覚類似55%・タイトル35%・タグ5%・キャラクター5%。複数の選択済み作品との各類似度の最大値を使い、不足する特徴は0点とする。タイトルは拡張子・末尾ページ番号を除き、文字bigramのJaccard係数で比較する。認可済み候補最大1,000件から上位20件を返し、理由を併記する。詳細起点ではpHash候補を候補プールで優先する。候補の自動追加・自動並べ替えは行わない。
 
+### 10.6 グループAPIと検索範囲
+
+| API | 契約 |
+|---|---|
+| `GET /api/v1/groups` | 自分のグループを `groups: [{group_id,name,builtin}]` で返す。default、all、名前順の独自グループの順 |
+| `POST /api/v1/groups` | `{name}` で作成し201とグループを返す |
+| `PATCH /api/v1/groups/{group_id}` | `{name}` で改名し200とグループを返す |
+| `DELETE /api/v1/groups/{group_id}` | 所属を含めて削除し204。コンテンツは残す |
+| `GET /api/v1/assets/{id}/groups` | 自分の所属を `{group_ids: [...]}` で返す |
+| `PUT /api/v1/assets/{id}/groups` | `{group_ids: [...]}` で自分の所属を置換し、保存後の所属を返す。allは非シリーズに自動付与するため省略しても解除されない |
+
+名前不正は400、名前重複は409、存在しない・他人のグループや未認可Assetは404。組み込みグループの改名・削除も404とする。所属保存は同一Principal・Assetについて直列化し、全件を単一トランザクションで保存する。
+
+一覧、完全一致・類似・関連コンテンツAPIは `group_id` クエリ、検索APIはJSONの `group_id` を受け付ける。値は `default`・`all`・独自グループUUID。省略時は従来の全範囲とする。Catalogの内部認可APIにも同条件を渡し、ACL・表示Assetの所属を公開件数・順位・ページ分割・スニペット生成より先に絞る。索引候補の既存上限は維持する。関連コンテンツのメタデータ候補もグループ内で生成する。
+
+Upload Session作成時の任意の `group_id` は、省略またはdefaultならdefaultとall、独自グループなら指定先とall、allならallのみへの所属を表す。Asset・Upload Session・所属を同一トランザクションで保存する。所属先は冪等リクエストの比較対象とし、同じ要求の再送はグループ削除後も元のSessionを返す。作成済みSessionの転送・再試行は継続可能であり、グループ削除によるdefaultへの移動は行わない。同名・同一Blobの既存Assetを再利用する場合は、既存の所属を保ってアップロード先への所属を追加する。defaultを指定した再アップロードではdefaultにも再登録する。
+
 ## 11. OpenTelemetry・ログ
 
 ### 11.1 基本方針
@@ -952,6 +987,14 @@ SPAのナビゲーションはライブラリ・シリーズ・タグ・キャ�
 
 ビューアーは通常シリーズ内の一体型を展開して保存順に閲覧する。画像・PDFは手動送り、動画・音声は終了時に次へ移動する。自動再生が拒否された場合も標準の再生コントロールを使える。`member` クエリで閲覧中の末端Asset、`page_number`・`start_ms`・`end_ms` で検索ヒット位置を表し、直接アクセス・再読み込み・戻る／進むに対応する。視聴位置の永続保存は行わない。一体型はPDFと同じページ操作で、現在ページと総ページ数を表示し、先頭・末尾では対応するページ送りを無効にする。通常シリーズ内でも一体型ごとにページを数える。一体型の元画像URLは認可後に通常のシリーズ詳細・閲覧URLへ案内し、`member` で該当画像を選択する。
 
+### 12.4 グループ画面
+
+ナビゲーションのライブラリとシリーズの間に「グループ」を置く。`/groups` で作成・改名・削除、`/groups/{group_id}` でグループ内の一覧と既存の各検索を提供する。`/library` はdefaultを明示指定する。コンテンツ詳細ではチェックボックスで複数所属を保存する。allは読み取り専用とし、シリーズでは表示しない。一覧の一括編集は対象外。
+
+詳細・ビューアーへは `from=groups&group_id=...` で範囲を引き継ぐ。検索解除、種類・表示の変更、ページ送り、タグ・キャラクターによる絞り込み、比較・関連コンテンツ表示、戻る／進むでも範囲を保持する。お気に入り・おすすめ・タグ・キャラクターの専用画面は従来の範囲を維持する。
+
+アップロード先はファイル選択時のグループに固定し、再試行時にも保持する。トップとその他の画面ではdefault、独自グループ画面ではそのグループ、all画面ではallを使う。グループ削除時にはコンテンツが残りdefault所属も変わらないことを確認画面に示す。取得・保存の失敗時は入力を保持して再操作できるようにする。
+
 ## 13. 処理品質・エラー要件
 
 - ファイルサイズ、同時処理数、Jobタイムアウト、検索件数、動画変換プロファイルは設定値とし、具体的な上限は負荷試験後に決める。
@@ -990,6 +1033,7 @@ SPAのナビゲーションはライブラリ・シリーズ・タグ・キャ�
 | AC-23 | 個人向け推薦 | お気に入りの特徴によるTF-IDF推薦、情報不足の区別、関連度・多様性・表示履歴による抽選、キャッシュ・セッションの永続化、変更時失効、ACL分離、探索からの復帰を保つ |
 | AC-24 | 複数・分割アップロード | 最大10ファイルの並列送信・部分再送・再結合・境界サイズ・ACL・重複排除・一時データ回収が動作する |
 | AC-25 | シリーズ | 2種類の構成・順序・競合更新、画像の1件化・メタデータ集約、ACL分離、候補提示、解除・連続閲覧が動作 |
+| AC-26 | グループ | 利用者別の複数所属、defaultとall、グループ内検索とACL分離、シリーズの独立所属、アップロード先の固定・再送、グループ削除後のコンテンツ保持が動作 |
 
 ## 15. 実装順序
 

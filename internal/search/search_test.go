@@ -46,7 +46,7 @@ func TestRejectMalformedInferenceVector(t *testing.T) {
 
 // The final Catalog authorization must receive the scope before the public limit
 // and only authorized Assets may contribute snippets or favorite flags.
-func TestFavoriteScopeBeforeResultLimit(t *testing.T) {
+func TestFavoriteAndGroupScopeBeforeResultLimit(t *testing.T) {
 	for _, mode := range []string{"keyword", "semantic", "hybrid", "perceptual"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("INTERNAL_TOKEN", strings.Repeat("t", 32))
@@ -55,6 +55,7 @@ func TestFavoriteScopeBeforeResultLimit(t *testing.T) {
 					t.Errorf("unexpected authorization request")
 				}
 				var in struct {
+					GroupID   string   `json:"group_id"`
 					Favorites bool     `json:"favorites"`
 					BlobIDs   []string `json:"blob_ids"`
 					AssetIDs  []string `json:"asset_ids"`
@@ -62,7 +63,7 @@ func TestFavoriteScopeBeforeResultLimit(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 					t.Error(err)
 				}
-				if !in.Favorites || len(in.BlobIDs) != 2 || len(in.AssetIDs) != 2 {
+				if in.GroupID != "default" || !in.Favorites || len(in.BlobIDs) != 2 || len(in.AssetIDs) != 2 {
 					t.Errorf("scope or candidates lost: %+v", in)
 				}
 				blob := "favorite-blob"
@@ -73,7 +74,7 @@ func TestFavoriteScopeBeforeResultLimit(t *testing.T) {
 			req := httptest.NewRequest("POST", "/api/v1/search", nil)
 			req.Header.Set("X-Principal", "alice")
 			rec := httptest.NewRecorder()
-			s.respond(rec, req, query{Mode: mode, Favorites: true, Limit: 1}, map[string]candidate{
+			s.respond(rec, req, query{Mode: mode, Favorites: true, Limit: 1, GroupID: "default"}, map[string]candidate{
 				"hidden-blob":   {blob: "hidden-blob", content: "private snippet", rank: 10},
 				"favorite-blob": {blob: "favorite-blob", content: "visible snippet", rank: 1},
 			}, []catalog.Asset{{ID: "hidden"}, {ID: "favorite"}})

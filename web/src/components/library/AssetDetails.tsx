@@ -1,4 +1,4 @@
-import type { Ref } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { Link } from 'react-router';
 import {
   type Asset,
@@ -15,6 +15,7 @@ import { FavoriteButton } from './FavoriteButton';
 import { Status } from './Status';
 
 export function AssetDetails({
+  groupEditor,
   selected,
   previewAsset,
   seriesEditable,
@@ -38,6 +39,7 @@ export function AssetDetails({
 }: {
   onSearchTag: (tag: string) => void;
   onSearchCharacter: (character: string) => void;
+  groupEditor?: ReactNode;
   selected: Asset;
   previewAsset?: Asset;
   seriesEditable?: boolean;
@@ -204,6 +206,7 @@ export function AssetDetails({
           </Link>
         </Button>
       )}
+      {groupEditor}
       <AssetMetadataEditor
         key={selected.asset_id}
         asset={selected}

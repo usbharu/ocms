@@ -11,6 +11,7 @@ export function AppHeader({
 }: {
   children?: ReactNode;
   section?:
+    | 'groups'
     | 'series'
     | 'library'
     | 'tags'
@@ -19,6 +20,7 @@ export function AppHeader({
     | 'recommendations';
   onSectionChange?: (
     section:
+      | 'groups'
       | 'series'
       | 'library'
       | 'tags'
@@ -40,6 +42,7 @@ export function AppHeader({
           {(
             [
               ['library', 'ライブラリ'],
+              ['groups', 'グループ'],
               ['series', 'シリーズ'],
               ['tags', 'タグ'],
               ['characters', 'キャラクター'],

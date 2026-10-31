@@ -9,6 +9,7 @@ import {
 } from './assets';
 
 export type Section =
+  | 'groups'
   | 'series'
   | 'library'
   | 'tags'
@@ -33,6 +34,7 @@ export function parseRoute(pathname: string, search: string): RouteState {
   const detail = /^\/assets\/([^/]+)(\/view)?$/.exec(pathname);
   const sections = [
     'library',
+    'groups',
     'series',
     'tags',
     'characters',
@@ -42,11 +44,14 @@ export function parseRoute(pathname: string, search: string): RouteState {
   const series = /^\/series(?:\/(?:new|[^/]+)(?:\/(?:edit|view))?)?$/.test(
     pathname,
   );
-  const candidate = series
-    ? 'series'
-    : detail
-      ? params.get('from')
-      : pathname.slice(1);
+  const group = /^\/groups\/([^/]+)$/.exec(pathname);
+  const candidate = group
+    ? 'groups'
+    : series
+      ? 'series'
+      : detail
+        ? params.get('from')
+        : pathname.slice(1);
   const section = (
     candidate &&
     sections.includes(candidate) &&
@@ -116,6 +121,12 @@ export function parseRoute(pathname: string, search: string): RouteState {
     hit,
     section,
     context: {
+      groupId:
+        section === 'groups'
+          ? group?.[1] || params.get('group_id') || undefined
+          : section === 'library'
+            ? params.get('group_id') || 'default'
+            : undefined,
       mode,
       query: sourceId || tag || character ? '' : params.get('q') || '',
       tag: sourceId ? undefined : tag,
@@ -137,6 +148,7 @@ export function parseRoute(pathname: string, search: string): RouteState {
         ? (params.get('view') as 'list' | 'graph')
         : 'cloud',
     known:
+      Boolean(group) ||
       series ||
       pathname === '/' ||
       sections.includes(pathname.slice(1)) ||
@@ -157,6 +169,11 @@ export function collectionURL(
   kind: Kind = 'all',
 ) {
   const params = new URLSearchParams();
+  if (
+    context.groupId &&
+    !(section === 'library' && context.groupId === 'default')
+  )
+    params.set('group_id', context.groupId);
   if (context.query) params.set('q', context.query);
   if (context.mode !== 'keyword') params.set('mode', context.mode);
   if (context.tag) params.set('tag', context.tag);
@@ -171,7 +188,7 @@ export function collectionURL(
         : 'none',
     );
   if (page > 1) params.set('page', String(page));
-  return `/${section}${params.size ? `?${params}` : ''}`;
+  return `/${section}${section === 'groups' && context.groupId ? `/${context.groupId}` : ''}${params.size ? `?${params}` : ''}`;
 }
 
 export function assetURL(
