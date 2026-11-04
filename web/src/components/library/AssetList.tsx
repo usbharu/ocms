@@ -26,6 +26,7 @@ export function AssetList({
   view,
   kind,
   searching,
+  blocking = searching,
   isResult,
   uploading,
   currentPage,
@@ -48,6 +49,7 @@ export function AssetList({
   view: View;
   kind: Kind;
   searching: boolean;
+  blocking?: boolean;
   isResult: boolean;
   uploading: boolean;
   currentPage: number;
@@ -152,7 +154,7 @@ export function AssetList({
                     title={a.filename}
                     aria-pressed={selectedId === a.asset_id}
                     key={a.asset_id}
-                    disabled={searching}
+                    disabled={blocking}
                     onClick={() => {
                       if (selectedId === a.asset_id && onOpen) onOpen(a);
                       else onSelect(a);
@@ -221,7 +223,7 @@ export function AssetList({
             <Button
               variant="outline"
               type="button"
-              disabled={searching || currentPage === 1}
+              disabled={blocking || currentPage === 1}
               onClick={() => onPageChange(currentPage - 1)}
             >
               前へ
@@ -232,7 +234,7 @@ export function AssetList({
             <Button
               variant="outline"
               type="button"
-              disabled={searching || currentPage === pageCount}
+              disabled={blocking || currentPage === pageCount}
               onClick={() => onPageChange(currentPage + 1)}
             >
               次へ

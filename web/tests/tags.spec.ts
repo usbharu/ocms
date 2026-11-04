@@ -77,6 +77,29 @@ test('searches tags, switches list and handles empty results', async ({
   await expect(page.locator('.tag-list li')).toHaveCount(3);
 });
 
+test('the existing tag list remains usable during refresh', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: '一覧', exact: true }).click();
+  await expect(page.locator('.tag-list li')).toHaveCount(3);
+  let started = false;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/v1/tags?*', async (route) => {
+    started = true;
+    await held;
+    await route.fulfill({ json: { tags, total: tags.length, links: [] } });
+  });
+  await page.getByRole('button', { name: '更新', exact: true }).click();
+  await expect.poll(() => started).toBe(true);
+  await expect(page.getByRole('status')).toContainText('タグを読み込み中');
+  await page.getByRole('button', { name: '旅行 20件' }).click();
+  await expect(page.getByRole('heading', { name: 'タグ：旅行' })).toBeVisible();
+  release();
+});
+
 test('library graph supports selection, zoom and keyboard navigation', async ({
   page,
 }) => {

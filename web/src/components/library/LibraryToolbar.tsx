@@ -6,6 +6,7 @@ export function LibraryToolbar({
   kind,
   view,
   searching,
+  blocking = searching,
   onKindChange,
   onViewChange,
   onRefresh,
@@ -13,6 +14,7 @@ export function LibraryToolbar({
   kind: Kind;
   view: View;
   searching: boolean;
+  blocking?: boolean;
   onKindChange: (kind: Kind) => void;
   onViewChange: (view: View) => void;
   onRefresh: () => void;
@@ -28,7 +30,7 @@ export function LibraryToolbar({
             key={item.id}
             aria-pressed={kind === item.id}
             onClick={() => onKindChange(item.id)}
-            disabled={searching}
+            disabled={blocking}
           >
             {item.label}
           </Button>
