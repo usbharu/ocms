@@ -184,6 +184,39 @@ async function setup(
   return searches;
 }
 
+test('closing a viewer and detail keeps the current collection interactive without reloading it', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto('/library');
+  await expect(page.locator('.file')).toHaveCount(200);
+  let collectionRequests = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/v1/assets')
+      collectionRequests++;
+  });
+  await page
+    .getByRole('button', { name: files[0].filename, exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'ファイルを閲覧', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: '閲覧を閉じる' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: '詳細を閉じる' }).click();
+  await expect(page.getByRole('region', { name: 'ファイル詳細' })).toHaveCount(
+    0,
+  );
+  await page
+    .getByRole('button', { name: files[1].filename, exact: true })
+    .click();
+  await expect(
+    page.getByRole('region', { name: 'ファイル詳細' }),
+  ).toContainText(files[1].filename);
+  expect(collectionRequests).toBe(0);
+});
+
 test('URLs restore Japanese filters, pagination, selection and browser history', async ({
   page,
 }) => {

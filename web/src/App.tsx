@@ -538,9 +538,12 @@ export function App() {
       }
       if (route.sourceId) {
         try {
-          const source = await request(
-            `/api/v1/assets/${encodeURIComponent(route.sourceId)}`,
-          );
+          const source =
+            liveSnapshot.current.context.source?.asset_id === route.sourceId
+              ? liveSnapshot.current.context.source
+              : await request(
+                  `/api/v1/assets/${encodeURIComponent(route.sourceId)}`,
+                );
           if (!active) return;
           next = { ...next, source };
         } catch (error) {
@@ -579,7 +582,8 @@ export function App() {
       setContext(next);
       setKind(route.kind);
       setPage(route.page);
-      if (cached) {
+      const sameCollection = loadedCollection.current === collectionKey;
+      if (cached && !sameCollection) {
         setAssets(cached.assets);
         setTotal(cached.total);
         setHashStatus(cached.hashStatus);
@@ -587,13 +591,13 @@ export function App() {
         setKind(route.kind);
         setContext(next);
       }
-      if (loadedCollection.current !== collectionKey || cached) {
+      if (!sameCollection) {
         if (!cached && (next.mode === 'recommendation' || next.personalized)) {
           setAssets([]);
           setTotal(null);
           setHashStatus(null);
         }
-        loadedCollection.current = collectionKey;
+        loadedCollection.current = '';
         const result = await refresh(
           next,
           route.page,
@@ -606,6 +610,7 @@ export function App() {
           setViewerOpen(false);
           return;
         }
+        loadedCollection.current = collectionKey;
       }
       readyRoute.current = location.key;
       setSearching(false);
