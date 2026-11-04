@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useId, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { parseRoute } from '../../lib/routes';
 import { Button } from '../ui/button';
@@ -53,6 +53,7 @@ export function TagsPage({
   }
 
   const [data, setData] = useState<TagData | null>(null);
+  const dataQuery = useRef<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
@@ -61,7 +62,7 @@ export function TagsPage({
     const controller = new AbortController();
     setLoading(true);
     setError(false);
-    setData(null);
+    if (dataQuery.current !== query.trim()) setData(null);
     const timer = window.setTimeout(async () => {
       try {
         const response = await fetch(
@@ -71,7 +72,10 @@ export function TagsPage({
         if (!response.ok) throw new Error('tags');
         const raw = await response.json();
         const result: TagData = { ...raw, tags: raw[kind] };
-        if (!controller.signal.aborted) setData(result);
+        if (!controller.signal.aborted) {
+          dataQuery.current = query.trim();
+          setData(result);
+        }
       } catch {
         if (!controller.signal.aborted) setError(true);
       } finally {
@@ -84,7 +88,11 @@ export function TagsPage({
     };
   }, [query, revision, kind]);
   return (
-    <section className="tags-page" aria-label={`${label}一覧`}>
+    <section
+      className="tags-page"
+      aria-label={`${label}一覧`}
+      aria-busy={loading}
+    >
       <h1 className="visually-hidden">{label}</h1>
       <div className="tags-toolbar">
         <div className="tag-search">
@@ -124,7 +132,7 @@ export function TagsPage({
           更新
         </Button>
       </div>
-      {loading ? (
+      {loading && !data ? (
         <div className="empty" role="status">
           {label}を読み込み中…
         </div>
@@ -147,9 +155,8 @@ export function TagsPage({
                   ? `「${query.trim()}」の${label}`
                   : `すべての${label}`}
               </h2>
-              <span>
-                {data.total}
-                {label}
+              <span role={loading ? 'status' : undefined}>
+                {loading ? `${label}を読み込み中…` : `${data.total}${label}`}
               </span>
             </div>
             {data.total === 0 ? (

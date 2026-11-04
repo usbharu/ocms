@@ -48,7 +48,7 @@ export function SearchForm({
         <option value="semantic">意味</option>
         <option value="hybrid">キーワード＋意味</option>
       </NativeSelect>
-      <Button variant="outline" type="submit" disabled={searching}>
+      <Button variant="outline" type="submit">
         {searching ? '検索中…' : '検索'}
       </Button>
     </form>

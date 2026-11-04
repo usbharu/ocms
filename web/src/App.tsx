@@ -158,6 +158,8 @@ export function App() {
   const related = context.mode === 'recommendation';
   const personal = Boolean(context.personalized && !context.source);
   const [searching, setSearching] = useState(false);
+  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
+  const collectionBlocked = searching && !backgroundRefreshing;
   const [viewerLoading, setViewerLoading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
@@ -210,11 +212,13 @@ export function App() {
     nextPage = page,
     nextKind: Kind = kind,
     preserveSession = false,
+    background = false,
   ): Promise<Asset[] | undefined> {
     collectionRef.current = { context: next, page: nextPage, kind: nextKind };
     const version = ++requestVersion.current;
     setError('');
     setSearching(true);
+    setBackgroundRefreshing(background);
     setRecommendationFailed(false);
     try {
       let res: {
@@ -360,7 +364,10 @@ export function App() {
         throw error;
       }
     } finally {
-      if (version === requestVersion.current) setSearching(false);
+      if (version === requestVersion.current) {
+        setSearching(false);
+        setBackgroundRefreshing(false);
+      }
     }
   }
   useEffect(() => {
@@ -474,6 +481,7 @@ export function App() {
     }
     ++requestVersion.current;
     readyRoute.current = '';
+    setBackgroundRefreshing(false);
     setSearching(true);
     setError('');
     setAssetMissing(false);
@@ -686,6 +694,7 @@ export function App() {
       next = { ...next, groupId: next.groupId ?? context.groupId };
     snapshots.current.set(location.key, liveSnapshot.current);
     capturedSnapshot.current = location.key;
+    setBackgroundRefreshing(false);
     setSearching(true);
     if (next.mode === 'recommendation' || next.personalized) {
       setAssets([]);
@@ -1204,7 +1213,7 @@ export function App() {
       if (sectionRef.current === 'favorites') {
         try {
           const latest = collectionRef.current;
-          await refresh(latest.context, latest.page, latest.kind);
+          await refresh(latest.context, latest.page, latest.kind, false, true);
         } catch {
           setError(
             'お気に入りは保存しましたが、一覧を更新できませんでした。更新ボタンで再取得してください。',
@@ -1266,7 +1275,7 @@ export function App() {
         context.source?.asset_id === assetId
           ? { ...context, source: { ...context.source, ...metadata } }
           : context;
-      void refresh(next).catch(() => {
+      void refresh(next, page, kind, false, true).catch(() => {
         if (selectedId.current === assetId) {
           setError(
             '変更は保存しましたが、一覧を更新できませんでした。更新ボタンで再取得してください。',
@@ -1479,7 +1488,7 @@ export function App() {
                         aria-label={
                           personal ? 'おすすめの種類' : '関連コンテンツの種類'
                         }
-                        disabled={searching}
+                        disabled={collectionBlocked}
                         value={kind}
                         onChange={(event) =>
                           changeKind(event.target.value as Kind)
@@ -1495,7 +1504,9 @@ export function App() {
                     <Button
                       variant="outline"
                       disabled={searching}
-                      onClick={() => run(() => refresh())}
+                      onClick={() =>
+                        run(() => refresh(context, page, kind, false, true))
+                      }
                     >
                       更新
                     </Button>
@@ -1505,12 +1516,18 @@ export function App() {
                     kind={kind}
                     view={view}
                     searching={searching}
+                    blocking={collectionBlocked}
                     onKindChange={changeKind}
                     onViewChange={setView}
-                    onRefresh={() => run(() => refresh())}
+                    onRefresh={() =>
+                      run(() => refresh(context, page, kind, false, true))
+                    }
                   />
                 )}
-                <fieldset className="rating-filter" disabled={searching}>
+                <fieldset
+                  className="rating-filter"
+                  disabled={collectionBlocked}
+                >
                   <legend>レーティング</legend>
                   {ratings.map((rating) => (
                     <label key={rating}>
@@ -1627,6 +1644,7 @@ export function App() {
                     }
                     kind={kind}
                     searching={searching}
+                    blocking={collectionBlocked}
                     isResult={isResult}
                     uploading={progress !== null}
                     currentPage={currentPage}
@@ -1654,7 +1672,7 @@ export function App() {
                       onSaved={() => {
                         snapshots.current.clear();
                         loadedCollection.current = '';
-                        void refresh();
+                        void refresh(context, page, kind, false, true);
                       }}
                     />
                   }
@@ -1667,7 +1685,7 @@ export function App() {
                   previewAsset={previewAsset ?? undefined}
                   seriesEditable={seriesEditable}
                   jobs={jobs}
-                  searching={searching}
+                  searching={collectionBlocked}
                   notice={notice}
                   detailTitle={detailTitle}
                   onClose={closeDetail}
