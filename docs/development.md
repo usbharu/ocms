@@ -284,6 +284,14 @@ docker compose up -d --wait
 
 アプリ側は `OTEL_EXPORTER_OTLP_ENDPOINT` が設定されていればOTLP/HTTPでTrace / Metric / Logを送信します。GoはOTel SDKとslogブリッジ、RuntimeはPython SDKを使います。URL・クエリ・Cookie・リクエスト本文・生の例外メッセージを属性へ渡さず、HTTP計測は許可した属性だけを出力します。既定では外部Exporterを使わず、構造化ログを標準出力へ書きます。
 
+Runtimeイメージの推論APIは `service.name=embedding-runtime`、推薦APIは `service.name=recommendation-engine` で識別します。通常構成では `.env` の `OTEL_EXPORTER_OTLP_ENDPOINT` にコンテナから到達できるベースURL（例：`http://collector:4318`）を設定し、`docker compose up -d runtime recommender` で反映します。検証構成では両サービスを同梱Collectorへ接続します。
+
+RuntimeはW3C `traceparent` を引き継ぎ、`runtime.requests` と `http.server.request.duration`（秒）を `operation`・`outcome` 別に記録します。Embeddingは従来の `media.embedding.duration` も出力します。HTTPエラーと未処理例外も計測し、`/healthz` は除外します。終了時にSDKをシャットダウンして保留中の出力を送信します。モデル不要の回帰テストは、前述のRuntime用venvで次を実行します。ネットワーク境界を置き換え、実際のOTLPデータでTraceの親子関係・Metric・相関Log・機密情報の非出力を確認します。
+
+```sh
+.cache/venv-runtime/bin/python -m unittest discover -s runtime -p 'test_telemetry.py'
+```
+
 ## DBマイグレーションと更新
 
 [golang-migrate](https://github.com/golang-migrate/migrate/tree/v4.19.1) v4.19.1をGoライブラリとして利用します。`migrate` サービスが `ocms migrate up` を実行し、`public.schema_migrations` にバージョンとdirty状態を管理します。番号順の実行、DBロック、適用済みの判定、dirty状態はgolang-migrateが担当します。アプリ側のコードは環境変数・既存DBの初回登録・ログの秘匿処理を接続します。管理接続にはロール・拡張の作成と、接続単位のログ設定を変更できる権限が必要です。
