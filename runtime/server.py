@@ -21,6 +21,7 @@ app = FastAPI(telemetry={'tracing': False, 'metrics': False, 'logs': False,
     'operation_spans': False, 'auto_configure': False})
 from telemetry import instrument
 instrument(app)
+logger = logging.getLogger('ocms.embedding-runtime')
 lock = threading.Lock()
 model = None
 whisper = None
@@ -103,7 +104,7 @@ def encode(item: Input, x_service_token: str | None = Header(default=None)):
     except HTTPException:
         raise
     except Exception as error:
-        logging.warning('embedding_failed exception_type=%s', type(error).__name__)
+        logger.warning('embedding_failed exception_type=%s', type(error).__name__)
         raise HTTPException(503, 'EMBEDDING_FAILED') from None
 
 
@@ -124,7 +125,7 @@ def transcribe(item: Input, x_service_token: str | None = Header(default=None)):
             finally:
                 release_memory()
     except Exception as error:
-        logging.warning('transcription_failed exception_type=%s', type(error).__name__)
+        logger.warning('transcription_failed exception_type=%s', type(error).__name__)
         raise HTTPException(503, 'TRANSCRIPTION_FAILED') from None
 
 
@@ -149,5 +150,5 @@ def tag(item: Input, x_service_token: str | None = Header(default=None)):
                 tags = tagger.predict(image)
             return {**tags, 'model_id': TAG_MODEL, 'model_revision': TAG_REVISION}
     except Exception as error:
-        logging.warning('tagging_failed exception_type=%s', type(error).__name__)
+        logger.warning('tagging_failed exception_type=%s', type(error).__name__)
         raise HTTPException(503, 'TAGGING_FAILED') from None

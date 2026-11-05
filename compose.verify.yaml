@@ -87,5 +87,8 @@ services:
   runtime:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+  recommender:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
 volumes:
   verify-telemetry:

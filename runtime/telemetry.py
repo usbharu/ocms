@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import time
-from opentelemetry import metrics, trace
+from opentelemetry import trace
 from opentelemetry.propagate import extract
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -29,21 +29,26 @@ def instrument(app, service_name='embedding-runtime'):
         lp.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter(), schedule_delay_millis=1000))
         readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(), export_interval_millis=3000))
     mp = MeterProvider(resource=resource, metric_readers=readers)
-    trace.set_tracer_provider(tp); metrics.set_meter_provider(mp)
-    tracer = trace.get_tracer('ocms.runtime')
-    meter = metrics.get_meter('ocms.runtime')
+    # Each app owns its providers, including when both entrypoints are imported.
+    tracer = tp.get_tracer('ocms.runtime')
+    meter = mp.get_meter('ocms.runtime')
     duration = meter.create_histogram('media.embedding.duration', unit='s')
+    request_duration = meter.create_histogram('http.server.request.duration', unit='s')
     requests = meter.create_counter('runtime.requests')
     logger = logging.getLogger('ocms.' + service_name)
     logger.setLevel(logging.INFO); logger.propagate = False
+    handlers = []
     if enabled:
-        logger.addHandler(LoggingHandler(logger_provider=lp))
+        handlers.append(LoggingHandler(logger_provider=lp))
     class SafeJSON(logging.Handler):
         def emit(self, record):
             sc = trace.get_current_span().get_span_context()
             print(json.dumps({'service.name': service_name, 'event': record.getMessage(),
+                'level': record.levelname,
                 'trace_id': format(sc.trace_id, '032x'), 'span_id': format(sc.span_id, '016x')}), flush=True)
-    logger.addHandler(SafeJSON())
+    handlers.append(SafeJSON())
+    for handler in handlers:
+        logger.addHandler(handler)
     @app.middleware('http')
     async def telemetry(request, call_next):
         if request.url.path == '/healthz':
@@ -51,23 +56,28 @@ def instrument(app, service_name='embedding-runtime'):
         operation = {'/encode': 'embedding.encode', '/transcribe': 'media.transcribe', '/tag': 'media.tag', '/recommend': 'recommendation.rank'}.get(request.url.path, 'inference.request')
         with tracer.start_as_current_span(operation, context=extract(dict(request.headers)), kind=trace.SpanKind.SERVER, record_exception=False, set_status_on_exception=False) as span:
             started = time.monotonic()
+            status = 500
             try:
                 response = await call_next(request)
-            except Exception:
-                span.set_status(trace.Status(trace.StatusCode.ERROR, 'Inference failed'))
-                requests.add(1, {'operation': operation, 'outcome': 'error'})
-                logger.error(operation + '.failed')
-                raise
-            span.set_attribute('http.response.status_code', response.status_code)
-            if response.status_code >= 500:
-                span.set_status(trace.Status(trace.StatusCode.ERROR, 'Inference failed'))
-            attributes = {'operation': operation, 'outcome': 'success' if response.status_code < 400 else 'error'}
-            requests.add(1, attributes)
-            if operation == 'embedding.encode': duration.record(time.monotonic() - started, attributes)
-            logger.info(operation + ('.completed' if response.status_code < 400 else '.failed'))
-            return response
+                status = response.status_code
+                return response
+            finally:
+                span.set_attribute('http.response.status_code', status)
+                if status >= 500:
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, 'Inference failed'))
+                attributes = {'operation': operation, 'outcome': 'success' if status < 400 else 'error'}
+                elapsed = time.monotonic() - started
+                requests.add(1, attributes)
+                request_duration.record(elapsed, attributes)
+                if operation == 'embedding.encode':
+                    duration.record(elapsed, attributes)
+                level = logging.ERROR if status >= 500 else logging.WARNING if status >= 400 else logging.INFO
+                logger.log(level, operation + ('.completed' if status < 400 else '.failed'))
     def shutdown():
         lp.shutdown(); mp.shutdown(); tp.shutdown()
+        for handler in handlers:
+            logger.removeHandler(handler)
+            handler.close()
     previous_lifespan = app.router.lifespan_context
     @asynccontextmanager
     async def lifespan(instance):

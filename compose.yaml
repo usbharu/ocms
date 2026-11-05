@@ -109,6 +109,7 @@ services:
       INFERENCE_DTYPE: ${INFERENCE_DTYPE:-float32}
       INFERENCE_THREADS: ${INFERENCE_THREADS:-4}
       WEB_CONCURRENCY: ${INFERENCE_WORKERS:-1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes: [models:/models]
     tmpfs: ["/tmp:rw,size=512m,mode=1777"]
     restart: unless-stopped

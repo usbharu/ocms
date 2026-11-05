@@ -898,6 +898,7 @@ Upload Session作成時の任意の `group_id` は、省略またはdefaultな�
 ### 11.1 基本方針
 
 - Goの全サービスでOpenTelemetryの**Traces、Metrics、Logs**を出力できるようにする。
+- Pythonの推論Runtime（`embedding-runtime`）と推薦エンジン（`recommendation-engine`）もOTLP/HTTPでTraces、Metrics、Logsを出力する。推論HTTPはW3C Trace Contextを引き継ぎ、正常終了・HTTPエラー・未処理例外の件数と処理時間を記録する。`/healthz`は計測対象から除外し、入力本文・クエリ・ヘッダー・生の例外は出力しない。
 - 標準リソース属性として`service.name`、`service.version`、必要なら`deployment.environment.name`を設定する。
 - W3C Trace Context（`traceparent`など）を同期HTTPで伝搬する。非同期JobにはTrace Contextを保存し、Worker側のSpanと関連付ける（必要に応じてSpan Link）。
 - `slog`ベースの構造化ログを基本とし、`trace_id`/`span_id`を含める。OTLPのログ出力に対応する。
@@ -920,6 +921,8 @@ Upload Session作成時の任意の `group_id` は、省略またはdefaultな�
 | `media.job.completed` | Counter | Job完了/失敗 |
 | `media.search.duration` | Histogram | 検索時間 |
 | `media.embedding.duration` | Histogram | 推論時間 |
+| `runtime.requests` | Counter | Python RuntimeのHTTP要求件数（operation・outcome別） |
+| `http.server.request.duration` | Histogram | HTTP処理時間。Python Runtimeは全推論APIの成功・失敗をoperation・outcome別に記録 |
 | `media.crypto.bytes` | Counter | 暗号化・復号バイト数 |
 
 `asset_id`、`blob_id`、`upload_id`のような高カーディナリティ値はMetric属性に入れず、Trace/Log側に記録する。
