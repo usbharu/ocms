@@ -205,7 +205,13 @@ export default function TagVisualization({
         { selector: '.dimmed', style: { opacity: 0.08 } },
         {
           selector: 'node.highlighted',
-          style: { 'min-zoomed-font-size': 0, 'font-weight': 'bold' },
+          style: {
+            label: 'data(name)',
+            opacity: 1,
+            'min-zoomed-font-size': 0,
+            'font-weight': 'bold',
+            'z-index': 999,
+          },
         },
         {
           selector: ':selected',
@@ -290,14 +296,34 @@ export default function TagVisualization({
       } else if (motion) runLayout(false, true);
     };
     document.addEventListener('visibilitychange', onVisibility);
-    cy.on('mouseover', 'node', (event) => event.target.addClass('highlighted'));
-    cy.on('mouseout', 'node', (event) => {
-      if (!event.target.selected()) event.target.removeClass('highlighted');
+    const updateHighlightedLabels = () => {
+      cy.nodes('.highlighted').style({
+        'font-size': `${Math.max(12, 16 / cy.zoom())}px`,
+        'text-max-width': `${Math.max(120, 240 / cy.zoom())}px`,
+      });
+    };
+    cy.on('mouseover', 'node', (event) => {
+      event.target.addClass('highlighted');
+      updateHighlightedLabels();
     });
-    cy.on('tap', 'node', (event) => setSelected(event.target.data('name')));
-    cy.on('zoom', () =>
-      setZoom(Math.round((cy.zoom() / fitZoom.current) * 100)),
-    );
+    cy.on('mouseout', 'node', (event) => {
+      if (!event.target.selected()) {
+        event.target.removeClass('highlighted');
+        event.target.removeStyle('font-size text-max-width');
+      }
+    });
+    cy.on('tap', 'node', (event) => {
+      const name = event.target.data('name');
+      setSelected((current) => (current === name ? '' : name));
+    });
+    cy.on('tap', (event) => {
+      if (event.target === cy) setSelected('');
+    });
+    cy.on('zoom', () => {
+      setZoom(Math.round((cy.zoom() / fitZoom.current) * 100));
+      updateHighlightedLabels();
+    });
+    cy.on('select', 'node', updateHighlightedLabels);
     const observer = new ResizeObserver(() => {
       fitting = true;
       fitGraph();
@@ -318,11 +344,12 @@ export default function TagVisualization({
   useEffect(() => {
     const cy = graph.current;
     if (!cy) return;
+    cy.nodes().removeStyle('font-size text-max-width');
     cy.elements().removeClass('dimmed highlighted');
     cy.nodes().unselect();
     if (!selected) return;
     const node = cy.nodes().filter((item) => item.data('name') === selected);
-    node.select().addClass('highlighted');
+    node.addClass('highlighted').select();
     cy.elements().difference(node.closedNeighborhood()).addClass('dimmed');
     const viewport = {
       center: { eles: node },
@@ -429,6 +456,11 @@ export default function TagVisualization({
             {active.asset_count}件のファイル
             {view === 'graph' ? ` · 関連${label} ${neighbors}件` : ''}
           </span>
+        )}
+        {active && (
+          <Button variant="ghost" onClick={() => setSelected('')}>
+            選択を解除
+          </Button>
         )}
         <Button disabled={!active} onClick={() => onOpen(selected)}>
           ファイルを表示
