@@ -2,16 +2,16 @@ package media
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"ocms/internal/contracts"
 )
 
 func TestStateReconciliationDatabase(t *testing.T) {
@@ -25,86 +25,89 @@ func TestStateReconciliationDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-
-	first, second := uuid.NewString(), uuid.NewString()
-	defer func() {
-		if _, err := db.Exec(ctx, `DELETE FROM media.processing_jobs WHERE source_blob_id IN ($1,$2)`, first, second); err != nil {
-			t.Error(err)
-		}
-	}()
-	for _, blob := range []string{first, second} {
-		if _, err := db.Exec(ctx, `INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type,status)
-			VALUES(gen_random_uuid(),$1,'media.process','completed')`, blob); err != nil {
+	blob := uuid.NewString()
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(ctx, query, args...); err != nil {
 			t.Fatal(err)
 		}
 	}
+	defer exec(`DELETE FROM media.blob_state_outbox WHERE blob_id=$1`, blob)
+	defer exec(`DELETE FROM media.processing_jobs WHERE source_blob_id=$1`, blob)
+	exec(`INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type,status)
+		VALUES(gen_random_uuid(),$1,'media.process','completed')`, blob)
 
-	var mu sync.Mutex
-	calls := map[string]int{}
-	fail := false
+	deliveries := make(chan contracts.BlobProcessingState, 10)
 	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/internal/events" {
-			w.Write([]byte(`{"events":[]}`))
+		var state contracts.BlobProcessingState
+		if r.URL.Path != "/internal/blobs/"+blob+"/processing-state" || json.NewDecoder(r.Body).Decode(&state) != nil {
+			t.Error("invalid state notification")
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		mu.Lock()
-		defer mu.Unlock()
-		calls[r.URL.Path]++
-		if fail {
+		deliveries <- state
+		if state.Status == "ready" && len(deliveries) == 1 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
+		}
+		if state.Status == "processing" {
+			// Queue a new revision while the old one is awaiting acknowledgment.
+			if _, err := db.Exec(r.Context(), `UPDATE media.processing_jobs SET status='completed' WHERE source_blob_id=$1`, blob); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer catalog.Close()
 	t.Setenv("INTERNAL_TOKEN", strings.Repeat("t", 32))
 	s := Service{DB: db, Catalog: catalog.URL, SemanticSearchDisabled: true}
-	checkCalls := func(wantFirst, wantSecond int) {
-		t.Helper()
-		mu.Lock()
-		defer mu.Unlock()
-		if calls["/internal/blobs/"+first+"/state"] != wantFirst || calls["/internal/blobs/"+second+"/state"] != wantSecond {
-			t.Errorf("unexpected reconciliation counts: first=%d second=%d, want %d/%d",
-				calls["/internal/blobs/"+first+"/state"], calls["/internal/blobs/"+second+"/state"], wantFirst, wantSecond)
-		}
+	if err := s.deliverBlobStates(ctx); err == nil {
+		t.Fatal("expected retryable delivery failure")
 	}
-
-	for range 4 {
-		if err := s.tick(ctx); err != nil {
+	deliver := func() {
+		t.Helper()
+		if err := s.deliverBlobStates(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	checkCalls(1, 1)
-	if err := s.syncStates(ctx, first); err != nil {
-		t.Fatal(err)
+	deliver()
+	if len(deliveries) != 1 {
+		t.Fatal("delivery was retried before the lease expired")
 	}
-	checkCalls(2, 1)
+	exec(`UPDATE media.blob_state_outbox SET available_at=now() WHERE blob_id=$1`, blob)
+	deliver()
+	if len(deliveries) != 2 {
+		t.Fatal("missing retry")
+	}
+	first, retry := <-deliveries, <-deliveries
+	if first != retry || first.Status != "ready" || first.Revision <= 0 {
+		t.Fatalf("retry changed notification: %+v %+v", first, retry)
+	}
+	deliver()
+	exec(`UPDATE media.processing_jobs SET attempts=attempts+1 WHERE source_blob_id=$1`, blob)
+	deliver()
+	if len(deliveries) != 0 {
+		t.Fatal("no Job status change, but a notification was sent")
+	}
+	exec(`UPDATE media.processing_jobs SET status='failed' WHERE source_blob_id=$1`, blob)
+	deliver()
+	if len(deliveries) != 1 {
+		t.Fatal("missing notification after Job status change")
+	}
+	if failed := <-deliveries; failed.Status != "failed" || failed.Revision <= first.Revision {
+		t.Fatalf("unexpected new state: %+v", failed)
+	}
 
-	// Catalog can acquire a new Asset for an already completed Blob without a new Job.
-	s.nextStateReconciliation = time.Time{}
-	if err := s.tick(ctx); err != nil {
-		t.Fatal(err)
+	exec(`UPDATE media.processing_jobs SET status='running' WHERE source_blob_id=$1`, blob)
+	deliver()
+	if len(deliveries) != 2 {
+		t.Fatal("acknowledging the old revision lost a concurrent change")
 	}
-	checkCalls(3, 2)
+	processing, completed := <-deliveries, <-deliveries
+	if processing.Status != "processing" || completed.Status != "ready" || completed.Revision <= processing.Revision {
+		t.Fatalf("unexpected transitions: %+v %+v", processing, completed)
+	}
 
-	mu.Lock()
-	fail = true
-	mu.Unlock()
-	s.nextStateReconciliation = time.Time{}
-	if err := s.tick(ctx); err == nil {
-		t.Fatal("expected Catalog failure")
-	}
-	mu.Lock()
-	firstAfterFailure, secondAfterFailure := calls["/internal/blobs/"+first+"/state"], calls["/internal/blobs/"+second+"/state"]
-	fail = false
-	mu.Unlock()
-	if err := s.tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	checkCalls(firstAfterFailure, secondAfterFailure)
-	s.nextStateReconciliation = time.Time{}
-	if err := s.tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	checkCalls(firstAfterFailure+1, secondAfterFailure+1)
 }

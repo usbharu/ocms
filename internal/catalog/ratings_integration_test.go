@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -175,5 +176,34 @@ func TestContentRatingsDatabase(t *testing.T) {
 	if rating(c, owner) != "questionable" {
 		t.Fatal("concurrent manual rating lost")
 	}
+	// Persisted processing state and metadata are inherited at upload completion.
+	statePath := "/internal/blobs/" + blob + "/processing-state"
+	defer exec(`DELETE FROM catalog.blob_processing_states WHERE blob_id=$1`, blob)
+	call("POST", statePath, "", contracts.BlobProcessingState{Revision: 2, Status: "ready"}, 204)
+	call("POST", statePath, "", contracts.BlobProcessingState{Revision: 1, Status: "failed"}, 204)
+	call("POST", statePath, "", contracts.BlobProcessingState{Revision: 2, Status: "failed"}, 204)
+
+	var late, upload string
+	if err := db.QueryRow(ctx, `INSERT INTO catalog.assets(owner_id,filename,mime_type)
+		VALUES($1,'late fixture','image/png') RETURNING id`, other).Scan(&late); err != nil {
+		t.Fatal(err)
+	}
+	ids = append(ids, late)
+	if err := db.QueryRow(ctx, `INSERT INTO catalog.upload_sessions(asset_id,expected_size)
+		VALUES($1,0) RETURNING id`, late).Scan(&upload); err != nil {
+		t.Fatal(err)
+	}
+	defer exec(`DELETE FROM catalog.upload_sessions WHERE id=$1`, upload)
+	defer exec(`DELETE FROM catalog.outbox_events WHERE blob_id=$1`, blob)
+	call("POST", "/internal/uploads/"+upload+"/complete", other, map[string]string{"blob_id": blob}, 200)
+	var inherited Asset
+	if err := json.Unmarshal(call("GET", "/api/v1/assets/"+late, other, nil, 200), &inherited); err != nil {
+		t.Fatal(err)
+	}
+	if inherited.Status != "ready" || inherited.Rating != "explicit" || !slices.Contains(inherited.Tags, "auto-tag") {
+		t.Fatal("late Asset did not inherit the Blob state and metadata")
+	}
+	call("GET", "/api/v1/assets/"+late, owner, nil, 404)
+
 	fmt.Println("verified rating persistence, overrides, cached duplicates, retry, ACL, filters and pagination")
 }

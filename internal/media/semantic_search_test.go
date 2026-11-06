@@ -58,7 +58,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 			t.Error(err)
 		}
 		stateMu.Lock()
-		states[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/internal/blobs/"), "/state")] = in.Status
+		states[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/internal/blobs/"), "/processing-state")] = in.Status
 		stateMu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -70,6 +70,9 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 	for _, status := range []string{"queued", "retry", "running", "failed"} {
 		exec(`UPDATE media.processing_jobs SET status=$2,attempts=CASE WHEN $2='running' THEN 4 ELSE 2 END,locked_until=now()-interval '1 minute' WHERE source_blob_id=$1 AND job_type='embedding.generate'`, blob, status)
 		if err := s.tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.deliverBlobStates(ctx); err != nil {
 			t.Fatal(err)
 		}
 		var got string
@@ -90,7 +93,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 	}
 	// Tags continue, and pending or failed non-embedding Jobs still affect state.
 	exec(`INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type) VALUES(gen_random_uuid(),$1,'tags.generate')`, blob)
-	if err := s.syncStates(ctx, blob); err != nil {
+	if err := s.deliverBlobStates(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "processing" {
@@ -101,7 +104,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 		t.Fatalf("tags not claimed: %s %v", job.Type, err)
 	}
 	exec(`UPDATE media.processing_jobs SET status='failed' WHERE id=$1`, job.ID)
-	if err := s.syncStates(ctx, blob); err != nil {
+	if err := s.deliverBlobStates(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "failed" {
@@ -114,7 +117,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 	// Re-enable: pending embeddings affect state again and retain their retry count.
 	exec(`UPDATE media.processing_jobs SET status='retry',attempts=2 WHERE source_blob_id=$1 AND job_type='embedding.generate'`, blob)
 	s.SemanticSearchDisabled = false
-	if err := s.syncStates(ctx, blob); err != nil {
+	if err := s.deliverBlobStates(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "processing" {
@@ -125,7 +128,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 		t.Fatalf("embedding not resumed: %+v %v", job, err)
 	}
 	exec(`UPDATE media.processing_jobs SET status='completed' WHERE id=$1`, job.ID)
-	if err := s.syncStates(ctx, blob); err != nil {
+	if err := s.deliverBlobStates(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "ready" {

@@ -780,6 +780,10 @@ Content-Type: application/json
 
 ### 10.2 内部API（論理契約）
 
+Jobの追加・削除・状態変更は、同じトランザクションでWorkerの通知キューに記録する。未送信の通知はBlobごとに1行に集約し、Workerは現在のJob状態を集約して、サービス認証付きの `POST /internal/blobs/{blobId}/processing-state` に `{revision, status}` を送る。Catalogは受領済みの版番号より新しい通知だけを適用する。送信失敗やWorkerの再起動時は通知を保持し、配送のリース期限後に再送する。受領を確認した版だけをキューから削除する。
+
+CatalogはBlobの処理状態を保持し、新規AssetをそのBlobに紐づけるときに処理状態と自動付与結果を引き継ぐ。AssetのACLと手動編集の優先順位は従来どおり。マイグレーション013の適用時と意味検索の有効・無効を切り替えたときは、既存Jobの状態を一度だけ通知キューに積む。
+
 WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], characters: [{name, score}], rating: "general", model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], characters: ["character_name"], rating: "general", model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
 
 | 呼び出し | 用途 |
