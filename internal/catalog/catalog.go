@@ -56,6 +56,7 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("POST /internal/events/{id}/ack", s.ackEvent)
 	m.HandleFunc("GET /internal/blobs/{id}/info", s.blobInfo)
 	m.HandleFunc("POST /internal/blobs/{id}/state", s.blobState)
+	m.HandleFunc("POST /internal/blobs/{id}/processing-state", s.updateBlobProcessingState)
 	m.HandleFunc("POST /internal/blobs/{id}/tags", s.blobTags)
 	m.HandleFunc("POST /internal/authorize-blobs", s.authorizeBlobs)
 
@@ -250,6 +251,10 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	if err := lockBlobProcessingState(r.Context(), tx, in.BlobID); err != nil {
+		platform.RespondError(w, err)
+		return
+	}
 	var assetID, state string
 	duplicateFound := false
 	err = tx.QueryRow(r.Context(), `SELECT u.asset_id,u.state FROM catalog.upload_sessions u JOIN catalog.assets a ON a.id=u.asset_id WHERE u.id=$1 AND a.owner_id=$2 AND a.deleted_at IS NULL AND (u.expires_at>now() OR u.state='completed') FOR UPDATE OF u,a`, r.PathValue("id"), user(r)).Scan(&assetID, &state)
@@ -298,7 +303,10 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `UPDATE catalog.upload_sessions SET state='completed' WHERE id=$1`, r.PathValue("id"))
 	}
 	if err == nil && state != "completed" && !duplicateFound {
-		_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='stored',updated_at=now() WHERE id=$1`, assetID)
+		_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status=COALESCE((SELECT status FROM catalog.blob_processing_states WHERE blob_id=$2),'stored'),updated_at=now() WHERE id=$1`, assetID, in.BlobID)
+		if err == nil {
+			err = applyBlobMetadataToAsset(r.Context(), tx, in.BlobID, assetID)
+		}
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.outbox_events(blob_id,event_type,traceparent) VALUES($1,'blob.stored',$2) ON CONFLICT DO NOTHING`, in.BlobID, r.Header.Get("Traceparent"))

@@ -78,7 +78,7 @@ assert {item['asset_id'] for item in a.call('POST', '/api/v1/search', {'mode': '
 a.call('POST', '/api/v1/search', {'mode': 'unsupported', 'query': 'test'}, expected=400)
 check('filename/tag editing and search, unavailable modes explicitly rejected')
 wrong = a.create('wrong.png', b'1234'); a.put(wrong, b'123', expected=400)
-empty = a.create('empty.png', b''); a.put(empty, b''); assert a.call('GET', f"/api/v1/assets/{empty['asset_id']}/content")[2] == b''
+empty = a.create(name + '-empty.png', b''); a.put(empty, b''); assert a.call('GET', f"/api/v1/assets/{empty['asset_id']}/content")[2] == b''
 check('size mismatch rejected, empty Blob roundtrip')
 a.call('DELETE', f"/api/v1/assets/{u['asset_id']}", expected=204)
 a.call('GET', path, expected=404)
