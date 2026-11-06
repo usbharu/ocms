@@ -20,11 +20,14 @@ import (
 	"ocms/internal/platform"
 )
 
+const stateReconciliationInterval = time.Minute
+
 type Service struct {
 	SemanticSearchDisabled             bool
 	ImageOCREnabled                    bool
 	Concurrency, PDFPageConcurrency    int
 	pollMu, stateMu                    sync.Mutex
+	nextStateReconciliation            time.Time // protected by stateMu
 	DB                                 *pgxpool.Pool
 	Catalog, Transfer, Search, Runtime string
 }
@@ -218,9 +221,12 @@ func (s *Service) tick(ctx context.Context) error {
 	if err := s.pollEvents(ctx); err != nil {
 		return err
 	}
+	if err := s.syncStates(ctx, ""); err != nil {
+		return err
+	}
 	j, err := s.claim(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return s.syncStates(ctx)
+		return nil
 	}
 	if err != nil {
 		return err
@@ -263,7 +269,7 @@ func (s *Service) tick(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		return s.syncStates(finishCtx)
+		return s.syncStates(finishCtx, j.BlobID)
 	}
 	tx, err := s.DB.Begin(finishCtx)
 	if err != nil {
@@ -304,7 +310,7 @@ func (s *Service) tick(ctx context.Context) error {
 	}
 	platform.Count(jobCtx, "media.job.completed", 1, attribute.String("outcome", "completed"), attribute.String("job_type", j.Type))
 	slog.InfoContext(jobCtx, "media.job_completed", "job_id", j.ID, "job_type", j.Type)
-	return s.syncStates(finishCtx)
+	return s.syncStates(finishCtx, j.BlobID)
 }
 
 func (s *Service) pollEvents(ctx context.Context) error {
@@ -366,12 +372,33 @@ func (s *Service) state(ctx context.Context, blob, status string) error {
 func (s *Service) setState(ctx context.Context, blob, status string) error {
 	return platform.Call(ctx, "POST", s.Catalog+"/internal/blobs/"+blob+"/state", "", map[string]string{"status": status}, nil)
 }
-func (s *Service) syncStates(ctx context.Context) error {
-	s.stateMu.Lock()
+func (s *Service) syncStates(ctx context.Context, blob string) error {
+	if blob == "" {
+		if !s.stateMu.TryLock() {
+			return nil
+		}
+	} else {
+		s.stateMu.Lock()
+	}
 	defer s.stateMu.Unlock()
+	if blob == "" {
+		if time.Now().Before(s.nextStateReconciliation) {
+			return nil
+		}
+		// Leave a full interval after each attempt, including failures.
+		defer func() {
+			s.nextStateReconciliation = time.Now().Add(stateReconciliationInterval)
+		}()
+	}
 	// Periodic reconciliation includes Assets added after a shared Blob completed.
 	// Paused embeddings must not keep otherwise completed media processing pending.
-	rows, err := s.DB.Query(ctx, `SELECT source_blob_id,CASE WHEN bool_or(status='failed') THEN 'failed' WHEN count(*)>=CASE WHEN $1::boolean THEN 1 ELSE 2 END AND bool_and(status='completed') THEN 'ready' ELSE 'processing' END FROM media.processing_jobs WHERE NOT $1::boolean OR job_type<>'embedding.generate' GROUP BY source_blob_id`, s.SemanticSearchDisabled)
+	query := `SELECT source_blob_id,CASE WHEN bool_or(status='failed') THEN 'failed' WHEN count(*)>=CASE WHEN $1::boolean THEN 1 ELSE 2 END AND bool_and(status='completed') THEN 'ready' ELSE 'processing' END FROM media.processing_jobs WHERE NOT ($1::boolean AND job_type='embedding.generate')`
+	args := []any{s.SemanticSearchDisabled}
+	if blob != "" {
+		query += " AND source_blob_id=$2"
+		args = append(args, blob)
+	}
+	rows, err := s.DB.Query(ctx, query+" GROUP BY source_blob_id", args...)
 	if err != nil {
 		return err
 	}

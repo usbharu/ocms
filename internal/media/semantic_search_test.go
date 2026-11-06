@@ -90,7 +90,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 	}
 	// Tags continue, and pending or failed non-embedding Jobs still affect state.
 	exec(`INSERT INTO media.processing_jobs(event_id,source_blob_id,job_type) VALUES(gen_random_uuid(),$1,'tags.generate')`, blob)
-	if err := s.syncStates(ctx); err != nil {
+	if err := s.syncStates(ctx, blob); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "processing" {
@@ -101,7 +101,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 		t.Fatalf("tags not claimed: %s %v", job.Type, err)
 	}
 	exec(`UPDATE media.processing_jobs SET status='failed' WHERE id=$1`, job.ID)
-	if err := s.syncStates(ctx); err != nil {
+	if err := s.syncStates(ctx, blob); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "failed" {
@@ -114,7 +114,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 	// Re-enable: pending embeddings affect state again and retain their retry count.
 	exec(`UPDATE media.processing_jobs SET status='retry',attempts=2 WHERE source_blob_id=$1 AND job_type='embedding.generate'`, blob)
 	s.SemanticSearchDisabled = false
-	if err := s.syncStates(ctx); err != nil {
+	if err := s.syncStates(ctx, blob); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "processing" {
@@ -125,7 +125,7 @@ func TestSemanticSearchQueueDatabase(t *testing.T) {
 		t.Fatalf("embedding not resumed: %+v %v", job, err)
 	}
 	exec(`UPDATE media.processing_jobs SET status='completed' WHERE id=$1`, job.ID)
-	if err := s.syncStates(ctx); err != nil {
+	if err := s.syncStates(ctx, blob); err != nil {
 		t.Fatal(err)
 	}
 	if state() != "ready" {
