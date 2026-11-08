@@ -7,7 +7,7 @@ import (
 	"ocms/internal/platform"
 )
 
-const favoriteCondition = `EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND ((f.asset_id=a.id AND NOT EXISTS(SELECT 1 FROM catalog.series s WHERE s.asset_id=a.id AND s.kind='composite')) OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite)))`
+const favoriteCondition = `EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND ((f.asset_id=a.id AND a.series_kind<>'composite') OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite) OR (a.series_kind='' AND EXISTS(SELECT 1 FROM catalog.asset_originals x JOIN catalog.asset_originals y ON x.blob_id=y.blob_id JOIN catalog.assets d ON d.id=y.asset_id WHERE x.asset_id=a.id AND y.asset_id=f.asset_id AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants dg WHERE dg.asset_id=d.id AND dg.principal_id=$1))))))`
 
 func favoriteFilter(r *http.Request) (bool, error) {
 	values, ok := r.URL.Query()["favorites"]
@@ -50,7 +50,7 @@ func (s *Service) favorite(w http.ResponseWriter, r *http.Request) {
 			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_favorites(principal_id,asset_id) SELECT $1,m.asset_id FROM catalog.series_members m WHERE m.series_id=$2 AND m.composite ON CONFLICT DO NOTHING`, user(r), id)
 		}
 	} else {
-		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_favorites WHERE principal_id=$1 AND (asset_id=$2 OR asset_id IN (SELECT asset_id FROM catalog.series_members WHERE series_id=$2 AND composite))`, user(r), id)
+		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_favorites WHERE principal_id=$1 AND (asset_id=$2 OR asset_id IN (SELECT asset_id FROM catalog.series_members WHERE series_id=$2 AND composite) OR asset_id IN (SELECT d.id FROM catalog.assets d JOIN catalog.asset_originals y ON y.asset_id=d.id JOIN catalog.asset_originals x ON x.blob_id=y.blob_id WHERE x.asset_id=$2 AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1))))`, user(r), id)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

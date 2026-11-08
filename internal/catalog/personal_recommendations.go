@@ -35,6 +35,7 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 	}
 	defer rows.Close()
 	assets := []contracts.RecommendationInput{}
+	byBlob := map[string]int{}
 	for rows.Next() {
 		a, err := scanAsset(rows)
 		if err != nil {
@@ -43,7 +44,23 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 		}
 		sort.Strings(a.Tags)
 		sort.Strings(a.Characters)
-		assets = append(assets, contracts.RecommendationInput{ID: a.ID, BlobID: a.BlobID, BlobIDs: a.BlobIDs, SeriesKind: a.SeriesKind, MemberIDs: a.MemberIDs, Version: a.SeriesVersion, Tags: a.Tags, Characters: a.Characters, Favorite: a.IsFavorite, MIME: a.MIME, Rating: a.Rating})
+		item := contracts.RecommendationInput{ID: a.ID, BlobID: a.BlobID, BlobIDs: a.BlobIDs, SeriesKind: a.SeriesKind, MemberIDs: a.MemberIDs, Version: a.SeriesVersion, Tags: a.Tags, Characters: a.Characters, Favorite: a.IsFavorite, MIME: a.MIME, Rating: a.Rating}
+		if a.SeriesKind == "" && a.BlobID != nil {
+			if index, ok := byBlob[*a.BlobID]; ok {
+				tags, chars := map[string]bool{}, map[string]bool{}
+				for _, v := range append(assets[index].Tags, item.Tags...) {
+					tags[v] = true
+				}
+				for _, v := range append(assets[index].Characters, item.Characters...) {
+					chars[v] = true
+				}
+				assets[index].Tags, assets[index].Characters = sortedKeys(tags), sortedKeys(chars)
+				assets[index].Favorite = assets[index].Favorite || item.Favorite
+				continue
+			}
+			byBlob[*a.BlobID] = len(assets)
+		}
+		assets = append(assets, item)
 	}
 	if rows.Err() != nil {
 		platform.RespondError(w, rows.Err())

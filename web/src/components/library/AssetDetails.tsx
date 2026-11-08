@@ -98,6 +98,12 @@ export function AssetDetails({
           ×
         </Button>
       </div>
+      {selected.aliases && selected.aliases.length > 0 && (
+        <p>別名：{selected.aliases.join('、')}</p>
+      )}
+      {(selected.uneditable_duplicates ?? 0) > 0 && (
+        <p>編集権限のない別名は変更されません。</p>
+      )}
       <div className="detail-meta">
         <span>
           {selected.series_kind

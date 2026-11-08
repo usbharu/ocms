@@ -33,7 +33,7 @@ try:
         list(pool.map(lambda _: favorite(alice, 0), range(8)))
     assert sql(f"SELECT created_at FROM catalog.asset_favorites WHERE asset_id='{ids[0]}'") == stamp
     assert alice.call('GET', '/api/v1/assets/' + ids[0])[2]['is_favorite']
-    assert not alice.call('GET', '/api/v1/assets/' + ids[1])[2]['is_favorite']
+    assert alice.call('GET', '/api/v1/assets/' + ids[1])[2]['is_favorite']
     assert listing(Client('alice'))['total'] == 1
     assert listing(bob)['total'] == 0
     sql(f"INSERT INTO catalog.grants VALUES ('{ids[0]}','{bid}','read')")
@@ -53,9 +53,9 @@ try:
     sql(f"INSERT INTO catalog.asset_favorites(principal_id,asset_id) SELECT '{aid}',id FROM catalog.assets WHERE id IN ({quoted}) AND owner_id='{aid}' ON CONFLICT DO NOTHING;")
     sql(f"UPDATE catalog.asset_favorites SET created_at='2020-01-01' WHERE principal_id='{aid}' AND asset_id IN ({quoted}); UPDATE catalog.asset_favorites SET created_at='2021-01-01' WHERE principal_id='{aid}' AND asset_id='{ids[1]}';")
     result = listing(query='&limit=24')
-    assert result['total'] == 204 and len(result['assets']) == 24 and result['assets'][0]['asset_id'] == ids[1]
+    assert result['total'] == 203 and len(result['assets']) == 24 and result['assets'][0]['asset_id'] == ids[1]
     assert listing(query='&kind=audio')['total'] == 1
-    assert len(listing(query='&offset=192&limit=24')['assets']) == 12
+    assert len(listing(query='&offset=192&limit=24')['assets']) == 11
     assert all(a['is_favorite'] for a in result['assets'])
     favorite(alice, 1, 'DELETE')
     duplicates = alice.call('GET', '/api/v1/assets/' + ids[0] + '/duplicates?favorites=true')[2]['assets']
@@ -70,6 +70,6 @@ try:
     favorite(alice, 204)
     result = alice.call('POST', '/api/v1/search', {'query': prefix, 'mode': 'keyword', 'favorites': True, 'limit': 1})[2]
     assert [a['asset_id'] for a in result['assets']] == [ids[204]]
-    check('favorites: user/Asset independence, read grants, CSRF, persistence, idempotency, ordering, pagination, kind, deleted/revoked ACL and keyword scope before limit')
+    check('favorites: user isolation and content grouping, read grants, CSRF, persistence, idempotency, ordering, pagination, kind, deleted/revoked ACL and keyword scope before limit')
 finally:
     sql(f"DELETE FROM catalog.asset_favorites WHERE asset_id IN ({quoted}); DELETE FROM catalog.grants WHERE asset_id IN ({quoted}); DELETE FROM catalog.asset_originals WHERE asset_id IN ({quoted}); DELETE FROM catalog.assets WHERE id IN ({quoted});")

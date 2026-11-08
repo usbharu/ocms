@@ -130,6 +130,18 @@ func rankWithLimit(source catalog.Asset, assets []catalog.Asset, hashes map[stri
 		}
 		return out[i].Score > out[j].Score
 	})
+	unique := out[:0]
+	seenBlobs := map[string]bool{}
+	for _, item := range out {
+		if item.SeriesKind == "" && item.BlobID != nil {
+			if seenBlobs[*item.BlobID] {
+				continue
+			}
+			seenBlobs[*item.BlobID] = true
+		}
+		unique = append(unique, item)
+	}
+	out = unique
 	if len(out) > limit {
 		out = out[:limit]
 	}

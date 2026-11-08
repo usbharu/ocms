@@ -31,7 +31,12 @@ func (s *Service) groupRoutes(m *http.ServeMux) {
 // Group membership never grants access. Apply this alongside displayed/allowed.
 func groupCondition(index int) string {
 	p := fmt.Sprintf("$%d", index)
-	return ` (` + p + `='' OR (` + p + `='default' AND NOT EXISTS(SELECT 1 FROM catalog.default_group_exclusions e WHERE e.principal_id=$1 AND e.asset_id=a.id)) OR (` + p + `='all' AND a.series_kind='') OR EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id=$1 AND g.asset_id=a.id AND g.group_id::text=` + p + `))`
+	return ` (` + p + `='' OR (` + p + `='all' AND a.series_kind='') OR EXISTS (
+ SELECT 1 FROM catalog.display_assets d LEFT JOIN catalog.asset_originals od ON od.asset_id=d.id
+ LEFT JOIN catalog.asset_originals oa ON oa.asset_id=a.id
+ WHERE d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants dg WHERE dg.asset_id=d.id AND dg.principal_id=$1))
+ AND (d.id=a.id OR (a.series_kind='' AND d.series_kind='' AND oa.blob_id IS NOT NULL AND od.blob_id=oa.blob_id))
+ AND ((` + p + `='default' AND NOT EXISTS(SELECT 1 FROM catalog.default_group_exclusions e WHERE e.principal_id=$1 AND e.asset_id=d.id)) OR EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id=$1 AND g.asset_id=d.id AND g.group_id::text=` + p + `))))`
 }
 
 func (s *Service) checkGroup(ctx context.Context, principal, id string) error {
@@ -160,6 +165,27 @@ func (s *Service) assetGroups(w http.ResponseWriter, r *http.Request) {
 	if assetError(w, err) {
 		return
 	}
+	idsForAsset := []string{a.ID}
+	if a.SeriesKind == "" && a.BlobID != nil {
+		rows, err := s.DB.Query(r.Context(), `SELECT a.id FROM catalog.display_assets a JOIN catalog.asset_originals o ON o.asset_id=a.id WHERE `+allowed+` AND a.series_kind='' AND o.blob_id=$2 ORDER BY a.id`, user(r), *a.BlobID)
+		if groupError(w, err) {
+			return
+		}
+		idsForAsset = nil
+		for rows.Next() {
+			var id string
+			if groupError(w, rows.Scan(&id)) {
+				rows.Close()
+				return
+			}
+			idsForAsset = append(idsForAsset, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if groupError(w, err) {
+			return
+		}
+	}
 	if r.Method == "PUT" {
 		var in struct {
 			IDs []string `json:"group_ids"`
@@ -201,9 +227,35 @@ func (s *Service) assetGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		defer tx.Rollback(r.Context())
 		// Serialize complete membership saves for this user and Asset.
-		_, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,12))`, user(r)+":"+a.ID)
+		_, err = tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,12))`, user(r)+":"+func() string {
+			if a.BlobID != nil && a.SeriesKind == "" {
+				return *a.BlobID
+			}
+			return a.ID
+		}())
 		if groupError(w, err) {
 			return
+		}
+		if a.SeriesKind == "" && a.BlobID != nil {
+			rows, e := tx.Query(r.Context(), `SELECT a.id FROM catalog.display_assets a JOIN catalog.asset_originals o ON o.asset_id=a.id WHERE `+allowed+` AND a.series_kind='' AND o.blob_id=$2 ORDER BY a.id`, user(r), *a.BlobID)
+			if groupError(w, e) {
+				return
+			}
+			idsForAsset = nil
+			for rows.Next() {
+				var id string
+				if e = rows.Scan(&id); e != nil {
+					break
+				}
+				idsForAsset = append(idsForAsset, id)
+			}
+			if e == nil {
+				e = rows.Err()
+			}
+			rows.Close()
+			if groupError(w, e) {
+				return
+			}
 		}
 		rows, err := tx.Query(r.Context(), `SELECT id FROM catalog.content_groups WHERE principal_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR KEY SHARE`, user(r), custom)
 		if groupError(w, err) {
@@ -222,15 +274,15 @@ func (s *Service) assetGroups(w http.ResponseWriter, r *http.Request) {
 			platform.Error(w, 404, "NOT_FOUND")
 			return
 		}
-		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_groups WHERE principal_id=$1 AND asset_id=$2`, user(r), a.ID)
+		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_groups WHERE principal_id=$1 AND asset_id=ANY($2::uuid[]) AND NOT (group_id=ANY($3::uuid[]))`, user(r), idsForAsset, custom)
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_groups(group_id,principal_id,asset_id) SELECT unnest($3::uuid[]),$1,$2`, user(r), a.ID, custom)
+			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_groups(group_id,principal_id,asset_id) SELECT g,$1,$2 FROM unnest($3::uuid[]) g WHERE NOT EXISTS (SELECT 1 FROM catalog.asset_groups WHERE principal_id=$1 AND asset_id=ANY($4::uuid[]) AND group_id=g) ON CONFLICT DO NOTHING`, user(r), a.ID, custom, idsForAsset)
 		}
 		if err == nil {
 			if defaultMember {
 				_, err = tx.Exec(r.Context(), `DELETE FROM catalog.default_group_exclusions WHERE principal_id=$1 AND asset_id=$2`, user(r), a.ID)
 			} else {
-				_, err = tx.Exec(r.Context(), `INSERT INTO catalog.default_group_exclusions(principal_id,asset_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, user(r), a.ID)
+				_, err = tx.Exec(r.Context(), `INSERT INTO catalog.default_group_exclusions(principal_id,asset_id) SELECT $1,unnest($2::uuid[]) ON CONFLICT DO NOTHING`, user(r), idsForAsset)
 			}
 		}
 		if err == nil {
@@ -245,13 +297,13 @@ func (s *Service) assetGroups(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, "all")
 	}
 	var excluded bool
-	if groupError(w, s.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM catalog.default_group_exclusions WHERE principal_id=$1 AND asset_id=$2)`, user(r), a.ID).Scan(&excluded)) {
+	if groupError(w, s.DB.QueryRow(r.Context(), `SELECT NOT EXISTS(SELECT 1 FROM unnest($2::uuid[]) id WHERE NOT EXISTS (SELECT 1 FROM catalog.default_group_exclusions WHERE principal_id=$1 AND asset_id=id))`, user(r), idsForAsset).Scan(&excluded)) {
 		return
 	}
 	if !excluded {
 		ids = append(ids, "default")
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT group_id FROM catalog.asset_groups WHERE principal_id=$1 AND asset_id=$2 ORDER BY group_id`, user(r), a.ID)
+	rows, err := s.DB.Query(r.Context(), `SELECT DISTINCT group_id FROM catalog.asset_groups WHERE principal_id=$1 AND asset_id=ANY($2::uuid[]) ORDER BY group_id`, user(r), idsForAsset)
 	if groupError(w, err) {
 		return
 	}

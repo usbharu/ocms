@@ -74,7 +74,8 @@ assert len(dup) == 4
 b.call('GET', path, headers={'X-Principal': a.me['principal_id'], 'X-Service-Token': 'forged'}, expected=404)
 check('ACL isolation in content, details, delete, search, duplicates and forged headers')
 a.call('PATCH', f"/api/v1/assets/{u['asset_id']}", {'tags': [name + '-タグ'], 'filename': name + '-renamed.png'})
-assert {item['asset_id'] for item in a.call('POST', '/api/v1/search', {'mode': 'keyword', 'query': name + '-タグ'})[2]['assets']} == {u['asset_id']}
+results = a.call('POST', '/api/v1/search', {'mode': 'keyword', 'query': name + '-タグ'})[2]['assets']
+assert len(results) == 1 and results[0]['blob_id'] == blob
 a.call('POST', '/api/v1/search', {'mode': 'unsupported', 'query': 'test'}, expected=400)
 check('filename/tag editing and search, unavailable modes explicitly rejected')
 wrong = a.create('wrong.png', b'1234'); a.put(wrong, b'123', expected=400)

@@ -10,6 +10,8 @@ export const ratingLabel = (rating: Rating) =>
   rating === 'unrated' ? '未判定' : rating;
 
 export type Asset = {
+  aliases?: string[];
+  uneditable_duplicates?: number;
   series_kind?: 'collection' | 'composite';
   series_version?: number;
   member_ids?: string[];

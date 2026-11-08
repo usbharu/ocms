@@ -43,10 +43,10 @@ func TestRecommendationRanking(t *testing.T) {
 	noMetadata.Tags = nil
 	noMetadata.Characters = nil
 	out := rankRecommendations(source, []catalog.Asset{source, sameContent, candidateAsset, candidateAsset, noMetadata, {ID: "zero"}}, map[string]candidate{otherBlob: {rank: 1 - 12.0/64}}, labelFrequency{})
-	if len(out) != 2 || out[0].ID != "b" || math.Abs(out[0].Score-96.25) > 1e-10 || out[1].Score != 16.25 {
+	if len(out) != 1 || out[0].ID != "b" || math.Abs(out[0].Score-96.25) > 1e-10 {
 		t.Fatalf("ranking: %#v", out)
 	}
-	if out[0].Perceptual != "visual" || len(out[0].CommonTags) != 1 || len(out[1].CommonTags) != 0 {
+	if out[0].Perceptual != "visual" || len(out[0].CommonTags) != 1 {
 		t.Fatal("per-asset reasons lost")
 	}
 	source.MIME = "audio/ogg"

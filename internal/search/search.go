@@ -295,6 +295,19 @@ func (s *Service) respond(w http.ResponseWriter, r *http.Request, in query, cand
 		}
 		return rank(out[i]) > rank(out[j])
 	})
+	// Keep the highest-ranked hit for each original Blob before the result limit.
+	unique := out[:0]
+	seenBlobs := map[string]bool{}
+	for _, item := range out {
+		if item.SeriesKind == "" && item.BlobID != nil {
+			if seenBlobs[*item.BlobID] {
+				continue
+			}
+			seenBlobs[*item.BlobID] = true
+		}
+		unique = append(unique, item)
+	}
+	out = unique
 	if len(out) > in.Limit {
 		out = out[:in.Limit]
 	}
