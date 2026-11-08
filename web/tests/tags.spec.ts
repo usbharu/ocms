@@ -121,6 +121,14 @@ test('library graph supports selection, zoom and keyboard navigation', async ({
       }),
     )
     .toBe(true);
+  await page.getByRole('button', { name: '選択を解除' }).click();
+  await expect(page.getByRole('combobox', { name: 'タグを選択' })).toHaveValue(
+    '',
+  );
+  await expect(
+    page.getByRole('button', { name: 'ファイルを表示' }),
+  ).toBeDisabled();
+  await page.getByRole('combobox', { name: 'タグを選択' }).selectOption('旅行');
   // Zoom out first: a random layout's fit can be too close to the maximum zoom
   // for a full 1.5x increase. Returning from 2/3 verifies the same factor.
   await page.getByRole('button', { name: '全体を表示' }).click();
@@ -143,6 +151,30 @@ test('library graph supports selection, zoom and keyboard navigation', async ({
     await page.screenshot({ path: '../docs/tags-graph.png', fullPage: true });
   await page.getByRole('button', { name: 'ファイルを表示' }).click();
   await expect(page.getByRole('heading', { name: 'タグ：旅行' })).toBeVisible();
+});
+
+test('graph highlights full names at a readable size when zoomed out', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'グラフ', exact: true }).click();
+  const graph = page.getByRole('img', { name: /タグの関係グラフ/ });
+  await expect(graph).toHaveAttribute('aria-busy', 'false');
+  const result = await graph.evaluate((element) => {
+    const cy = (element as HTMLElement & { _cyreg: { cy: Core } })._cyreg.cy;
+    cy.zoom(0.1);
+    const node = cy.nodes()[0];
+    node.emit('mouseover');
+    const hovered = {
+      label: node.style('label'),
+      name: node.data('name'),
+      size: Number.parseFloat(node.style('font-size')) * cy.zoom(),
+    };
+    node.emit('mouseout');
+    return { hovered, restored: node.hasClass('highlighted') };
+  });
+  expect(result.hovered.label).toBe(result.hovered.name);
+  expect(result.hovered.size).toBeGreaterThanOrEqual(16);
+  expect(result.restored).toBe(false);
 });
 
 test('recovers from load failure and ignores old search responses', async ({
