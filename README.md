@@ -95,6 +95,8 @@ docker compose run --rm migrate
 docker compose up -d --wait
 ```
 
+マイグレーション013では、既存JobのあるBlobを一度だけ通知キューに積みます。移行後はCatalogをWorkerより先に起動してください。Workerは以後、Jobの変更があったBlobだけを配送し、失敗や中断時は30秒の配送リース後に再送します。処理済みBlobへの重複アップロードには、Catalogが保持する処理状態と自動付与結果を完了時に反映します。
+
 移行に失敗した場合や、旧版でSQLを手動適用したDBを引き継ぐ場合は、[DBの状態確認・復旧手順](docs/development.md#dbマイグレーションと更新)を参照してください。適用済み番号の推測や、dirty状態の自動解除はしないでください。
 
 ## 公開環境の認証とデータ管理

@@ -24,7 +24,7 @@ type Service struct {
 	SemanticSearchDisabled             bool
 	ImageOCREnabled                    bool
 	Concurrency, PDFPageConcurrency    int
-	pollMu, stateMu                    sync.Mutex
+	pollMu                             sync.Mutex
 	DB                                 *pgxpool.Pool
 	Catalog, Transfer, Search, Runtime string
 }
@@ -188,7 +188,21 @@ func (s *Service) Run(ctx context.Context) {
 	if count < 1 {
 		count = 1
 	}
+	var notifications sync.WaitGroup
+	notifications.Go(func() {
+		initialized := false
+		runWorkerPool(ctx, 1, func(ctx context.Context) error {
+			if !initialized {
+				if err := s.initializeBlobStates(ctx); err != nil {
+					return err
+				}
+				initialized = true
+			}
+			return s.deliverBlobStates(ctx)
+		})
+	})
 	runWorkerPool(ctx, count, s.tick)
+	notifications.Wait()
 }
 
 func runWorkerPool(ctx context.Context, count int, tick func(context.Context) error) {
@@ -220,7 +234,7 @@ func (s *Service) tick(ctx context.Context) error {
 	}
 	j, err := s.claim(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return s.syncStates(ctx)
+		return nil
 	}
 	if err != nil {
 		return err
@@ -233,7 +247,6 @@ func (s *Service) tick(ctx context.Context) error {
 	done := make(chan struct{})
 	defer close(done)
 	go s.heartbeat(jobCtx, cancel, j, done)
-	_ = s.state(jobCtx, j.BlobID, "processing")
 	slog.InfoContext(jobCtx, "media.job_started", "job_id", j.ID, "job_type", j.Type, "attempt", j.Attempts)
 	if j.Type == "media.process" {
 		err = s.process(jobCtx, j)
@@ -260,10 +273,7 @@ func (s *Service) tick(ctx context.Context) error {
 		_, e := s.DB.Exec(finishCtx, `UPDATE media.processing_jobs SET status=$3,error_code=$4,locked_until=NULL,available_at=now()+($5*interval '1 second'),attempts=CASE WHEN $6 THEN GREATEST(attempts-1,0) ELSE attempts END,updated_at=now() WHERE id=$1 AND lease_token=$2`, j.ID, j.Lease, status, errorCode(err), j.Attempts*j.Attempts*5, shutdown)
 		platform.Count(jobCtx, "media.job.completed", 1, attribute.String("outcome", status), attribute.String("job_type", j.Type))
 		slog.WarnContext(jobCtx, "media.job_failed", "job_id", j.ID, "error_code", errorCode(err), "status", status)
-		if e != nil {
-			return e
-		}
-		return s.syncStates(finishCtx)
+		return e
 	}
 	tx, err := s.DB.Begin(finishCtx)
 	if err != nil {
@@ -304,7 +314,7 @@ func (s *Service) tick(ctx context.Context) error {
 	}
 	platform.Count(jobCtx, "media.job.completed", 1, attribute.String("outcome", "completed"), attribute.String("job_type", j.Type))
 	slog.InfoContext(jobCtx, "media.job_completed", "job_id", j.ID, "job_type", j.Type)
-	return s.syncStates(finishCtx)
+	return nil
 }
 
 func (s *Service) pollEvents(ctx context.Context) error {
@@ -357,50 +367,11 @@ func (s *Service) heartbeat(ctx context.Context, cancel context.CancelFunc, j co
 		}
 	}
 }
-func (s *Service) state(ctx context.Context, blob, status string) error {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	return s.setState(ctx, blob, status)
-}
-
-func (s *Service) setState(ctx context.Context, blob, status string) error {
-	return platform.Call(ctx, "POST", s.Catalog+"/internal/blobs/"+blob+"/state", "", map[string]string{"status": status}, nil)
-}
-func (s *Service) syncStates(ctx context.Context) error {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	// Periodic reconciliation includes Assets added after a shared Blob completed.
-	// Paused embeddings must not keep otherwise completed media processing pending.
-	rows, err := s.DB.Query(ctx, `SELECT source_blob_id,CASE WHEN bool_or(status='failed') THEN 'failed' WHEN count(*)>=CASE WHEN $1::boolean THEN 1 ELSE 2 END AND bool_and(status='completed') THEN 'ready' ELSE 'processing' END FROM media.processing_jobs WHERE NOT $1::boolean OR job_type<>'embedding.generate' GROUP BY source_blob_id`, s.SemanticSearchDisabled)
-	if err != nil {
-		return err
-	}
-	type item struct{ blob, status string }
-	var states []item
-	for rows.Next() {
-		var i item
-		if err = rows.Scan(&i.blob, &i.status); err != nil {
-			rows.Close()
-			return err
-		}
-		states = append(states, i)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, i := range states {
-		if err = s.setState(ctx, i.blob, i.status); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 type processingError string
 
 func (e processingError) Error() string { return string(e) }
+
 func errorCode(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "JOB_DEADLINE_EXCEEDED"
