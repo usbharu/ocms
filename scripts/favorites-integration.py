@@ -53,7 +53,7 @@ try:
     sql(f"INSERT INTO catalog.asset_favorites(principal_id,asset_id) SELECT '{aid}',id FROM catalog.assets WHERE id IN ({quoted}) AND owner_id='{aid}' ON CONFLICT DO NOTHING;")
     sql(f"UPDATE catalog.asset_favorites SET created_at='2020-01-01' WHERE principal_id='{aid}' AND asset_id IN ({quoted}); UPDATE catalog.asset_favorites SET created_at='2021-01-01' WHERE principal_id='{aid}' AND asset_id='{ids[1]}';")
     result = listing(query='&limit=24')
-    assert result['total'] == 203 and len(result['assets']) == 24 and result['assets'][0]['asset_id'] == ids[1]
+    assert result['total'] == 203 and len(result['assets']) == 24 and result['assets'][0]['blob_id'] == blob
     assert listing(query='&kind=audio')['total'] == 1
     assert len(listing(query='&offset=192&limit=24')['assets']) == 11
     assert all(a['is_favorite'] for a in result['assets'])
