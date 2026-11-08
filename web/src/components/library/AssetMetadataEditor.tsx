@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   type Asset,
   type AssetChanges,
@@ -24,7 +24,7 @@ export function AssetMetadataEditor({
   asset: Asset;
   onSave: (changes: AssetChanges) => Promise<Asset>;
 }) {
-  const rating = asset.rating ?? 'unrated';
+  const [rating, setRating] = useState(asset.rating ?? 'unrated');
   const [filename, setFilename] = useState(asset.filename);
   const [savedTags, setTags] = useState(asset.tags);
   const tags = readOnly ? asset.tags : savedTags;
@@ -36,47 +36,106 @@ export function AssetMetadataEditor({
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [retry, setRetry] = useState<AssetChanges | null>(null);
-  const locked = useRef(false);
+  const queue = useRef(Promise.resolve());
+  const pending = useRef(0);
+  const versions = useRef({ filename: 0, rating: 0, tags: 0, characters: 0 });
+  const failures = useRef(
+    new Map<keyof typeof versions.current, AssetChanges>(),
+  );
   const savedFilename = useRef(asset.filename);
+  const pendingFilename = useRef<string | null>(null);
   const composing = useRef(false);
   const bytes = (value: string) => new TextEncoder().encode(value).length;
 
+  useEffect(() => {
+    if (pending.current === 0 && !failures.current.has('rating'))
+      setRating(asset.rating ?? 'unrated');
+  }, [asset.rating]);
+
   async function save(changes: AssetChanges) {
-    if (locked.current) return;
-    locked.current = true;
+    const submittedTag = tagInput;
+    const submittedCharacter = characterInput;
+    const fields = Object.keys(changes) as (keyof typeof versions.current)[];
+    const snapshot = { ...versions.current };
+    for (const field of fields) snapshot[field] = ++versions.current[field];
+    if (changes.rating !== undefined) setRating(changes.rating);
+    if (changes.filename !== undefined)
+      pendingFilename.current = changes.filename;
+    if (changes.tags !== undefined) setTags(changes.tags);
+    if (changes.characters !== undefined) setCharacters(changes.characters);
+    pending.current += 1;
     setSaving(true);
-    setError('');
+    if (failures.current.size === 0) setError('');
     setMessage('保存中…');
-    try {
-      const updated = await onSave(changes);
-      savedFilename.current = updated.filename;
-      if (changes.filename !== undefined) setFilename(updated.filename);
-      setTags(updated.tags);
-      if (changes.tags) setTagInput('');
-      setCharacters(updated.characters ?? []);
-      if (changes.characters) setCharacterInput('');
-      setRetry(null);
-      setMessage('保存しました');
-    } catch {
-      setError('保存できませんでした。再試行してください。');
-      setRetry(changes);
-      setMessage('');
-    } finally {
-      locked.current = false;
-      setSaving(false);
-    }
+    const execute = async () => {
+      try {
+        const updated = await onSave(changes);
+        savedFilename.current = updated.filename;
+        if (
+          changes.filename !== undefined &&
+          snapshot.filename === versions.current.filename
+        )
+          setFilename(updated.filename);
+        if (
+          changes.rating !== undefined &&
+          snapshot.rating === versions.current.rating
+        )
+          setRating(updated.rating ?? 'unrated');
+        if (changes.tags && snapshot.tags === versions.current.tags) {
+          setTags(updated.tags);
+          setTagInput((current) => (current === submittedTag ? '' : current));
+        }
+        if (
+          changes.characters &&
+          snapshot.characters === versions.current.characters
+        ) {
+          setCharacters(updated.characters ?? []);
+          setCharacterInput((current) =>
+            current === submittedCharacter ? '' : current,
+          );
+        }
+        for (const field of fields) {
+          if (snapshot[field] === versions.current[field])
+            failures.current.delete(field);
+        }
+        const nextRetry = failures.current.values().next().value;
+        setRetry(nextRetry ?? null);
+        if (nextRetry) setError('保存できませんでした。再試行してください。');
+        else {
+          setError('');
+          setMessage(pending.current > 1 ? '保存中…' : '保存しました');
+        }
+      } catch {
+        for (const field of fields) {
+          if (snapshot[field] === versions.current[field])
+            failures.current.set(field, changes);
+        }
+        const nextRetry = failures.current.values().next().value;
+        if (nextRetry) {
+          setError('保存できませんでした。再試行してください。');
+          setRetry(nextRetry);
+          setMessage('');
+        }
+      } finally {
+        if (changes.filename === pendingFilename.current)
+          pendingFilename.current = null;
+        pending.current -= 1;
+        setSaving(pending.current > 0);
+      }
+    };
+    queue.current = queue.current.then(execute);
+    await queue.current;
   }
 
   function saveFilename() {
     if (
       composing.current ||
-      locked.current ||
-      filename === savedFilename.current
+      filename === (pendingFilename.current ?? savedFilename.current)
     )
       return;
     if (!filename.trim() || bytes(filename) > 1024) {
       setError('ファイル名は空白以外を含む1024バイト以内で入力してください。');
-      setRetry(null);
+      if (!failures.current.size) setRetry(null);
       return;
     }
     void save({ filename });
@@ -84,15 +143,15 @@ export function AssetMetadataEditor({
 
   function addTag() {
     const tag = tagInput.trim();
-    if (locked.current || !tag) return;
+    if (!tag) return;
     if (tags.includes(tag)) {
       setError('このタグは追加済みです。');
-      setRetry(null);
+      if (!failures.current.size) setRetry(null);
       return;
     }
     if (bytes(tag) > 256 || tags.length >= 512) {
       setError('タグは1件256バイト以内、合計512件まで追加できます。');
-      setRetry(null);
+      if (!failures.current.size) setRetry(null);
       return;
     }
     void save({ tags: [...tags, tag] });
@@ -100,21 +159,22 @@ export function AssetMetadataEditor({
 
   function addCharacter() {
     const character = characterInput.trim();
-    if (locked.current || !character) return;
+    if (!character) return;
     if (characters.includes(character)) {
       setError('このキャラクターは追加済みです。');
-      setRetry(null);
+      if (!failures.current.size) setRetry(null);
       return;
     }
     if (bytes(character) > 256 || characters.length >= 512) {
       setError('キャラクターは1件256バイト以内、合計512件まで追加できます。');
-      setRetry(null);
+      if (!failures.current.size) setRetry(null);
       return;
     }
     void save({ characters: [...characters, character] });
   }
 
   function clearFeedback() {
+    if (failures.current.size) return;
     setError('');
     setMessage('');
     setRetry(null);
@@ -131,7 +191,6 @@ export function AssetMetadataEditor({
           <Input
             id="asset-filename"
             value={filename}
-            disabled={saving}
             onChange={(e) => {
               setFilename(e.target.value);
               clearFeedback();
@@ -167,7 +226,7 @@ export function AssetMetadataEditor({
       <NativeSelect
         id="asset-rating"
         value={rating}
-        disabled={saving || readOnly}
+        disabled={readOnly}
         onChange={(event) => {
           void save({ rating: event.target.value as Rating });
         }}
@@ -187,7 +246,6 @@ export function AssetMetadataEditor({
                 type="button"
                 variant="link"
                 className="tag-search-button"
-                disabled={saving}
                 aria-label={`タグ「${tag}」で検索`}
                 onClick={() => onSearchTag(tag)}
               >
@@ -197,7 +255,6 @@ export function AssetMetadataEditor({
                 <Button
                   type="button"
                   variant="ghost"
-                  disabled={saving}
                   aria-label={`タグ「${tag}」を削除`}
                   onClick={() => {
                     void save({ tags: tags.filter((_, i) => i !== index) });
@@ -229,7 +286,6 @@ export function AssetMetadataEditor({
               composing.current = false;
             }}
             value={tagInput}
-            disabled={saving}
             placeholder="タグを追加"
             onChange={(e) => {
               setTagInput(e.target.value);
@@ -245,11 +301,7 @@ export function AssetMetadataEditor({
                 e.preventDefault();
             }}
           />
-          <Button
-            variant="outline"
-            type="submit"
-            disabled={saving || !tagInput.trim()}
-          >
+          <Button variant="outline" type="submit" disabled={!tagInput.trim()}>
             追加
           </Button>
         </form>
@@ -265,7 +317,6 @@ export function AssetMetadataEditor({
                 type="button"
                 variant="link"
                 className="tag-search-button"
-                disabled={saving}
                 aria-label={`キャラクター「${character}」で検索`}
                 onClick={() => onSearchCharacter(character)}
               >
@@ -275,7 +326,6 @@ export function AssetMetadataEditor({
                 <Button
                   type="button"
                   variant="ghost"
-                  disabled={saving}
                   aria-label={`キャラクター「${character}」を削除`}
                   onClick={() => {
                     void save({
@@ -309,7 +359,6 @@ export function AssetMetadataEditor({
               composing.current = false;
             }}
             value={characterInput}
-            disabled={saving}
             placeholder="キャラクターを追加"
             onChange={(e) => {
               setCharacterInput(e.target.value);
@@ -329,7 +378,7 @@ export function AssetMetadataEditor({
             variant="outline"
             type="submit"
             aria-label="キャラクターを追加"
-            disabled={saving || !characterInput.trim()}
+            disabled={!characterInput.trim()}
           >
             追加
           </Button>

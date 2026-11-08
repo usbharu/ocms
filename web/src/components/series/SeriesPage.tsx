@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import type { Asset } from '../../lib/assets';
 import { AssetViewer } from '../library/AssetViewer';
@@ -49,11 +49,15 @@ export function SeriesPage({ request }: { request: Request }) {
   const [query, setQuery] = useState('');
   const [candidates, setCandidates] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [deleteError, setDeleteError] = useState('');
-  const [deletingId, setDeletingId] = useState('');
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const deleting = useRef(new Set<string>());
   const [candidateError, setCandidateError] = useState('');
   const [retry, setRetry] = useState(0);
   const [candidateSearch, setCandidateSearch] = useState(0);
@@ -123,7 +127,10 @@ export function SeriesPage({ request }: { request: Request }) {
         if (active) setError('シリーズを読み込めません。再試行してください。');
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setLoaded(true);
+        }
       });
     return () => {
       active = false;
@@ -224,9 +231,9 @@ export function SeriesPage({ request }: { request: Request }) {
   }
 
   async function dissolve(target: Asset) {
-    if (busy) return;
-    setBusy(true);
-    setDeletingId(target.asset_id);
+    if (deleting.current.has(target.asset_id)) return;
+    deleting.current.add(target.asset_id);
+    setDeletingIds(new Set(deleting.current));
     setDeleteError('');
     try {
       const detail =
@@ -257,8 +264,8 @@ export function SeriesPage({ request }: { request: Request }) {
         'シリーズを削除できません。もう一度削除をお試しください。',
       );
     } finally {
-      setBusy(false);
-      setDeletingId('');
+      deleting.current.delete(target.asset_id);
+      setDeletingIds(new Set(deleting.current));
     }
   }
 
@@ -286,7 +293,8 @@ export function SeriesPage({ request }: { request: Request }) {
           !asset.composite_id)),
   );
 
-  if (loading) return <p role="status">読み込み中…</p>;
+  if (loading && (editing || id || !loaded))
+    return <p role="status">読み込み中…</p>;
   if (error && !editing)
     return (
       <section role="alert">
@@ -351,9 +359,7 @@ export function SeriesPage({ request }: { request: Request }) {
               />
             </label>
             <div className="series-actions series-submit-actions">
-              <Button type="submit">
-                {busy && !deletingId ? '保存中…' : '保存'}
-              </Button>
+              <Button type="submit">{busy ? '保存中…' : '保存'}</Button>
               <Link
                 to={
                   id
@@ -373,7 +379,9 @@ export function SeriesPage({ request }: { request: Request }) {
                   variant="destructive"
                   onClick={() => void dissolve(series)}
                 >
-                  {deletingId ? '削除中…' : 'シリーズを削除'}
+                  {deletingIds.has(series.asset_id)
+                    ? '削除中…'
+                    : 'シリーズを削除'}
                 </Button>
               </div>
             )}
@@ -515,7 +523,10 @@ export function SeriesPage({ request }: { request: Request }) {
           {series.editable && (
             <>
               <Link to={`/series/${series.asset_id}/edit`}>編集</Link>
-              <Button disabled={busy} onClick={() => void dissolve(series)}>
+              <Button
+                disabled={deletingIds.has(series.asset_id)}
+                onClick={() => void dissolve(series)}
+              >
                 シリーズを解除
               </Button>
             </>
@@ -585,6 +596,7 @@ export function SeriesPage({ request }: { request: Request }) {
           <option value="composite">一体型シリーズ</option>
         </NativeSelect>
       </label>
+      {loading && <p role="status">読み込み中…</p>}
       {deleteError && <p role="alert">{deleteError}</p>}
       {items.length === 0 ? (
         <p>
@@ -610,11 +622,11 @@ export function SeriesPage({ request }: { request: Request }) {
               </small>
               <Button
                 variant="destructive"
-                disabled={busy}
+                disabled={deletingIds.has(asset.asset_id)}
                 aria-label={`${asset.filename}のシリーズを削除`}
                 onClick={() => void dissolve(asset)}
               >
-                {deletingId === asset.asset_id ? '削除中…' : 'シリーズを削除'}
+                {deletingIds.has(asset.asset_id) ? '削除中…' : 'シリーズを削除'}
               </Button>
             </li>
           ))}

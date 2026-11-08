@@ -21,7 +21,6 @@ export function AssetDetails({
   seriesEditable,
   renditions,
   jobs,
-  searching,
   notice,
   detailTitle,
   onFavorite,
@@ -45,7 +44,6 @@ export function AssetDetails({
   seriesEditable?: boolean;
   renditions: Rendition[];
   jobs: Job[];
-  searching: boolean;
   notice: string;
   detailTitle?: Ref<HTMLHeadingElement>;
   onFavorite?: (asset: Asset) => void;
@@ -164,11 +162,7 @@ export function AssetDetails({
       <div className="comparison-section">
         <div className="comparison-actions">
           {onRecommend && (
-            <Button
-              variant="outline"
-              disabled={searching}
-              onClick={onRecommend}
-            >
+            <Button variant="outline" onClick={onRecommend}>
               関連コンテンツ
             </Button>
           )}
@@ -176,7 +170,6 @@ export function AssetDetails({
             <Button
               variant="outline"
               type="button"
-              disabled={searching}
               onClick={() => onCompare('perceptual')}
             >
               類似ファイル
@@ -186,7 +179,6 @@ export function AssetDetails({
             <Button
               variant="outline"
               type="button"
-              disabled={searching}
               onClick={() => onCompare('exact_duplicate')}
             >
               完全一致ファイル

@@ -17,6 +17,8 @@ export function AssetGroupsEditor({
   api.current = request;
   const [groups, setGroups] = useState<Group[]>([]);
   const [ids, setIds] = useState<string[]>([]);
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -53,15 +55,21 @@ export function AssetGroupsEditor({
       className="asset-groups"
       onSubmit={(event) => {
         event.preventDefault();
+        if (busy) return;
+        const submitted = ids;
         setBusy(true);
         setError('');
         setNotice('');
         void request(`/api/v1/assets/${assetId}/groups`, {
           method: 'PUT',
-          body: JSON.stringify({ group_ids: ids }),
+          body: JSON.stringify({ group_ids: submitted }),
         })
           .then(() => {
-            setNotice('所属を保存しました');
+            setNotice(
+              idsRef.current === submitted
+                ? '所属を保存しました'
+                : '所属を保存しました。変更はまだ保存されていません。',
+            );
             onSaved();
           })
           .catch(() =>
@@ -70,7 +78,7 @@ export function AssetGroupsEditor({
           .finally(() => setBusy(false));
       }}
     >
-      <fieldset disabled={loading || busy}>
+      <fieldset disabled={loading}>
         <legend>グループ</legend>
         {groups
           .filter((group) => !series || group.group_id !== 'all')
@@ -92,7 +100,7 @@ export function AssetGroupsEditor({
               {group.name}
             </label>
           ))}
-        <Button type="submit" disabled={groups.length === 0}>
+        <Button type="submit" disabled={busy || groups.length === 0}>
           所属を保存
         </Button>
       </fieldset>

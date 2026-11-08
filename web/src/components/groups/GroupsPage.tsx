@@ -16,7 +16,8 @@ export function GroupsPage({ request }: { request: GroupRequest }) {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const pending = useRef(new Set<string>());
   const [revision, setRevision] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision explicitly retries the request.
   useEffect(() => {
@@ -39,8 +40,10 @@ export function GroupsPage({ request }: { request: GroupRequest }) {
     };
   }, [revision]);
 
-  async function change(action: () => Promise<unknown>) {
-    setBusy(true);
+  async function change(key: string, action: () => Promise<unknown>) {
+    if (pending.current.has(key)) return;
+    pending.current.add(key);
+    setBusy(new Set(pending.current));
     setError('');
     try {
       await action();
@@ -48,7 +51,8 @@ export function GroupsPage({ request }: { request: GroupRequest }) {
     } catch (e) {
       setError(`保存できませんでした: ${(e as Error).message}`);
     } finally {
-      setBusy(false);
+      pending.current.delete(key);
+      setBusy(new Set(pending.current));
     }
   }
 
@@ -58,12 +62,13 @@ export function GroupsPage({ request }: { request: GroupRequest }) {
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          void change(async () => {
+          const submitted = name;
+          void change('create', async () => {
             await request('/api/v1/groups', {
               method: 'POST',
               body: JSON.stringify({ name }),
             });
-            setName('');
+            setName((current) => (current === submitted ? '' : current));
           });
         }}
       >
@@ -75,7 +80,7 @@ export function GroupsPage({ request }: { request: GroupRequest }) {
           required
           onChange={(event) => setName(event.target.value)}
         />
-        <Button disabled={busy} type="submit">
+        <Button disabled={busy.has('create')} type="submit">
           作成
         </Button>
       </form>
@@ -98,9 +103,9 @@ export function GroupsPage({ request }: { request: GroupRequest }) {
           <GroupRow
             key={`${group.group_id}:${group.name}`}
             group={group}
-            busy={busy}
+            busy={busy.has(group.group_id)}
             onChange={(name) =>
-              change(() =>
+              change(group.group_id, () =>
                 request(`/api/v1/groups/${group.group_id}`, {
                   method: 'PATCH',
                   body: JSON.stringify({ name }),
@@ -113,7 +118,7 @@ export function GroupsPage({ request }: { request: GroupRequest }) {
                   `「${group.name}」を削除しますか？ コンテンツは残ります。defaultへの所属は変わりません。`,
                 )
               )
-                void change(() =>
+                void change(group.group_id, () =>
                   request(`/api/v1/groups/${group.group_id}`, {
                     method: 'DELETE',
                   }),
@@ -166,11 +171,7 @@ function GroupRow({
             <Button type="submit" disabled={busy}>
               保存
             </Button>
-            <Button
-              type="button"
-              disabled={busy}
-              onClick={() => setEditing(false)}
-            >
+            <Button type="button" onClick={() => setEditing(false)}>
               キャンセル
             </Button>
           </form>

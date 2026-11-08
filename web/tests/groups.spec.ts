@@ -221,3 +221,65 @@ test('failed membership save retains edits for retry', async ({ page }) => {
   await page.getByRole('button', { name: '所属を保存' }).click();
   await expect(page.getByText('所属を保存しました')).toBeVisible();
 });
+
+test('other group operations remain available during a save', async ({
+  page,
+}) => {
+  await setup(page);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false;
+  await page.route(`**/api/v1/groups/${groupId}`, async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    started = true;
+    await held;
+    return route.fallback();
+  });
+  await page.goto('/groups');
+  const row = page
+    .getByRole('listitem')
+    .filter({ has: page.getByRole('link', { name: '旅行', exact: true }) });
+  await row.getByRole('button', { name: '改名' }).click();
+  await row.getByLabel('グループ名').fill('旅');
+  await row.getByRole('button', { name: '保存' }).click();
+  await expect.poll(() => started).toBe(true);
+  await row.getByRole('button', { name: 'キャンセル' }).click();
+  await page.getByLabel('グループ名', { exact: true }).fill('資料');
+  await page.getByRole('button', { name: '作成', exact: true }).click();
+  await expect(
+    page.getByRole('link', { name: '資料', exact: true }),
+  ).toBeVisible();
+  release();
+  await expect(
+    page.getByRole('link', { name: '旅', exact: true }),
+  ).toBeVisible();
+});
+
+test('membership can be edited while the previous selection is saving', async ({
+  page,
+}) => {
+  await setup(page);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false;
+  await page.route(`**/api/v1/assets/${assetId}/groups`, async (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    started = true;
+    await held;
+    return route.fallback();
+  });
+  await page.goto(`/assets/${assetId}`);
+  const first = page.getByRole('checkbox', { name: 'default', exact: true });
+  const second = page.getByRole('checkbox', { name: '旅行', exact: true });
+  await first.uncheck();
+  await page.getByRole('button', { name: '所属を保存' }).click();
+  await expect.poll(() => started).toBe(true);
+  await second.uncheck();
+  release();
+  await expect(page.getByText('所属を保存しました')).toBeVisible();
+  await expect(second).not.toBeChecked();
+});

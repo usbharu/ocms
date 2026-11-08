@@ -184,6 +184,31 @@ async function setup(
   return searches;
 }
 
+test('refresh during collection loading completes the detail navigation', async ({
+  page,
+}) => {
+  await setup(page);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  await page.route('**/api/v1/assets?*', async (route) => {
+    calls += 1;
+    if (calls === 1) await held;
+    await route.fulfill({
+      json: { assets: files.slice(0, 200), total: files.length },
+    });
+  });
+  await page.goto('/assets/file-0');
+  await expect.poll(() => calls).toBe(1);
+  await page.getByRole('button', { name: '更新', exact: true }).click();
+  await expect(page.locator('.details h2')).toHaveText(files[0].filename);
+  expect(calls).toBe(2);
+  release();
+  await expect(page.locator('.details h2')).toHaveText(files[0].filename);
+});
+
 test('closing a viewer and detail keeps the current collection interactive without reloading it', async ({
   page,
 }) => {

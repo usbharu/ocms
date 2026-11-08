@@ -12,7 +12,6 @@ const meta = {
     selected: assets[0],
     renditions,
     jobs,
-    searching: false,
     notice: '',
     onClose: fn(),
     onSaveMetadata: fn(async (changes) => ({ ...assets[0], ...changes })),
