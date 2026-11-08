@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -148,7 +149,11 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", toolsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if resolved, err := exec.LookPath("pdftoppm"); err != nil || resolved != filepath.Join(toolsDir, "pdftoppm") {
+		t.Fatalf("codec wrapper not selected: %s %v", resolved, err)
+	}
 	stored := map[string][]byte{}
+	failThirdPage := true
 	var storedMu sync.Mutex
 	transfer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Job-ID") != j.ID || r.Header.Get("X-Job-Lease") != j.Lease {
@@ -157,6 +162,16 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 			return
 		}
 		if r.Method == "POST" {
+			storedMu.Lock()
+			fail := failThirdPage && r.URL.Query().Get("profile") == "pdf.display-3-v1"
+			if fail {
+				failThirdPage = false
+			}
+			storedMu.Unlock()
+			if fail {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			data, _ := io.ReadAll(r.Body)
 			id := uuid.NewString()
 			storedMu.Lock()
@@ -177,10 +192,43 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 	}))
 	defer transfer.Close()
 	s.Transfer = transfer.URL
+	s.PDFPageConcurrency = 1
 	index := contracts.Index{BlobID: j.BlobID}
 	metadata := map[string]any{}
+	if err := s.processPDF(ctx, j, input, dir, &index, metadata); err == nil {
+		t.Fatal("expected partial PDF failure")
+	}
+	var completedPages int
+	if err := s.DB.QueryRow(ctx, `SELECT count(*) FROM media.pdf_page_checkpoints WHERE job_id=$1`, j.ID).Scan(&completedPages); err != nil || completedPages != 2 {
+		t.Fatalf("completed pages were not saved: %d %v", completedPages, err)
+	}
+	// A new Worker, lease, and empty tmpfs resume the same Job.
+	j.Lease = uuid.NewString()
+	if _, err := s.DB.Exec(ctx, `UPDATE media.processing_jobs SET lease_token=$2 WHERE id=$1`, j.ID, j.Lease); err != nil {
+		t.Fatal(err)
+	}
+	s = &Service{DB: s.DB, Transfer: transfer.URL, PDFPageConcurrency: 2}
+	ctx = platform.WithJob(context.Background(), j.ID, j.Lease)
+	dir = t.TempDir()
+	input = filepath.Join(dir, "source.pdf")
+	if err := os.WriteFile(input, analysisTestPDF(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	index = contracts.Index{BlobID: j.BlobID}
 	if err := s.processPDF(ctx, j, input, dir, &index, metadata); err != nil {
 		t.Fatal(err)
+	}
+	beforeReuse, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused := contracts.Index{BlobID: j.BlobID}
+	if err := s.processPDF(ctx, j, input, dir, &reused, metadata); err != nil {
+		t.Fatal(err)
+	}
+	afterReuse, err := os.ReadFile(logPath)
+	if err != nil || !bytes.Equal(beforeReuse, afterReuse) || !reflect.DeepEqual(index, reused) {
+		t.Fatal("retry repeated completed page work or changed its index")
 	}
 	var analysisPNG, sharedWebP int
 	if err := s.DB.QueryRow(ctx, `SELECT count(*) FILTER (WHERE profile_id LIKE 'pdf.thumbnail-%'), count(*) FILTER (WHERE profile_id LIKE 'pdf.display-%' AND mime_type='image/webp') FROM media.renditions WHERE source_blob_id=$1`, j.BlobID).Scan(&analysisPNG, &sharedWebP); err != nil {
@@ -305,7 +353,7 @@ func TestPDFThumbnailPipelineDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(calls), "pdftotext\n") != 1 || strings.Count(string(calls), "pdftoppm\n") != 2 || strings.Count(string(calls), "tesseract\n") != 1 {
+	if strings.Count(string(calls), "pdftotext\n") != 2 || strings.Count(string(calls), "pdftoppm\n") != 3 || strings.Count(string(calls), "tesseract\n") != 1 {
 		t.Fatalf("unexpected subprocess counts: %s", calls)
 	}
 }

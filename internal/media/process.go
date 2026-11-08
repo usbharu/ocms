@@ -361,6 +361,20 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 		return processingError("PDF_PAGE_LIMIT")
 	}
 	metadata["pages"] = pages
+	saved, err := s.pdfPageCheckpoints(ctx, j, pages)
+	if err != nil {
+		return err
+	}
+	if len(saved) == pages {
+		for page := 1; page <= pages; page++ {
+			result := saved[page]
+			index.Hashes = append(index.Hashes, result.hash)
+			if result.passage != nil {
+				index.Passages = append(index.Passages, *result.passage)
+			}
+		}
+		return nil
+	}
 	// Extract the text layer once. A file avoids command()'s diagnostic-sized
 	// stdout cap; form feeds preserve empty pages and page attribution.
 	textPath := filepath.Join(dir, "text")
@@ -385,10 +399,6 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 		if first > 1 {
 			last = min(first+7, pages)
 		}
-		images, err := renderPDFBatch(ctx, input, dir, first, last)
-		if err != nil {
-			return err
-		}
 		batch := make([]pdfPage, last-first+1)
 		for i := range batch {
 			page := first + i
@@ -396,18 +406,10 @@ func (s *Service) processPDF(ctx context.Context, j contracts.Job, input, dir st
 			if err != nil {
 				return err
 			}
-			batch[i] = pdfPage{number: page, total: pages, rendered: images[page], text: text}
+			batch[i] = pdfPage{number: page, total: pages, text: text}
 		}
-		results := make([]pdfPageResult, len(batch))
-		concurrency := s.PDFPageConcurrency
-		if concurrency < 1 {
-			concurrency = 2
-		}
-		if err := runPDFBatch(ctx, len(batch), concurrency, func(ctx context.Context, i int) error {
-			result, err := s.processPDFPage(ctx, j, dir, batch[i])
-			results[i] = result
-			return err
-		}); err != nil {
+		results, err := s.resumePDFBatch(ctx, j, input, dir, batch, saved)
+		if err != nil {
 			return err
 		}
 		for _, result := range results {
@@ -504,7 +506,6 @@ func (s *Service) processPDFPage(ctx context.Context, j contracts.Job, dir strin
 	if err = os.Remove(display); err != nil {
 		return result, err
 	}
-	slog.InfoContext(ctx, "media.pdf_page_completed", "job_id", j.ID, "page", number, "pages", page.total)
 	return result, nil
 }
 

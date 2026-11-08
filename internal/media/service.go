@@ -304,6 +304,11 @@ func (s *Service) tick(ctx context.Context) error {
 			return err
 		}
 	}
+	if j.Type == "media.process" {
+		if _, err = tx.Exec(finishCtx, `DELETE FROM media.pdf_page_checkpoints WHERE job_id=$1`, j.ID); err != nil {
+			return err
+		}
+	}
 	if j.Type == "embedding.generate" {
 		if _, err = tx.Exec(finishCtx, `DELETE FROM media.embedding_checkpoints WHERE job_id=$1`, j.ID); err != nil {
 			return err

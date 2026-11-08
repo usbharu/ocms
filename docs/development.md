@@ -447,6 +447,14 @@ OCMS_TEST_DATABASE_URL='postgres://<user>:<password>@127.0.0.1:<port>/<test-db>?
 
 003まで適用済みのDBは、履歴がなければ `baseline 3` で引き継いでから `up` を実行し、004以降を適用します。推論チェックポイントを利用する前に更新を完了してください。
 
+マイグレーション014は、PDFのページ単位チェックポイントを追加します。処理版が一致する完了済みページは、期限切れ・再試行・Worker再起動の後も保存済みの派生画像とOCR結果を再利用します。導入前の試行で処理したページはチェックポイントがないため、導入後の試行から保存されます。OCR中に中断したページは再実行します。再試行回数・Job期限・ページ上限の設定値は既存のものを使用します。
+
+再開の回帰試験は、上記のコーデックと全マイグレーションを適用した使い捨てDBで実行します。3ページ目の保存失敗後にリースと作業ディレクトリを作り直し、完了済みページのOCRと描画が繰り返されないことを確認します。
+
+```sh
+OCMS_TEST_DATABASE_URL='postgres://<user>:<password>@127.0.0.1:<port>/<test-db>?sslmode=disable' go test -race ./internal/media -run 'Test(PDFThumbnailPipelineDatabase|PDFCheckpointLeaseDatabase)'
+```
+
 PDFの任意ページは `/api/v1/assets/{assetId}/preview?page=2` で取得できます。一覧用は `thumbnail=1` を付けるとWebPを優先し、未生成の場合はPNGへフォールバックします。再エンコード要求・一覧は `/api/v1/assets/{assetId}/renditions`、Job一覧は `/api/v1/assets/{assetId}/jobs`、個別状態は `/api/v1/jobs/{jobId}` です。派生ファイルも元Assetの最新ACLを確認して配信します。
 
 静的ファイルは内容ハッシュ付きの `/assets/` を1年間キャッシュし、HTMLやPDF.jsの固定URLはETagで毎回再検証します。静的ビルドはBFFの起動中に書き換えず、配備時にBFFを再作成してください。元ファイル・プレビュー・派生メディアは `private, no-cache` と `Vary: Cookie` でブラウザ内のキャッシュを許可します。再利用前に認証・最新ACLを確認し、ETagが一致すれば304を返して本文の再送・S3読み出し・復号を省きます。再検証の通信は毎回必要で、共有キャッシュとエラー応答の保存は許可しません。取得済み平文がブラウザに残ることはあります。詳細は仕様§5.6を参照してください。
