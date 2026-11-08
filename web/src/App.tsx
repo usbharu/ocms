@@ -970,6 +970,17 @@ export function App() {
   const run = (action: () => Promise<unknown>) =>
     action().catch((e) => setError(e.message));
 
+  function refreshCollection() {
+    if (readyRoute.current !== location.key) {
+      navigate(location.pathname + location.search, {
+        replace: true,
+        state: location.state,
+      });
+      return;
+    }
+    run(() => refresh(context, page, kind));
+  }
+
   const reset = () => {
     goCollection({ ...allFiles, favorites: section === 'favorites' });
   };
@@ -1492,10 +1503,7 @@ export function App() {
                         ))}
                       </NativeSelect>
                     </label>
-                    <Button
-                      variant="outline"
-                      onClick={() => run(() => refresh(context, page, kind))}
-                    >
+                    <Button variant="outline" onClick={refreshCollection}>
                       更新
                     </Button>
                   </div>
@@ -1505,7 +1513,7 @@ export function App() {
                     view={view}
                     onKindChange={changeKind}
                     onViewChange={setView}
-                    onRefresh={() => run(() => refresh(context, page, kind))}
+                    onRefresh={refreshCollection}
                   />
                 )}
                 <fieldset className="rating-filter">
