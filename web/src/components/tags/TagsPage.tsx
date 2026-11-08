@@ -127,7 +127,6 @@ export function TagsPage({
         <Button
           variant="outline"
           onClick={() => setRevision((value) => value + 1)}
-          disabled={loading}
         >
           更新
         </Button>

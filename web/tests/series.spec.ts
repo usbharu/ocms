@@ -770,6 +770,37 @@ test('draft changes search only when re-search is pressed', async ({
   });
 });
 
+test('series filters remain available while a previous filter is loading', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto('/series');
+  const filter = page.getByLabel('シリーズの種類');
+  await expect(filter).toBeVisible();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false;
+  await page.route('**/api/v1/series?*', async (route) => {
+    if (
+      new URL(route.request().url()).searchParams.get('series_kind') ===
+      'collection'
+    ) {
+      started = true;
+      await held;
+    }
+    return route.fallback();
+  });
+  await filter.selectOption('collection');
+  await expect.poll(() => started).toBe(true);
+  await filter.selectOption('composite');
+  await expect(page).toHaveURL(/series_kind=composite/);
+  await expect(page.getByText('一体型', { exact: true })).toBeVisible();
+  release();
+  await expect(filter).toHaveValue('composite');
+});
+
 test('saving works while re-search is pending', async ({ page }) => {
   const saves = await setup(page);
   await page.goto('/series/new?source=page-a');

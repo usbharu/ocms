@@ -1388,10 +1388,10 @@ test('metadata failure retains input and retries, pending response stays with it
   ).toBeVisible();
   await expect(name).toHaveValue('保存する名前.png');
   await page.getByRole('button', { name: '保存を再試行' }).click();
-  await expect(name).toBeDisabled();
+  await expect(name).toBeEnabled();
   await expect(
     page.getByRole('textbox', { name: 'タグ', exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.locator('.file').filter({ hasText: '散歩の記録.mp4' }).click();
   release();
   await expect(
@@ -1401,6 +1401,84 @@ test('metadata failure retains input and retries, pending response stays with it
   await expect(name).toHaveValue('散歩の記録.mp4');
   await expect(page.locator('.metadata-status')).toBeEmpty();
   expect(attempts).toBe(2);
+});
+
+test('metadata edits remain usable and are saved in order', async ({
+  page,
+}) => {
+  await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const changes: Record<string, unknown>[] = [];
+  let current = { ...fixtures[0], rating: 'general' };
+  await page.route('**/api/v1/assets/image', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    const change = route.request().postDataJSON();
+    changes.push(change);
+    if (changes.length === 1) await held;
+    current = { ...current, ...change };
+    return route.fulfill({ json: current });
+  });
+  await page.getByText('名前を変更', { exact: true }).click();
+  const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
+  await name.fill('新しい名前.png');
+  await name.press('Enter');
+  await expect.poll(() => changes.length).toBe(1);
+  await name.blur();
+  const rating = page.getByLabel('コンテンツレーティング');
+  await rating.selectOption('explicit');
+  await rating.selectOption('sensitive');
+  await expect(rating).toHaveValue('sensitive');
+  await expect(
+    page.getByRole('button', { name: 'タグ「旅行」で検索' }),
+  ).toBeEnabled();
+  release();
+  await expect.poll(() => changes.length).toBe(3);
+  await expect(page.locator('.metadata-status')).toHaveText('保存しました');
+  expect(changes).toEqual([
+    { filename: '新しい名前.png' },
+    { rating: 'explicit' },
+    { rating: 'sensitive' },
+  ]);
+  await expect(rating).toHaveValue('sensitive');
+});
+
+test('a failed metadata edit remains retryable after another edit succeeds', async ({
+  page,
+}) => {
+  await page.locator('.file').filter({ hasText: '山の風景.png' }).click();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  await page.route('**/api/v1/assets/image', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    calls += 1;
+    if (calls === 1) {
+      await held;
+      return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+    }
+    return route.fulfill({
+      json: { ...fixtures[0], ...route.request().postDataJSON() },
+    });
+  });
+  await page.getByText('名前を変更', { exact: true }).click();
+  const name = page.getByRole('textbox', { name: 'ファイル名', exact: true });
+  await name.fill('後で再試行.png');
+  await name.press('Enter');
+  await expect.poll(() => calls).toBe(1);
+  await page.getByLabel('コンテンツレーティング').selectOption('explicit');
+  release();
+  await expect.poll(() => calls).toBe(2);
+  await expect(
+    page.getByRole('button', { name: '保存を再試行' }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: '保存を再試行' }).click();
+  await expect.poll(() => calls).toBe(3);
+  await expect(page.locator('.metadata-status')).toHaveText('保存しました');
 });
 
 test('metadata byte limits and Japanese composition do not submit invalid drafts', async ({
