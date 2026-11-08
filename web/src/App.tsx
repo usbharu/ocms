@@ -158,8 +158,6 @@ export function App() {
   const related = context.mode === 'recommendation';
   const personal = Boolean(context.personalized && !context.source);
   const [searching, setSearching] = useState(false);
-  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
-  const collectionBlocked = searching && !backgroundRefreshing;
   const [viewerLoading, setViewerLoading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
@@ -212,13 +210,11 @@ export function App() {
     nextPage = page,
     nextKind: Kind = kind,
     preserveSession = false,
-    background = false,
   ): Promise<Asset[] | undefined> {
     collectionRef.current = { context: next, page: nextPage, kind: nextKind };
     const version = ++requestVersion.current;
     setError('');
     setSearching(true);
-    setBackgroundRefreshing(background);
     setRecommendationFailed(false);
     try {
       let res: {
@@ -366,7 +362,6 @@ export function App() {
     } finally {
       if (version === requestVersion.current) {
         setSearching(false);
-        setBackgroundRefreshing(false);
       }
     }
   }
@@ -481,7 +476,6 @@ export function App() {
     }
     ++requestVersion.current;
     readyRoute.current = '';
-    setBackgroundRefreshing(false);
     setSearching(true);
     setError('');
     setAssetMissing(false);
@@ -613,11 +607,7 @@ export function App() {
           Boolean(next.sessionId),
         );
         if (!active) return;
-        if (!result) {
-          setSelected(null);
-          setViewerOpen(false);
-          return;
-        }
+        if (!result) return;
         loadedCollection.current = collectionKey;
       }
       readyRoute.current = location.key;
@@ -694,7 +684,9 @@ export function App() {
       next = { ...next, groupId: next.groupId ?? context.groupId };
     snapshots.current.set(location.key, liveSnapshot.current);
     capturedSnapshot.current = location.key;
-    setBackgroundRefreshing(false);
+    setContext(next);
+    setKind(nextKind);
+    setPage(nextPage);
     setSearching(true);
     if (next.mode === 'recommendation' || next.personalized) {
       setAssets([]);
@@ -1213,7 +1205,7 @@ export function App() {
       if (sectionRef.current === 'favorites') {
         try {
           const latest = collectionRef.current;
-          await refresh(latest.context, latest.page, latest.kind, false, true);
+          await refresh(latest.context, latest.page, latest.kind);
         } catch {
           setError(
             'お気に入りは保存しましたが、一覧を更新できませんでした。更新ボタンで再取得してください。',
@@ -1275,7 +1267,7 @@ export function App() {
         context.source?.asset_id === assetId
           ? { ...context, source: { ...context.source, ...metadata } }
           : context;
-      void refresh(next, page, kind, false, true).catch(() => {
+      void refresh(next, page, kind).catch(() => {
         if (selectedId.current === assetId) {
           setError(
             '変更は保存しましたが、一覧を更新できませんでした。更新ボタンで再取得してください。',
@@ -1488,7 +1480,6 @@ export function App() {
                         aria-label={
                           personal ? 'おすすめの種類' : '関連コンテンツの種類'
                         }
-                        disabled={collectionBlocked}
                         value={kind}
                         onChange={(event) =>
                           changeKind(event.target.value as Kind)
@@ -1503,10 +1494,7 @@ export function App() {
                     </label>
                     <Button
                       variant="outline"
-                      disabled={searching}
-                      onClick={() =>
-                        run(() => refresh(context, page, kind, false, true))
-                      }
+                      onClick={() => run(() => refresh(context, page, kind))}
                     >
                       更新
                     </Button>
@@ -1515,19 +1503,12 @@ export function App() {
                   <LibraryToolbar
                     kind={kind}
                     view={view}
-                    searching={searching}
-                    blocking={collectionBlocked}
                     onKindChange={changeKind}
                     onViewChange={setView}
-                    onRefresh={() =>
-                      run(() => refresh(context, page, kind, false, true))
-                    }
+                    onRefresh={() => run(() => refresh(context, page, kind))}
                   />
                 )}
-                <fieldset
-                  className="rating-filter"
-                  disabled={collectionBlocked}
-                >
+                <fieldset className="rating-filter">
                   <legend>レーティング</legend>
                   {ratings.map((rating) => (
                     <label key={rating}>
@@ -1547,7 +1528,6 @@ export function App() {
                               );
                           const next = { ...context, ratings: nextRatings };
                           goCollection(next, 1, kind);
-                          setContext(next);
                         }}
                       />
                       {ratingLabel(rating)}
@@ -1644,7 +1624,6 @@ export function App() {
                     }
                     kind={kind}
                     searching={searching}
-                    blocking={collectionBlocked}
                     isResult={isResult}
                     uploading={progress !== null}
                     currentPage={currentPage}
@@ -1672,7 +1651,7 @@ export function App() {
                       onSaved={() => {
                         snapshots.current.clear();
                         loadedCollection.current = '';
-                        void refresh(context, page, kind, false, true);
+                        void refresh(context, page, kind);
                       }}
                     />
                   }
@@ -1685,7 +1664,6 @@ export function App() {
                   previewAsset={previewAsset ?? undefined}
                   seriesEditable={seriesEditable}
                   jobs={jobs}
-                  searching={collectionBlocked}
                   notice={notice}
                   detailTitle={detailTitle}
                   onClose={closeDetail}

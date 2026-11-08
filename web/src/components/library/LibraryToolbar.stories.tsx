@@ -9,7 +9,6 @@ const meta = {
   args: {
     kind: 'all',
     view: 'list',
-    searching: false,
     onKindChange: fn(),
     onViewChange: fn(),
     onRefresh: fn(),
@@ -56,5 +55,4 @@ export const Default: Story = {
     await expect(args.onRefresh).toHaveBeenCalledOnce();
   },
 };
-export const Searching: Story = { args: { searching: true } };
 export const Mobile: Story = { globals: { viewport: { value: 'mobile' } } };

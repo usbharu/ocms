@@ -3,6 +3,72 @@ import { expect, test } from '@playwright/test';
 const image =
   '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="#b6cec4"/></svg>';
 
+test('filters remain usable during pending requests and ignore older results', async ({
+  page,
+}) => {
+  let releaseFirst: () => void = () => {};
+  const firstPending = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let finishFirst: () => void = () => {};
+  const firstFinished = new Promise<void>((resolve) => {
+    finishFirst = resolve;
+  });
+  let firstStarted = false;
+  await page.route('**/auth/config', (route) =>
+    route.fulfill({ json: { development: true } }),
+  );
+  await page.route('**/api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/v1/me')
+      return route.fulfill({
+        json: { principal_id: 'demo', csrf_token: 'synthetic' },
+      });
+    if (url.pathname === '/api/v1/assets') {
+      const ratings = url.searchParams.get('ratings');
+      if (ratings?.includes('questionable') && !ratings.includes('explicit')) {
+        firstStarted = true;
+        await firstPending;
+        await route.fulfill({
+          json: {
+            assets: [
+              {
+                asset_id: 'old',
+                filename: 'old.png',
+                mime_type: 'image/png',
+                tags: [],
+                status: 'ready',
+                rating: 'general',
+              },
+            ],
+            total: 1,
+          },
+        });
+        finishFirst();
+        return;
+      }
+      return route.fulfill({ json: { assets: [], total: 0 } });
+    }
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/library');
+  await expect(page.getByText('ファイルはまだありません')).toBeVisible();
+  await page.getByRole('checkbox', { name: 'explicit' }).uncheck();
+  await expect.poll(() => firstStarted).toBe(true);
+  await page.getByRole('checkbox', { name: 'questionable' }).uncheck();
+  await page.getByRole('button', { name: '画像', exact: true }).click();
+  await expect(page).toHaveURL(/kind=image/);
+  await expect(
+    page.getByRole('checkbox', { name: 'explicit' }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole('checkbox', { name: 'questionable' }),
+  ).not.toBeChecked();
+  releaseFirst();
+  await firstFinished;
+  await expect(page.getByRole('button', { name: 'old.png' })).toHaveCount(0);
+});
+
 for (const section of ['library', 'favorites']) {
   test(`ratings filter, all-off selection, three badge views and manual edits in ${section}`, async ({
     page,

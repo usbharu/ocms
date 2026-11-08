@@ -5,16 +5,12 @@ import { NativeSelect } from '../ui/native-select';
 export function LibraryToolbar({
   kind,
   view,
-  searching,
-  blocking = searching,
   onKindChange,
   onViewChange,
   onRefresh,
 }: {
   kind: Kind;
   view: View;
-  searching: boolean;
-  blocking?: boolean;
   onKindChange: (kind: Kind) => void;
   onViewChange: (view: View) => void;
   onRefresh: () => void;
@@ -30,7 +26,6 @@ export function LibraryToolbar({
             key={item.id}
             aria-pressed={kind === item.id}
             onClick={() => onKindChange(item.id)}
-            disabled={blocking}
           >
             {item.label}
           </Button>
@@ -41,7 +36,6 @@ export function LibraryToolbar({
           variant="ghost"
           type="button"
           className="quiet"
-          disabled={searching}
           onClick={onRefresh}
         >
           更新
