@@ -111,14 +111,14 @@ export const Saving: Story = {
     await expect(canvas.getByRole('status')).toHaveTextContent('保存中');
     await expect(
       canvas.getByRole('textbox', { name: 'ファイル名' }),
-    ).toBeDisabled();
-    await expect(canvas.getByRole('textbox', { name: 'タグ' })).toBeDisabled();
+    ).toBeEnabled();
+    await expect(canvas.getByRole('textbox', { name: 'タグ' })).toBeEnabled();
     await expect(
       canvas.getByRole('button', { name: 'タグ「旅行」で検索' }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     await expect(
       canvas.getByRole('button', { name: 'キャラクター「character_a」で検索' }),
-    ).toBeDisabled();
+    ).toBeEnabled();
   },
 };
 
