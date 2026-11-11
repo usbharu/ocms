@@ -122,7 +122,7 @@ func TestContentRatingsDatabase(t *testing.T) {
 	for _, tc := range []struct {
 		filter string
 		count  int
-	}{{"general", 1}, {"explicit", 1}, {"sensitive", 0}, {"", 0}, {"general,explicit", 2}} {
+	}{{"general", 1}, {"explicit", 1}, {"sensitive", 0}, {"", 0}, {"general,explicit", 1}} {
 		var out struct {
 			Assets []Asset
 			Total  int
@@ -142,7 +142,7 @@ func TestContentRatingsDatabase(t *testing.T) {
 	for _, tc := range []struct {
 		filter string
 		count  int
-	}{{"general", 1}, {"explicit", 0}, {"", 0}} {
+	}{{"general", 1}, {"explicit", 1}, {"", 0}} {
 		var filtered struct {
 			Assets []Asset
 			Total  int
@@ -151,7 +151,7 @@ func TestContentRatingsDatabase(t *testing.T) {
 		if err := json.Unmarshal(raw, &filtered); err != nil || filtered.Total != tc.count || len(filtered.Assets) != tc.count {
 			t.Fatalf("combined favorites/rating filter %q: %s", tc.filter, raw)
 		}
-		if len(filtered.Assets) > 0 && (!filtered.Assets[0].IsFavorite || filtered.Assets[0].Rating != "general") {
+		if len(filtered.Assets) > 0 && (!filtered.Assets[0].IsFavorite || filtered.Assets[0].Rating != tc.filter) {
 			t.Fatal("combined Asset fields lost")
 		}
 	}

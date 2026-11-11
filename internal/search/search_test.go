@@ -125,3 +125,30 @@ func TestSemanticSearchEnabledByDefault(t *testing.T) {
 		t.Fatalf("default search did not call Runtime: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDuplicateBlobsAreCollapsedBeforeLimit(t *testing.T) {
+	t.Setenv("INTERNAL_TOKEN", strings.Repeat("t", 32))
+	shared, distinct := "shared", "distinct"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"assets": []catalog.Asset{
+			{ID: "first", BlobID: &shared}, {ID: "second", BlobID: &shared}, {ID: "third", BlobID: &distinct},
+		}})
+	}))
+	defer server.Close()
+	s := Service{Catalog: server.URL}
+	req := httptest.NewRequest("POST", "/api/v1/search", nil)
+	req.Header.Set("X-Principal", "alice")
+	rec := httptest.NewRecorder()
+	s.respond(rec, req, query{Limit: 2}, map[string]candidate{
+		shared: {blob: shared, rank: 2}, distinct: {blob: distinct, rank: 1},
+	}, nil)
+	var out struct {
+		Assets []result `json:"assets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 200 || len(out.Assets) != 2 || out.Assets[0].ID != "first" || out.Assets[1].ID != "third" {
+		t.Fatalf("unexpected results: %s", rec.Body.String())
+	}
+}

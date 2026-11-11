@@ -113,7 +113,7 @@ func (s *Service) listLabels(w http.ResponseWriter, r *http.Request, key, source
 	}
 	var result json.RawMessage
 	err := s.DB.QueryRow(r.Context(), `WITH visible AS MATERIALIZED (
- SELECT DISTINCT a.id,t.name FROM catalog.display_assets a `+source+`
+ SELECT DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN 'blob:'||o.blob_id::text ELSE 'asset:'||a.id::text END AS id,t.name FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `+source+`
  WHERE `+displayed+` AND btrim(t.name)<>''
  ), counts AS MATERIALIZED (
  SELECT name,count(*) AS asset_count FROM visible WHERE strpos(lower(name),lower($2))>0 GROUP BY name
