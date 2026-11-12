@@ -29,14 +29,28 @@ func (s *Service) groupRoutes(m *http.ServeMux) {
 }
 
 // Group membership never grants access. Apply this alongside displayed/allowed.
+// Keep the direct-asset and duplicate-blob checks separate so PostgreSQL can
+// use the asset primary key and the asset_originals blob index. The previous
+// OR form made the planner rescan every displayed asset for each candidate.
 func groupCondition(index int) string {
 	p := fmt.Sprintf("$%d", index)
-	return ` (` + p + `='' OR (` + p + `='all' AND a.series_kind='') OR EXISTS (
- SELECT 1 FROM catalog.display_assets d LEFT JOIN catalog.asset_originals od ON od.asset_id=d.id
- LEFT JOIN catalog.asset_originals oa ON oa.asset_id=a.id
- WHERE d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants dg WHERE dg.asset_id=d.id AND dg.principal_id=$1))
- AND (d.id=a.id OR (a.series_kind='' AND d.series_kind='' AND oa.blob_id IS NOT NULL AND od.blob_id=oa.blob_id))
- AND ((` + p + `='default' AND NOT EXISTS(SELECT 1 FROM catalog.default_group_exclusions e WHERE e.principal_id=$1 AND e.asset_id=d.id)) OR EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id=$1 AND g.asset_id=d.id AND g.group_id::text=` + p + `))))`
+	return ` (` + p + `='' OR (` + p + `='all' AND a.series_kind='') OR
+ EXISTS (
+  SELECT 1 FROM catalog.assets d
+  WHERE d.id=a.id AND d.deleted_at IS NULL
+  AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants dg WHERE dg.asset_id=d.id AND dg.principal_id=$1))
+  AND ((` + p + `='default' AND NOT EXISTS(SELECT 1 FROM catalog.default_group_exclusions e WHERE e.principal_id=$1 AND e.asset_id=d.id)) OR EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id=$1 AND g.asset_id=d.id AND g.group_id::text=` + p + `))
+ )
+ OR EXISTS (
+  SELECT 1 FROM catalog.asset_originals oa
+  JOIN catalog.asset_originals od ON od.blob_id=oa.blob_id
+  JOIN catalog.assets d ON d.id=od.asset_id
+  LEFT JOIN catalog.series s ON s.asset_id=d.id
+  WHERE oa.asset_id=a.id AND a.series_kind='' AND d.deleted_at IS NULL AND s.kind IS NULL
+  AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants dg WHERE dg.asset_id=d.id AND dg.principal_id=$1))
+  AND ((` + p + `='default' AND NOT EXISTS(SELECT 1 FROM catalog.default_group_exclusions e WHERE e.principal_id=$1 AND e.asset_id=d.id)) OR EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id=$1 AND g.asset_id=d.id AND g.group_id::text=` + p + `))
+ )
+)`
 }
 
 func (s *Service) checkGroup(ctx context.Context, principal, id string) error {
