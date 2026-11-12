@@ -54,6 +54,14 @@ func sampleRecommendations(pool []contracts.RecommendationScore, features map[st
 	remaining := append([]contracts.RecommendationScore{}, pool...)
 	out := []contracts.RecommendationScore{}
 	similarity := map[string]float64{}
+	sets := make(map[string]map[string]struct{}, len(pool))
+	for _, candidate := range pool {
+		set := make(map[string]struct{}, len(features[candidate.ID]))
+		for _, feature := range features[candidate.ID] {
+			set[feature] = struct{}{}
+		}
+		sets[candidate.ID] = set
+	}
 	for len(remaining) > 0 && len(out) < 200 {
 		weights := make([]float64, len(remaining))
 		sum := 0.0
@@ -81,11 +89,30 @@ func sampleRecommendations(pool []contracts.RecommendationScore, features map[st
 		out = append(out, item)
 		remaining = append(remaining[:chosen], remaining[chosen+1:]...)
 		for _, c := range remaining {
-			v, _ := overlap(features[item.ID], features[c.ID])
+			v := featureSimilarity(sets[item.ID], sets[c.ID])
 			similarity[c.ID] = math.Max(similarity[c.ID], v)
 		}
 	}
 	return out
+}
+
+// The sampler needs only Jaccard similarity, not the sorted intersection
+// returned by overlap. Sets are built once per candidate for the whole draw.
+func featureSimilarity(a, b map[string]struct{}) float64 {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	common := 0
+	for feature := range a {
+		if _, ok := b[feature]; ok {
+			common++
+		}
+	}
+	union := len(a) + len(b) - common
+	if union == 0 {
+		return 0
+	}
+	return float64(common) / float64(union)
 }
 
 func personalCandidates(cache personalCache, conditions personalConditions) ([]contracts.RecommendationScore, map[string][]string) {

@@ -59,6 +59,28 @@ func TestPersonalSamplingWeights(t *testing.T) {
 	}
 }
 
+func TestFeatureSimilarityMatchesOverlap(t *testing.T) {
+	cases := []struct{ a, b []string }{
+		{nil, nil},
+		{[]string{"x", "x", "y"}, []string{"x", "z", "z"}},
+		{[]string{"x"}, []string{"y"}},
+		{[]string{"x", "y"}, []string{"y", "x"}},
+	}
+	toSet := func(values []string) map[string]struct{} {
+		result := make(map[string]struct{}, len(values))
+		for _, v := range values {
+			result[v] = struct{}{}
+		}
+		return result
+	}
+	for _, tc := range cases {
+		want, _ := overlap(tc.a, tc.b)
+		if got := featureSimilarity(toSet(tc.a), toSet(tc.b)); got != want {
+			t.Fatalf("similarity for %v and %v: got %v, want %v", tc.a, tc.b, got, want)
+		}
+	}
+}
+
 func TestPersonalCandidateFilters(t *testing.T) {
 	blob := "favorite"
 	cache := personalCache{RecommendationPool: contracts.RecommendationPool{Candidates: []contracts.RecommendationScore{{ID: "f", Score: 1}, {ID: "same", Score: 1}, {ID: "good", Score: 0.5}, {ID: "good", Score: 0.5}, {ID: "hidden", Score: 1}}}, Assets: []contracts.RecommendationInput{
