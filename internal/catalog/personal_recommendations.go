@@ -28,7 +28,7 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND `+groupCondition(2)+` ORDER BY a.id`, user(r), group)
+	rows, err := tx.Query(r.Context(), `SELECT a.id,o.blob_id,a.blob_ids,a.series_kind,a.member_ids,a.series_version,a.tags,a.characters,`+favoriteCondition+`,a.mime_type,a.rating FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id WHERE `+displayed+` AND `+groupCondition(2)+` ORDER BY a.id`, user(r), group)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -37,16 +37,15 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 	assets := []contracts.RecommendationInput{}
 	byBlob := map[string]int{}
 	for rows.Next() {
-		a, err := scanAsset(rows)
-		if err != nil {
+		var item contracts.RecommendationInput
+		if err := rows.Scan(&item.ID, &item.BlobID, &item.BlobIDs, &item.SeriesKind, &item.MemberIDs, &item.Version, &item.Tags, &item.Characters, &item.Favorite, &item.MIME, &item.Rating); err != nil {
 			platform.RespondError(w, err)
 			return
 		}
-		sort.Strings(a.Tags)
-		sort.Strings(a.Characters)
-		item := contracts.RecommendationInput{ID: a.ID, BlobID: a.BlobID, BlobIDs: a.BlobIDs, SeriesKind: a.SeriesKind, MemberIDs: a.MemberIDs, Version: a.SeriesVersion, Tags: a.Tags, Characters: a.Characters, Favorite: a.IsFavorite, MIME: a.MIME, Rating: a.Rating}
-		if a.SeriesKind == "" && a.BlobID != nil {
-			if index, ok := byBlob[*a.BlobID]; ok {
+		sort.Strings(item.Tags)
+		sort.Strings(item.Characters)
+		if item.SeriesKind == "" && item.BlobID != nil {
+			if index, ok := byBlob[*item.BlobID]; ok {
 				tags, chars := map[string]bool{}, map[string]bool{}
 				for _, v := range append(assets[index].Tags, item.Tags...) {
 					tags[v] = true
@@ -58,7 +57,7 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 				assets[index].Favorite = assets[index].Favorite || item.Favorite
 				continue
 			}
-			byBlob[*a.BlobID] = len(assets)
+			byBlob[*item.BlobID] = len(assets)
 		}
 		assets = append(assets, item)
 	}
