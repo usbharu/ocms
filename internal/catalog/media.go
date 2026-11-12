@@ -138,6 +138,13 @@ func (s *Service) authorizeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := r.URL.Query().Get("action")
+	if action == "read" {
+		a, err := s.readable(r.Context(), r.PathValue("id"), user(r))
+		if !assetError(w, err) {
+			platform.JSON(w, 200, a)
+		}
+		return
+	}
 	if action != "write" && action != "admin" {
 		platform.Error(w, 400, "INVALID_ACTION")
 		return

@@ -38,12 +38,13 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("GET /api/v1/jobs/{id}", s.getJob)
 	m.HandleFunc("GET /api/v1/assets/{id}/jobs", s.assetJobs)
 	m.HandleFunc("GET /api/v1/assets/{id}/renditions", s.renditions)
+	m.HandleFunc("GET /internal/assets/{id}/renditions", s.renditionsForTransfer)
 	m.HandleFunc("POST /api/v1/assets/{id}/renditions", s.enqueue)
 	return platform.Internal(m)
 }
 func (s *Service) asset(r *http.Request) (catalog.Asset, error) {
 	var a catalog.Asset
-	err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets/"+r.PathValue("id"), r.Header.Get("X-Principal"), nil, &a)
+	err := platform.Call(r.Context(), "GET", s.Catalog+"/internal/assets/"+r.PathValue("id")+"/authorize?action=read", r.Header.Get("X-Principal"), nil, &a)
 	if err == nil && a.BlobID == nil {
 		err = &platform.HTTPError{Status: 409}
 	}
@@ -71,6 +72,14 @@ func (s *Service) authorize(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 func (s *Service) renditions(w http.ResponseWriter, r *http.Request) {
+	s.listRenditions(w, r, false)
+}
+
+func (s *Service) renditionsForTransfer(w http.ResponseWriter, r *http.Request) {
+	s.listRenditions(w, r, true)
+}
+
+func (s *Service) listRenditions(w http.ResponseWriter, r *http.Request, includeAsset bool) {
 	a, err := s.asset(r)
 	if err != nil {
 		platform.RespondError(w, err)
@@ -95,7 +104,11 @@ func (s *Service) renditions(w http.ResponseWriter, r *http.Request) {
 		platform.RespondError(w, rows.Err())
 		return
 	}
-	platform.JSON(w, 200, map[string]any{"renditions": out})
+	response := map[string]any{"renditions": out}
+	if includeAsset {
+		response["asset"] = a
+	}
+	platform.JSON(w, 200, response)
 }
 func (s *Service) enqueue(w http.ResponseWriter, r *http.Request) {
 	var a catalog.Asset

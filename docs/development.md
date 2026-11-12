@@ -427,6 +427,8 @@ Workerは1プロセス内で既定2件のJobを同時に実行します。並列
 
 WorkerとPDFの並列数をともに増やすと、複数のOCR・変換プロセスが同時に動きます。Runtimeはプロセスごとにモデルを別々に読み込むため、`INFERENCE_WORKERS` を増やすとメモリとCPUの使用量が大きくなります。既定1プロセスの推論は引き続き直列で、Workerを増やしても推論が律速になることがあります。環境のCPU・メモリに合わせて段階的に調整し、実データで速度とメモリを確認してください。`INFERENCE_WORKERS` はCompose上でUvicornの `WEB_CONCURRENCY` に渡されます。Workerの並列数が範囲外の場合は起動に失敗します。
 
+プレビューと派生メディアはWorker経由でCatalogの閲覧権限を確認し、結果をTransferへ返します。ファイル本体も閲覧権限を毎回確認します。メディアのブラウザキャッシュは再利用前に再検証するため、権限の剥奪後も古い応答を使用しません。サービスを個別に更新する場合は、Catalog、Worker、Transferの順に更新してください。新しいWorkerとTransferはCatalogの閲覧認可APIに、新しいTransferはWorkerの内部APIに依存します。
+
 変更を反映する例：
 
 ```sh

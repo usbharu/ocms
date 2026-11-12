@@ -61,21 +61,18 @@ func (s *Service) derivative(w http.ResponseWriter, r *http.Request) {
 func (s *Service) rendition(w http.ResponseWriter, r *http.Request) { s.derivedContent(w, r, false) }
 func (s *Service) preview(w http.ResponseWriter, r *http.Request)   { s.derivedContent(w, r, true) }
 func (s *Service) derivedContent(w http.ResponseWriter, r *http.Request, preview bool) {
-	var a catalog.Asset
 	user := r.Header.Get("X-Principal")
-	if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets/"+r.PathValue("id"), user, nil, &a); err != nil {
-		platform.RespondError(w, err)
-		return
-	}
-	if a.BlobID == nil {
-		platform.Error(w, 409, "INDEX_PENDING")
-		return
-	}
 	var list struct {
+		Asset      catalog.Asset         `json:"asset"`
 		Renditions []contracts.Rendition `json:"renditions"`
 	}
-	if err := platform.Call(r.Context(), "GET", os.Getenv("MEDIA_URL")+"/api/v1/assets/"+a.ID+"/renditions", user, nil, &list); err != nil {
+	if err := platform.Call(r.Context(), "GET", os.Getenv("MEDIA_URL")+"/internal/assets/"+r.PathValue("id")+"/renditions", user, nil, &list); err != nil {
 		platform.RespondError(w, err)
+		return
+	}
+	a := list.Asset
+	if a.ID == "" || a.BlobID == nil {
+		platform.Error(w, 503, "SERVICE_UNAVAILABLE")
 		return
 	}
 	var selected *contracts.Rendition

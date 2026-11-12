@@ -127,6 +127,13 @@ func TestGroupsDatabase(t *testing.T) {
 		return id
 	}
 	a, b, c := asset("A"), asset("B"), asset("C")
+	readAuth := "/internal/assets/" + a + "/authorize?action=read"
+	call(cat.URL, "GET", readAuth, owner, nil, 200, "")
+	call(cat.URL, "GET", readAuth, other, nil, 404, "")
+	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, a, other)
+	call(cat.URL, "GET", readAuth, other, nil, 200, "")
+	exec(`DELETE FROM catalog.grants WHERE asset_id=$1 AND principal_id=$2`, a, other)
+	call(cat.URL, "GET", readAuth, other, nil, 404, "")
 	list := func(path, user string, want []string, total int) {
 		t.Helper()
 		var out struct {
