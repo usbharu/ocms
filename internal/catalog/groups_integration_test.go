@@ -128,7 +128,10 @@ func TestGroupsDatabase(t *testing.T) {
 	}
 	a, b, c := asset("A"), asset("B"), asset("C")
 	readAuth := "/internal/assets/" + a + "/authorize?action=read"
-	call(cat.URL, "GET", readAuth, owner, nil, 200, "")
+	var readable catalog.Asset
+	if err := json.Unmarshal(call(cat.URL, "GET", readAuth, owner, nil, 200, ""), &readable); err != nil || readable.ID != a || readable.MIME != "image/png" || readable.BlobID == nil {
+		t.Fatalf("read authorization returned wrong delivery metadata: %+v (%v)", readable, err)
+	}
 	call(cat.URL, "GET", readAuth, other, nil, 404, "")
 	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, a, other)
 	call(cat.URL, "GET", readAuth, other, nil, 200, "")

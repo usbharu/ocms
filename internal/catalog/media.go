@@ -139,7 +139,12 @@ func (s *Service) authorizeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	action := r.URL.Query().Get("action")
 	if action == "read" {
-		a, err := s.readable(r.Context(), r.PathValue("id"), user(r))
+		var a struct {
+			ID     string  `json:"asset_id"`
+			MIME   string  `json:"mime_type"`
+			BlobID *string `json:"blob_id,omitempty"`
+		}
+		err := s.DB.QueryRow(r.Context(), `SELECT a.id,a.mime_type,o.blob_id FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id WHERE `+allowed+` AND a.id=$2`, user(r), r.PathValue("id")).Scan(&a.ID, &a.MIME, &a.BlobID)
 		if !assetError(w, err) {
 			platform.JSON(w, 200, a)
 		}
