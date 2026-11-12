@@ -483,7 +483,13 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		platform.RespondError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE a.id IN (SELECT id FROM (SELECT a.id,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END `+order+`) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `+where+`) ranked WHERE duplicate_rank=1)`+order+` LIMIT $8 OFFSET $9`, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group, options.limit, options.offset)
+	pageQuery := selectAsset + `WHERE a.id IN (SELECT id FROM (SELECT a.id,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ` + order + `) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where + `) ranked WHERE duplicate_rank=1)` + order + ` LIMIT $8 OFFSET $9`
+	if !favorites {
+		// Select the page before expanding the expensive display metadata and
+		// favorite state. The same ordering selects duplicate representatives.
+		pageQuery = selectAsset + `WHERE a.id IN (SELECT id FROM (SELECT a.id,a.created_at,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ` + order + `) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where + `) ranked WHERE duplicate_rank=1 ORDER BY created_at DESC,id DESC LIMIT $8 OFFSET $9)` + order
+	}
+	rows, err := s.DB.Query(r.Context(), pageQuery, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group, options.limit, options.offset)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
