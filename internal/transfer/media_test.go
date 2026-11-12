@@ -70,6 +70,31 @@ func TestWorkerRenditionReadRequiresJobAuthorization(t *testing.T) {
 	}
 }
 
+func TestPreviewRequiresAuthorizedRenditionLookup(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			calls := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.URL.Path != "/internal/assets/asset-id/renditions" || r.Header.Get("X-Principal") != "reader" {
+					t.Error("incorrect authorized lookup")
+				}
+				w.WriteHeader(status)
+			}))
+			defer upstream.Close()
+			t.Setenv("MEDIA_URL", upstream.URL)
+			req := httptest.NewRequest("GET", "/api/v1/assets/asset-id/preview", nil)
+			req.SetPathValue("id", "asset-id")
+			req.Header.Set("X-Principal", "reader")
+			response := httptest.NewRecorder()
+			(&Service{}).preview(response, req)
+			if response.Code != status || calls != 1 {
+				t.Fatalf("status=%d calls=%d", response.Code, calls)
+			}
+		})
+	}
+}
+
 func TestPreviewSelectionPrefersDisplayAndFallsBack(t *testing.T) {
 	items := []contracts.Rendition{
 		{Profile: "pdf.page-2-v1", MIME: "image/png"},

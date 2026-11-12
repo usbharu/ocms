@@ -159,7 +159,7 @@ func ParseRange(value string, size int64) (start, end int64, partial bool, err e
 func (s *Service) download(w http.ResponseWriter, r *http.Request) {
 	principal := r.Header.Get("X-Principal")
 	var a catalog.Asset
-	if err := platform.Call(r.Context(), "GET", s.Catalog+"/api/v1/assets/"+r.PathValue("id"), principal, nil, &a); err != nil {
+	if err := platform.Call(r.Context(), "GET", s.Catalog+"/internal/assets/"+r.PathValue("id")+"/authorize?action=read", principal, nil, &a); err != nil {
 		platform.RespondError(w, err)
 		return
 	}

@@ -124,6 +124,13 @@ func TestSeriesDatabase(t *testing.T) {
 		t.Fatal("wrong aggregate metadata")
 	}
 	call(cat.URL, "GET", "/api/v1/series/"+comp.ID, other, nil, 404)
+	readAuth := "/internal/assets/" + comp.ID + "/authorize?action=read"
+	call(cat.URL, "GET", readAuth, owner, nil, 200)
+	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, comp.ID, other)
+	call(cat.URL, "GET", readAuth, other, nil, 404)
+	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$3,'read'),($2,$3,'read')`, a.ID, b.ID, other)
+	call(cat.URL, "GET", readAuth, other, nil, 200)
+	exec(`DELETE FROM catalog.grants WHERE principal_id=$1 AND asset_id=ANY($2::uuid[])`, other, []string{comp.ID, a.ID, b.ID})
 	call(cat.URL, "POST", "/api/v1/series", owner, map[string]any{"name": "duplicate", "kind": "composite", "member_ids": []string{a.ID, b.ID}}, 400)
 	var list struct {
 		Assets []catalog.Asset

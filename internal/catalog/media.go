@@ -138,6 +138,18 @@ func (s *Service) authorizeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := r.URL.Query().Get("action")
+	if action == "read" {
+		var a struct {
+			ID     string  `json:"asset_id"`
+			MIME   string  `json:"mime_type"`
+			BlobID *string `json:"blob_id,omitempty"`
+		}
+		err := s.DB.QueryRow(r.Context(), `SELECT a.id,a.mime_type,o.blob_id FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id WHERE `+allowed+` AND a.id=$2`, user(r), r.PathValue("id")).Scan(&a.ID, &a.MIME, &a.BlobID)
+		if !assetError(w, err) {
+			platform.JSON(w, 200, a)
+		}
+		return
+	}
 	if action != "write" && action != "admin" {
 		platform.Error(w, 400, "INVALID_ACTION")
 		return

@@ -801,6 +801,8 @@ WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を
 | 呼び出し | 用途 |
 |---|---|
 | `Catalog.Authorize(assetId, principal, action)` | 単一Asset ACL |
+| `GET /internal/assets/{assetId}/authorize?action=read` | 閲覧ACLを確認し、配信に必要な `asset_id`・`mime_type`・`blob_id` を返す。Blob未確定時は `blob_id` を省略する |
+| `GET /internal/assets/{assetId}/renditions` | WorkerがCatalogで閲覧ACLを確認し、Assetと派生メディア一覧をTransferへ返す |
 | `Catalog.BatchAuthorize(assetIds, principal, read)` | 検索結果のACL |
 | `GET /internal/assets/{assetId}/recommendation-candidates` | 比較元と候補のACLを確認し、Asset別メタデータの上位1,000件の `asset_ids` を返す |
 | `Catalog.CompleteUpload(uploadId, blobId)` | Upload完了・参照確定・Outbox |

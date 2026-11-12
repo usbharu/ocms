@@ -127,6 +127,16 @@ func TestGroupsDatabase(t *testing.T) {
 		return id
 	}
 	a, b, c := asset("A"), asset("B"), asset("C")
+	readAuth := "/internal/assets/" + a + "/authorize?action=read"
+	var readable catalog.Asset
+	if err := json.Unmarshal(call(cat.URL, "GET", readAuth, owner, nil, 200, ""), &readable); err != nil || readable.ID != a || readable.MIME != "image/png" || readable.BlobID == nil {
+		t.Fatalf("read authorization returned wrong delivery metadata: %+v (%v)", readable, err)
+	}
+	call(cat.URL, "GET", readAuth, other, nil, 404, "")
+	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, a, other)
+	call(cat.URL, "GET", readAuth, other, nil, 200, "")
+	exec(`DELETE FROM catalog.grants WHERE asset_id=$1 AND principal_id=$2`, a, other)
+	call(cat.URL, "GET", readAuth, other, nil, 404, "")
 	list := func(path, user string, want []string, total int) {
 		t.Helper()
 		var out struct {
@@ -267,6 +277,16 @@ func TestGroupsDatabase(t *testing.T) {
 	if page1.Total != 1 || len(page1.Assets) != 1 || page2.Total != 1 || len(page2.Assets) != 0 {
 		t.Fatalf("duplicate pagination: %+v %+v", page1, page2)
 	}
+	pageOther := asset("duplicate-page-probe")
+	exec(`UPDATE catalog.assets SET created_at=now()-interval '2 minutes' WHERE id=$1`, x)
+	exec(`UPDATE catalog.assets SET created_at=now()-interval '1 minute' WHERE id=$1`, pageOther)
+	exec(`UPDATE catalog.assets SET created_at=now() WHERE id=$1`, y)
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?q=duplicate-&limit=1&offset=0", owner, nil, 200, ""), &page1)
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?q=duplicate-&limit=1&offset=1", owner, nil, 200, ""), &page2)
+	if page1.Total != 2 || page2.Total != 2 || len(page1.Assets) != 1 || len(page2.Assets) != 1 || page1.Assets[0].ID != y || page2.Assets[0].ID != pageOther {
+		t.Fatalf("duplicate representative and page ordering: %+v %+v", page1, page2)
+	}
+	exec(`UPDATE catalog.assets SET deleted_at=now() WHERE id=$1`, pageOther)
 	call(cat.URL, "PATCH", "/api/v1/assets/"+x, owner, map[string]any{"tags": []string{"merged"}, "characters": []string{"hero"}}, 200, "")
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+y, owner, nil, 200, ""), &details)
 	if !reflect.DeepEqual(details.Tags, []string{"merged"}) || !reflect.DeepEqual(details.Characters, []string{"hero"}) {
