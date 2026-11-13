@@ -1,5 +1,5 @@
 numpy==2.5.4
-transformers==5.22.2
+transformers==5.23.0
 huggingface-hub==2.4.0
 fastapi==0.162.5
 uvicorn==0.54.0
