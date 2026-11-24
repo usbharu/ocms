@@ -12,16 +12,17 @@ import (
 	"ocms/internal/platform"
 )
 
-// Resolve the readable favorites once, including favorites on composite
-// members. A favorite applies to the Asset that stores it.
-const recommendationDatasetSelect = `
+// Resolve the readable favorites once through favoriteTargetsCTE. This covers
+// direct favorites, composite members and Assets that display a favorited Blob
+// through an alias, matching the favorites listing after duplicate merges.
+const recommendationDatasetSelect = favoriteTargetsCTE + `
 SELECT a.id,o.blob_id,` + displayBlobIDs + `,a.series_kind,a.member_ids,a.series_version,
        a.tags,a.characters,
-       CASE WHEN a.series_kind='' THEN f.asset_id IS NOT NULL ELSE ` + favoriteCondition + ` END,
+       ft.asset_id IS NOT NULL,
        a.mime_type,a.rating
 FROM catalog.display_assets a
 LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id
-LEFT JOIN catalog.asset_favorites f ON f.asset_id=a.id AND f.principal_id=$1`
+LEFT JOIN favorite_targets ft ON ft.asset_id=a.id`
 
 // A repeatable-read snapshot binds ACL-filtered features to their structure. The fingerprint also
 // includes display filters so persisted sessions cannot survive rating changes.

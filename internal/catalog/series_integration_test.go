@@ -193,6 +193,38 @@ func TestSeriesDatabase(t *testing.T) {
 	if !decode(call(cat.URL, "GET", "/api/v1/assets/"+comp.ID, owner, nil, 200)).IsFavorite {
 		t.Fatal("favorite not inherited")
 	}
+	// Assets that display the same Blob through an alias must inherit the
+	// favorite in the recommendation dataset too.
+	var alias string
+	if e := db.QueryRow(ctx, `INSERT INTO catalog.assets(owner_id,filename,mime_type,rating,status,tags) VALUES($1,'alias.jpg','image/jpeg','general','ready',ARRAY['alias']) RETURNING id`, owner).Scan(&alias); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := db.Exec(ctx, `INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES($1,$2)`, alias, *a.BlobID); e != nil {
+		t.Fatal(e)
+	}
+	var dataset contracts.RecommendationDataset
+	if e := json.Unmarshal(call(cat.URL, "GET", "/internal/recommendation-dataset", owner, nil, 200), &dataset); e != nil {
+		t.Fatal(e)
+	}
+	matched := 0
+	for _, item := range dataset.Assets {
+		hasBlob := item.BlobID != nil && *item.BlobID == *a.BlobID
+		for _, blob := range item.BlobIDs {
+			if blob == *a.BlobID {
+				hasBlob = true
+			}
+		}
+		if !hasBlob {
+			continue
+		}
+		matched++
+		if !item.Favorite {
+			t.Fatalf("blob alias favorite not resolved for %s", item.ID)
+		}
+	}
+	if matched == 0 {
+		t.Fatal("favorite blob missing from recommendation dataset")
+	}
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?favorites=true&kind=series", owner, nil, 200), &list)
 	if list.Total != 1 || len(list.Assets) != 1 || list.Assets[0].ID != comp.ID || !list.Assets[0].IsFavorite {
 		t.Fatalf("member favorite did not resolve to one composite: %+v", list)
