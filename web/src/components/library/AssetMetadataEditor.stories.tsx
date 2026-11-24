@@ -78,6 +78,26 @@ export const EmptyAndDuplicate: Story = {
   },
 };
 
+export const SpaceToUnderscore: Story = {
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.type(
+      canvas.getByRole('textbox', { name: 'タグ' }),
+      'new tag{Enter}',
+    );
+    await expect(args.onSave).toHaveBeenCalledWith({
+      tags: ['旅行', '風景', 'new_tag'],
+    });
+    await userEvent.type(
+      canvas.getByRole('textbox', { name: 'キャラクター' }),
+      'hero name{Enter}',
+    );
+    await expect(args.onSave).toHaveBeenCalledWith({
+      characters: ['hero_name'],
+    });
+  },
+};
+
 export const Composing: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);

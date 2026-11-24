@@ -46,6 +46,7 @@ export function AssetMetadataEditor({
   const pendingFilename = useRef<string | null>(null);
   const composing = useRef(false);
   const bytes = (value: string) => new TextEncoder().encode(value).length;
+  const normalizeTag = (value: string) => value.trim().replaceAll(' ', '_');
 
   useEffect(() => {
     if (pending.current === 0 && !failures.current.has('rating'))
@@ -142,7 +143,7 @@ export function AssetMetadataEditor({
   }
 
   function addTag() {
-    const tag = tagInput.trim();
+    const tag = normalizeTag(tagInput);
     if (!tag) return;
     if (tags.includes(tag)) {
       setError('このタグは追加済みです。');
@@ -158,7 +159,7 @@ export function AssetMetadataEditor({
   }
 
   function addCharacter() {
-    const character = characterInput.trim();
+    const character = normalizeTag(characterInput);
     if (!character) return;
     if (characters.includes(character)) {
       setError('このキャラクターは追加済みです。');

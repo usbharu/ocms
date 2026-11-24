@@ -55,6 +55,8 @@ for name, upload in uploads.items():
     cached = json.loads(sql(f"SELECT array_to_json(tags) FROM catalog.wd14_results WHERE blob_id='{blob}'"))
     assert cached, 'synthetic visual fixture should receive general tags'
     characters = json.loads(sql(f"SELECT array_to_json(characters) FROM catalog.wd14_character_results WHERE blob_id='{blob}'"))
+    assert all(' ' not in tag for tag in cached), 'inferred tags contain spaces'
+    assert all(' ' not in character for character in characters), 'inferred characters contain spaces'
     assert 'wd14-manual-character-alice' in asset['characters'], 'manual character lost'
     assert set(characters).issubset(asset['characters']), 'inferred characters missing'
     assert sql(f"SELECT wd14_characters_tagged::text FROM catalog.assets WHERE id='{upload['asset_id']}'") == 'true'

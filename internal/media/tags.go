@@ -33,10 +33,11 @@ func mergeTags(scores map[string]float64, result contracts.TagResult) error {
 		return processingError("INVALID_TAG_RESULT")
 	}
 	for _, tag := range result.Tags {
-		if strings.TrimSpace(tag.Name) == "" || len(tag.Name) > 256 || math.IsNaN(tag.Score) || math.IsInf(tag.Score, 0) || tag.Score < contracts.TagThreshold || tag.Score > 1 {
+		name := contracts.NormalizeTag(tag.Name)
+		if name == "" || len(name) > 256 || math.IsNaN(tag.Score) || math.IsInf(tag.Score, 0) || tag.Score < contracts.TagThreshold || tag.Score > 1 {
 			return processingError("INVALID_TAG_RESULT")
 		}
-		scores[tag.Name] = max(scores[tag.Name], tag.Score)
+		scores[name] = max(scores[name], tag.Score)
 	}
 	return nil
 }
@@ -46,10 +47,11 @@ func mergeCharacters(scores map[string]float64, result contracts.TagResult) erro
 		return processingError("INVALID_TAG_RESULT")
 	}
 	for _, tag := range result.Characters {
-		if strings.TrimSpace(tag.Name) == "" || len(tag.Name) > 256 || math.IsNaN(tag.Score) || math.IsInf(tag.Score, 0) || tag.Score < contracts.CharacterThreshold || tag.Score > 1 {
+		name := contracts.NormalizeTag(tag.Name)
+		if name == "" || len(name) > 256 || math.IsNaN(tag.Score) || math.IsInf(tag.Score, 0) || tag.Score < contracts.CharacterThreshold || tag.Score > 1 {
 			return processingError("INVALID_TAG_RESULT")
 		}
-		scores[tag.Name] = max(scores[tag.Name], tag.Score)
+		scores[name] = max(scores[name], tag.Score)
 	}
 	return nil
 }

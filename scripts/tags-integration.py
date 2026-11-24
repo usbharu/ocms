@@ -34,6 +34,10 @@ try:
     alice.call('PATCH', '/api/v1/assets/' + ids[1], {'tags': [b]})
     counts = alice.call('GET', '/api/v1/tags?q=' + prefix)[2]['tags']
     assert counts == [{'name': b, 'asset_count': 3}, {'name': a, 'asset_count': 2}]
+    # Manual labels use the same underscore form as automatic tags.
+    alice.call('PATCH', '/api/v1/assets/' + ids[1], {'tags': ['spaced tag', 'spaced_tag', ' spaced tag '], 'characters': ['hero name', 'hero_name']})
+    detail = alice.call('GET', '/api/v1/assets/' + ids[1])[2]
+    assert detail['tags'] == ['spaced_tag'] and detail['characters'] == ['hero_name'], detail
     alice.call('DELETE', '/api/v1/assets/' + ids[0], expected=204)
     assert alice.call('GET', '/api/v1/tags?q=' + prefix)[2]['links'][0]['asset_count'] == 1
     # Exercise result and graph caps without uploads or media processing.

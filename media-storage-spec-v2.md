@@ -626,9 +626,9 @@ Workerは派生画像を `GET /internal/blobs/{sourceBlobId}/content?rendition={
 ### 8.3 CL Tagger v2による一般タグ・キャラクター・レーティングの自動付与
 
 - メディア解析完了後、画像・動画・PDFに `tags.generate` Jobを作成する。音声は対象外とする。リース・期限・最大4回の再試行を既存Jobと共有する。
-- Runtimeは `cella110n/cl_tagger_v2` の `v2_00`（リビジョン `b57909b8e9c63f71e208a26473e7aabdf45ed6b6`）をCPUで実行し、一般タグとキャラクターをそれぞれ閾値0.55で分けて返す。レーティングは一般タグ・キャラクターと分離し、4段階のうち最大スコアの段階を返す。同点の場合は制限の強い段階を採用する。モデルはGatedでCL Tagger v2 Model License v1.0の対象であり、モデルページでライセンスに同意したアカウントの`HF_TOKEN`を使って公式リポジトリから取得する。モデルをイメージへ同梱・再配布しない。
+- Runtimeは `cella110n/cl_tagger_v2` の `v2_00`（リビジョン `b57909b8e9c63f71e208a26473e7aabdf45ed6b6`）をCPUで実行し、一般タグとキャラクターをそれぞれ閾値0.55で分けて返す。一般タグ・キャラクターの名前は前後の空白を除き、内部の空白を `_` へ置換してから返す。正規化後に同名となる候補は最大スコアの1件に統合する。レーティングは一般タグ・キャラクターと分離し、4段階のうち最大スコアの段階を返す。同点の場合は制限の強い段階を採用する。モデルはGatedでCL Tagger v2 Model License v1.0の対象であり、モデルページでライセンスに同意したアカウントの`HF_TOKEN`を使って公式リポジトリから取得する。モデルをイメージへ同梱・再配布しない。
 - 画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定する。タグごとの最大スコアで集約し、上位256タグを採用する。入力は透過部分を白背景へ合成したRGBを直接384×384へ双三次縮小し、mean=std=0.5で正規化する。
-- Workerが結果をCatalogへ送る際、CatalogはWorkerに実行中JobのBlob・リース・期限を照会して確認する。Catalogは `catalog.wd14_results` にBlob単位の推論結果とモデル情報を保存し、各Assetの `tags` へ一度だけ追加する。適用済みかどうかは `catalog.assets.wd14_tagged` で管理する。
+- Workerが結果をCatalogへ送る際、CatalogはWorkerに実行中JobのBlob・リース・期限を照会して確認する。WorkerとCatalogもタグ名を同じ規則で正規化し、表記の異なる名前を保存しない。Catalogは `catalog.wd14_results` にBlob単位の推論結果とモデル情報を保存し、各Assetの `tags` へ一度だけ追加する。適用済みかどうかは `catalog.assets.wd14_tagged` で管理する。
 - タグの追加は既存タグを保持する原子的な更新とする。手動タグとの合計上限は512件で、上限を超える場合は既存タグを優先する。利用者は自動付与後のタグを編集・削除でき、Jobの再試行で削除済みタグを復活させない。後から作成した重複Assetには推論結果だけをコピーし、別Assetの手動タグをコピーしない。状態同期で追加漏れを補う。
 - 既存の一覧・検索・ACLを利用する。タグの内容・推論入力・元ファイル名はログやTraceに記録しない。
 
@@ -637,6 +637,8 @@ Workerは派生画像を `GET /internal/blobs/{sourceBlobId}/content?rendition={
 レーティングは `general < sensitive < questionable < explicit` の順とし、動画・PDFはサンプルフレーム・全ページの判定のうち最も制限の強い段階を採用する。音声などの対象外ファイルと判定前のAssetは `unrated` とする。推論結果は `catalog.wd14_rating_results(blob_id, rating, model_id, model_revision, created_at)` に保存する。`rating` は4段階のいずれかに制約し、Blobを主キーとする。Assetは `rating`・`rating_manual`・`wd14_rated` を持ち、Asset行のロック下で自動判定を一度だけ適用する。手動設定後は再試行・状態同期でも上書きしない。重複Assetへは保存した推論結果だけを適用する。008は完了済みタグJobを再実行し、既存ファイルも判定する。一般タグとキャラクターの適用済み状態は保持する。
 
 015は旧WD14の推論結果を破棄し、既存のタグ・キャラクター・レーティングを保持したまま、完了済みのタグJobを再実行してCL Tagger v2の結果を追加する。既存タグが多い場合は512件の上限までしか追加されない。テーブル・列名は移行前との互換性のため`wd14_*`を維持する。
+
+017は既存のAssetタグ・キャラクター・推論結果に残る空白を`_`へ置換し、正規化後に同名となる要素は先に現れたものを残して統合する。空のタグは削除する。完了済みJobの再実行や再推論は行わない。
 
 ### 8.4 派生Blobの再利用
 
@@ -739,7 +741,7 @@ GET /api/v1/assets?limit=24&offset=24&kind=image
 {"assets":[],"total":24}
 ```
 
-Asset応答の `rating` は `general`・`sensitive`・`questionable`・`explicit`・`unrated` のいずれかとする。`PATCH /api/v1/assets/{assetId}` の `rating` で手動設定し、省略時は保持する。`unrated` の手動指定も自動判定から保護する。
+Asset応答の `rating` は `general`・`sensitive`・`questionable`・`explicit`・`unrated` のいずれかとする。`PATCH /api/v1/assets/{assetId}` の `rating` で手動設定し、省略時は保持する。`unrated` の手動指定も自動判定から保護する。同APIの `tags` と `characters` は前後の空白を除き、内部の空白を `_` へ置換して保存する。正規化後に重複する要素は先に現れたものを残す。
 
 一覧・完全一致・知覚類似・推薦のGET APIは `ratings=general,sensitive` のようなカンマ区切り条件を受け付け、`POST /api/v1/search` は同名の文字列配列を受け付ける。省略・JSONのnullは全段階、空文字列・空配列は0件とする。不正値は400で拒否する。Catalogの認可を保ち、件数・結果上限・ページ分割の前にAsset単位で条件を適用する。タグ・キャラクター・種類の条件とはANDで結合する。
 

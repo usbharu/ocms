@@ -49,17 +49,25 @@ def load_vocabulary(path):
     return labels
 
 
+def normalize_tag(name):
+    return name.strip().replace(' ', '_')
+
+
 def select_tags(labels, scores, category='general', threshold=THRESHOLD):
     if len(labels) != len(scores):
         raise ValueError('invalid tagger output')
-    tags = []
+    tags = {}
     for label, score in zip(labels, scores):
         score = float(score)
         if not math.isfinite(score) or not 0 <= score <= 1:
             raise ValueError('invalid tagger output')
         if label['category'] == category and score >= threshold:
-            tags.append({'name': label['name'], 'score': score})
-    return sorted(tags, key=lambda tag: (-tag['score'], tag['name']))[:256]
+            name = normalize_tag(label['name'])
+            if not name:
+                raise ValueError('invalid tagger output')
+            tags[name] = max(tags.get(name, 0.0), score)
+    selected = [{'name': name, 'score': score} for name, score in tags.items()]
+    return sorted(selected, key=lambda tag: (-tag['score'], tag['name']))[:256]
 
 
 def select_rating(labels, scores):
