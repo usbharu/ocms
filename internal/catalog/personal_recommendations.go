@@ -4,13 +4,33 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/jackc/pgx/v5"
 	"net/http"
 	"sort"
 
+	"github.com/jackc/pgx/v5"
 	"ocms/internal/contracts"
 	"ocms/internal/platform"
 )
+
+// Resolve the readable favorites' Blob IDs once, including favorites on
+// aliases and composite members. Series still use their member-aware rule.
+const recommendationDatasetSelect = `
+SELECT a.id,o.blob_id,` + displayBlobIDs + `,a.series_kind,a.member_ids,a.series_version,
+       a.tags,a.characters,
+       CASE WHEN a.series_kind='' THEN
+         f.asset_id IS NOT NULL OR COALESCE(o.blob_id IN (
+           SELECT original.blob_id
+           FROM catalog.asset_favorites favorite
+           JOIN catalog.asset_originals original ON original.asset_id=favorite.asset_id
+           JOIN catalog.assets d ON d.id=favorite.asset_id
+           WHERE favorite.principal_id=$1 AND d.deleted_at IS NULL
+           AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1))
+         ), false)
+       ELSE ` + favoriteCondition + ` END,
+       a.mime_type,a.rating
+FROM catalog.display_assets a
+LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id
+LEFT JOIN catalog.asset_favorites f ON f.asset_id=a.id AND f.principal_id=$1`
 
 // A repeatable-read snapshot binds ACL-filtered features to their structure. The fingerprint also
 // includes display filters so persisted sessions cannot survive rating changes.
@@ -28,7 +48,7 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), `SELECT a.id,o.blob_id,a.blob_ids,a.series_kind,a.member_ids,a.series_version,a.tags,a.characters,`+favoriteCondition+`,a.mime_type,a.rating FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id WHERE `+displayed+` AND `+groupCondition(2)+` ORDER BY a.id`, user(r), group)
+	rows, err := tx.Query(r.Context(), recommendationDatasetSelect+` WHERE `+displayed+` AND `+groupCondition(2)+` ORDER BY a.id`, user(r), group)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

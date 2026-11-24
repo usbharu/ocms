@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,29 @@ const recommendationEngineVersion = "tfidf-v1"
 type personalCache struct {
 	contracts.RecommendationPool
 	Assets []contracts.RecommendationInput `json:"assets"`
+}
+
+// Keep the features needed for future draws and explanations. The engine has
+// already learned the full corpus, so the remaining rows are never reused.
+func (cache *personalCache) retainCandidateFeatures() {
+	candidates := make(map[string]bool, len(cache.Candidates))
+	for _, candidate := range cache.Candidates {
+		candidates[candidate.ID] = true
+	}
+	cache.Assets = slices.DeleteFunc(cache.Assets, func(asset contracts.RecommendationInput) bool {
+		return !asset.Favorite && !candidates[asset.ID]
+	})
+}
+
+func commonFavoriteLabels(favorites map[string]bool, labels []string) []string {
+	common := make([]string, 0)
+	for _, label := range labels {
+		if favorites[label] {
+			common = append(common, label)
+		}
+	}
+	sort.Strings(common)
+	return slices.Compact(common)
 }
 
 type personalConditions struct {
@@ -230,10 +254,6 @@ func (s *Service) personalRecommendations(w http.ResponseWriter, r *http.Request
 	cacheHit := false
 	err = tx.QueryRow(ctx, `SELECT fingerprint,pool FROM search.recommendation_cache WHERE principal_id=$1 AND engine_version=$2 AND expires_at>now()`, principal, recommendationEngineVersion).Scan(&fingerprint, &raw)
 	if err == nil {
-		if err = json.Unmarshal(raw, &cache); err != nil {
-			fail(err)
-			return
-		}
 		cacheHit = true
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		fail(err)
@@ -246,7 +266,12 @@ func (s *Service) personalRecommendations(w http.ResponseWriter, r *http.Request
 		return
 	}
 	cacheHit = cacheHit && data.Unchanged
-	if !cacheHit {
+	if cacheHit {
+		if err = json.Unmarshal(raw, &cache); err != nil {
+			fail(err)
+			return
+		}
+	} else {
 		cache.Assets = data.Assets
 		if cache.Assets == nil {
 			cache.Assets = []contracts.RecommendationInput{}
@@ -288,6 +313,7 @@ func (s *Service) personalRecommendations(w http.ResponseWriter, r *http.Request
 				return
 			}
 			cache.RecommendationPool = response.RecommendationPool
+			cache.retainCandidateFeatures()
 			raw, err = json.Marshal(cache)
 			if err != nil {
 				fail(err)
@@ -386,18 +412,22 @@ func (s *Service) personalRecommendations(w http.ResponseWriter, r *http.Request
 		platform.Error(w, 409, "RECOMMENDATION_SESSION_STALE")
 		return
 	}
-	tags, chars := []string{}, []string{}
+	tags, chars := map[string]bool{}, map[string]bool{}
 	for _, a := range cache.Assets {
 		if a.Favorite {
-			tags = append(tags, a.Tags...)
-			chars = append(chars, a.Characters...)
+			for _, tag := range a.Tags {
+				tags[tag] = true
+			}
+			for _, character := range a.Characters {
+				chars[character] = true
+			}
 		}
 	}
 	out := []recommendation{}
 	for i := start; i < stop; i++ {
 		a := byID[ids[i]]
-		_, commonTags := overlap(tags, a.Tags)
-		_, commonChars := overlap(chars, a.Characters)
+		commonTags := commonFavoriteLabels(tags, a.Tags)
+		commonChars := commonFavoriteLabels(chars, a.Characters)
 		out = append(out, recommendation{result: result{Asset: a}, Score: 100 * scores[i], CommonTags: commonTags, CommonCharacters: commonChars})
 	}
 	// Bounded retention; no external janitor is needed. Other principals' rows are

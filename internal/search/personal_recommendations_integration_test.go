@@ -73,6 +73,8 @@ func TestPersonalRecommendationsDatabase(t *testing.T) {
 				exec(`DELETE FROM search.`+table+` WHERE principal_id=$1`, p)
 			}
 		}
+		exec(`DELETE FROM catalog.series_members WHERE series_id=ANY($1::uuid[])`, ids)
+		exec(`DELETE FROM catalog.series WHERE asset_id=ANY($1::uuid[])`, ids)
 		exec(`DELETE FROM catalog.grants WHERE asset_id=ANY($1::uuid[])`, ids)
 		exec(`DELETE FROM catalog.asset_originals WHERE asset_id=ANY($1::uuid[])`, ids)
 		exec(`DELETE FROM catalog.assets WHERE id=ANY($1::uuid[])`, ids)
@@ -98,6 +100,8 @@ func TestPersonalRecommendationsDatabase(t *testing.T) {
 	}
 	shared, hidden := makeAsset(other), makeAsset(other)
 	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, shared, owner)
+	unrelated := makeAsset(owner)
+	exec(`UPDATE catalog.assets SET tags='{}' WHERE id=$1`, unrelated)
 	token := os.Getenv("INTERNAL_TOKEN")
 	if len(token) < 32 {
 		token = strings.Repeat("r", 32)
@@ -184,10 +188,20 @@ func TestPersonalRecommendationsDatabase(t *testing.T) {
 	if first.Status != "ready" || first.Total != 36 || len(first.Assets) != 36 || calls != 1 {
 		t.Fatalf("bad initial pool: total %d, page %d, engine %d", first.Total, len(first.Assets), calls)
 	}
+	var cachedAssets int
+	if err := admin.QueryRow(ctx, `SELECT jsonb_array_length(pool->'assets') FROM search.recommendation_cache WHERE principal_id=$1`, owner).Scan(&cachedAssets); err != nil {
+		t.Fatal(err)
+	}
+	if cachedAssets != first.Total+1 {
+		t.Fatalf("cache must retain only the favorite and scored inputs, got %d", cachedAssets)
+	}
 	seen := map[string]bool{}
 	for _, a := range first.Assets {
-		if a.ID == seed || a.ID == duplicate || a.ID == hidden {
+		if a.ID == seed || a.ID == duplicate || a.ID == hidden || a.ID == unrelated {
 			t.Fatal("exclusion failed")
+		}
+		if !reflect.DeepEqual(a.CommonTags, []string{"x"}) {
+			t.Fatal("favorite explanation was lost")
 		}
 		seen[a.ID] = true
 	}
@@ -285,6 +299,56 @@ func TestPersonalRecommendationsDatabase(t *testing.T) {
 	call(owner, "?kind=bad", 400)
 	call(owner, "?page=2", 400)
 	call(owner, "?session_id=bad", 400)
+
+	// An alias can make the shared Blob a favorite only while it is readable.
+	exec(`DELETE FROM catalog.asset_favorites WHERE principal_id=$1`, owner)
+	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES($1,$2)`, hidden, blob)
+	exec(`INSERT INTO catalog.asset_favorites(principal_id,asset_id) VALUES($1,$2)`, owner, hidden)
+	if out := call(owner, "", 200); out.Status != "insufficient_information" {
+		t.Fatal("an inaccessible alias influenced the favorite profile")
+	}
+	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, hidden, owner)
+	if out := call(owner, "", 200); out.Status != "ready" || out.Total == 0 {
+		t.Fatal("a readable alias did not contribute its favorite Blob")
+	}
+
+	// Direct IDs, member IDs and Blob IDs all resolve to the same composite.
+	members := []string{makeAsset(owner), makeAsset(owner)}
+	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) SELECT unnest($1::uuid[]),gen_random_uuid()`, members)
+	var composite catalog.Asset
+	if err := platform.Call(ctx, "POST", cat.URL+"/api/v1/series", owner, map[string]any{
+		"kind": "composite", "name": "generated composite", "member_ids": members,
+	}, &composite); err != nil {
+		t.Fatal(err)
+	}
+	ids = append(ids, composite.ID)
+	if len(composite.BlobIDs) != 2 {
+		t.Fatal("composite lost its original files")
+	}
+	matches := map[string]any{"asset_ids": []string{composite.ID, members[0]}, "blob_ids": composite.BlobIDs}
+	var authorized struct{ Assets []catalog.Asset }
+	for _, input := range []map[string]any{
+		{"asset_ids": []string{members[0]}},
+		{"blob_ids": composite.BlobIDs},
+		matches,
+	} {
+		if err := platform.Call(ctx, "POST", cat.URL+"/internal/authorize-blobs", owner, input, &authorized); err != nil {
+			t.Fatal(err)
+		}
+		if len(authorized.Assets) != 1 || authorized.Assets[0].ID != composite.ID {
+			t.Fatal("matches should resolve to the same composite")
+		}
+	}
+	if err := platform.Call(ctx, "POST", cat.URL+"/internal/authorize-blobs", other, matches, &authorized); err != nil {
+		t.Fatal(err)
+	}
+	if len(authorized.Assets) != 0 {
+		t.Fatal("composite resolution bypassed authorization")
+	}
+	if out := call(owner, "?kind=series", 200); out.Total != 1 || len(out.Assets) != 1 || out.Assets[0].ID != composite.ID {
+		t.Fatal("expected the composite rather than its members")
+	}
+
 	cat.Close()
 	call(owner, "", 503)
 }

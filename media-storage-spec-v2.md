@@ -854,7 +854,7 @@ Catalogの `GET /internal/recommendation-dataset?fingerprint=...` は、要求�
 
 | Searchの保存先 | 内容と有効期間 |
 |---|---|
-| `recommendation_cache` | 主体ごとの入力指紋、エンジン版、認可済み特徴スナップショット、状態、候補IDと類似度。24時間 |
+| `recommendation_cache` | 主体ごとの入力指紋、エンジン版、お気に入りと採点済み候補の認可済み特徴、状態、候補IDと類似度。24時間 |
 | `recommendation_sessions` | 主体、入力指紋、エンジン版、種類・レーティング条件、状態、抽選済みIDとスコア。30分 |
 | `recommendation_history` | 推薦応答の先頭24件。過去24時間の直近3回を抽選に利用 |
 
