@@ -56,6 +56,12 @@ GitHub Releaseを公開すると（`release: published`）、`Release images` �
 
 各パッケージの説明は `release.yml` の `org.opencontainers.image.description` で設定し、次のReleaseイメージの公開時に反映します。CPU版とCUDA版は同じRuntimeパッケージに公開するため、共通の説明を使います。
 
+画面下部のフッターには、そのSPAをビルドしたときのバージョンを表示します。公開イメージではReleaseタグが表示されます。Gitの作業ツリーでSPAを直接ビルドすると、`git describe --tags --always --dirty` の結果を使います。ローカルでDockerイメージをビルドするときは、次のようにバージョンを渡せます。バージョンを取得できない場合は「開発ビルド」と表示します。
+
+```sh
+OCMS_VERSION="$(git describe --tags --always --dirty)" docker compose build bff
+```
+
 GitHubリポジトリのActionsを有効にし、組織のポリシーでもPackage作成・書き込みを許可してください。同名Packageが既に存在する場合は、そのPackageのActionsアクセス設定でリポジトリに書き込みを許可する必要があります。Packageの公開範囲はGHCRの設定に従います。匿名pullが必要な場合はPackageをPublicに設定してください。
 
 ```sh

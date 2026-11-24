@@ -164,7 +164,10 @@ services:
       runtime: {condition: service_healthy}
   bff:
     <<: *app
-    build: .
+    build:
+      context: .
+      args:
+        OCMS_VERSION: ${OCMS_VERSION:-}
     environment:
       <<: *common
       SERVICE: bff

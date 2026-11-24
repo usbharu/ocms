@@ -3,6 +3,7 @@ WORKDIR /web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
+ARG OCMS_VERSION
 RUN npm run build
 
 FROM golang:1.27-alpine AS go
