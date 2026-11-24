@@ -1,5 +1,7 @@
 import {
   type AssetHit,
+  type AssetSort,
+  assetSorts,
   type Kind,
   kinds,
   type Mode,
@@ -89,6 +91,10 @@ export function parseRoute(pathname: string, search: string): RouteState {
         : ratings.some((rating) => rawRatings.split(',').includes(rating))
           ? ratings.filter((rating) => rawRatings.split(',').includes(rating))
           : undefined;
+  const rawSort = params.get('sort');
+  const sort = assetSorts.some((item) => item.id === rawSort)
+    ? (rawSort as AssetSort)
+    : undefined;
   const rawPage = params.get('page') || '1';
   const page =
     /^\d+$/.test(rawPage) &&
@@ -137,6 +143,10 @@ export function parseRoute(pathname: string, search: string): RouteState {
         selectedRatings?.length === ratings.length
           ? undefined
           : selectedRatings,
+      sort:
+        section === 'library' || section === 'groups' || section === 'favorites'
+          ? sort
+          : undefined,
     },
     sourceId,
     assetId,
@@ -179,6 +189,7 @@ export function collectionURL(
   if (context.tag) params.set('tag', context.tag);
   if (context.character) params.set('character', context.character);
   if (context.source) params.set('source', context.source.asset_id);
+  if (context.sort) params.set('sort', context.sort);
   if (kind !== 'all') params.set('kind', kind);
   if (context.ratings && context.ratings.length !== ratings.length)
     params.set(

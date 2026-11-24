@@ -1,7 +1,7 @@
 import cytoscape, { type Core, type Layouts } from 'cytoscape';
 import cola from 'cytoscape-cola';
 import cloud from 'd3-cloud';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../ui/button';
 import { NativeSelect } from '../ui/native-select';
 import type { Tag, TagData } from './TagsPage';
@@ -42,7 +42,7 @@ function WordCloud({
     const context = canvas.getContext('2d');
     if (!context) return;
     context.font = '100px sans-serif';
-    const max = tags[0]?.asset_count || 1;
+    const max = Math.max(1, ...tags.map((tag) => tag.asset_count));
     const layout = cloud<Word>()
       .size([size.width, size.height])
       .words(tags.map((tag) => ({ text: tag.name, count: tag.asset_count })))
@@ -139,16 +139,28 @@ export default function TagVisualization({
   );
   const [zoom, setZoom] = useState(100);
   const [selected, setSelected] = useState('');
-  const tags = view === 'graph' ? data.tags.slice(0, 60) : data.tags;
+  // The API selects graph nodes by backlink count and C collation. Mirror that
+  // here even when the list itself is ordered by Asset addition.
+  const graphTags = useMemo(
+    () =>
+      [...data.tags]
+        .sort(
+          (a, b) =>
+            b.asset_count - a.asset_count ||
+            (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+        )
+        .slice(0, 60),
+    [data.tags],
+  );
+  const tags = view === 'graph' ? graphTags : data.tags;
   const active = tags.find((tag) => tag.name === selected);
   const neighbors = data.links.filter(
     (link) => link.source === selected || link.target === selected,
   ).length;
   useEffect(() => {
     if (view !== 'graph' || !container.current) return;
-    const graphTags = data.tags.slice(0, 60);
     const ids = new Map(graphTags.map((tag, i) => [tag.name, `tag-${i}`]));
-    const max = graphTags[0]?.asset_count || 1;
+    const max = Math.max(1, ...graphTags.map((tag) => tag.asset_count));
     const cy = cytoscape({
       container: container.current,
       elements: [
@@ -340,7 +352,7 @@ export default function TagVisualization({
       graph.current = null;
       cy.destroy();
     };
-  }, [data, view]);
+  }, [data, view, graphTags]);
   useEffect(() => {
     const cy = graph.current;
     if (!cy) return;

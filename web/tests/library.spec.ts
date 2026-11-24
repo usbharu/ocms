@@ -257,6 +257,37 @@ test('filters the current list and closes details', async ({ page }) => {
   );
 });
 
+test('sorts assets by addition and update time and keeps it in the URL', async ({
+  page,
+}) => {
+  await expect(page.getByLabel('並べ替え')).toHaveValue('created_desc');
+  for (const sort of ['updated_desc', 'created_asc', 'updated_asc']) {
+    const request = page.waitForRequest(
+      (r) =>
+        new URL(r.url()).pathname === '/api/v1/assets' &&
+        new URL(r.url()).searchParams.get('sort') === sort,
+    );
+    await page.getByLabel('並べ替え').selectOption(sort);
+    await request;
+    await expect(page).toHaveURL(new RegExp(`sort=${sort}`));
+    await expect(page.getByLabel('並べ替え')).toHaveValue(sort);
+  }
+  await page.reload();
+  await expect(page.getByLabel('並べ替え')).toHaveValue('updated_asc');
+  await expect(page.locator('.file')).toHaveCount(4);
+});
+
+test('search results keep relevance order without the sort control', async ({
+  page,
+}) => {
+  await page.getByLabel('検索クエリ').fill('sample');
+  await page.getByRole('button', { name: '検索', exact: true }).click();
+  await expect(page.locator('.file')).toHaveCount(1);
+  await expect(page.getByLabel('並べ替え')).toHaveCount(0);
+  await page.getByRole('button', { name: '検索を解除' }).click();
+  await expect(page.getByLabel('並べ替え')).toHaveValue('created_desc');
+});
+
 test('search modes use text API; tag editing preserves the match time', async ({
   page,
 }) => {
