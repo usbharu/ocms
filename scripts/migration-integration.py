@@ -92,7 +92,8 @@ with tempfile.TemporaryDirectory(prefix='migration-', dir=root / '.cache') as te
             raise AssertionError('test initialization hook did not become ready')
         assert docker('exec', name, 'pg_isready', '-U', 'ocms', '-d', 'ocms', expected=None).returncode == 0
         assert docker('exec', name, 'pg_isready', '-h', '127.0.0.1', '-U', 'ocms', '-d', 'ocms', expected=None).returncode != 0
-        assert 'MIGRATION_DATABASE_UNAVAILABLE' in run('up', expected=1).stderr
+        unavailable = run('up', expected=1)
+        assert 'MIGRATION_DATABASE_UNAVAILABLE' in unavailable.stderr, unavailable.stderr[-500:]
         (init_gate / 'release').touch()
         check('socket-only initialization is not TCP-ready for migrations')
         for _ in range(60):
@@ -201,6 +202,85 @@ with tempfile.TemporaryDirectory(prefix='migration-', dir=root / '.cache') as te
         run('up')
         assert sql('SELECT version FROM public.schema_migrations') == str(latest)
         check('first-migration rollback recovers with the upstream nil version (-1)')
+
+        # Migration 016 merges same-owner duplicates without changing the set of
+        # content visible to a principal. Seed first, then apply only 016.
+        reset()
+        merge = migrations / '016_merge_duplicate_assets.up.sql'
+        stash016 = temp / '016-stash'
+        stash016.mkdir()
+        shutil.move(str(merge), stash016 / merge.name)
+        run('up')
+        p1, p2 = ('11111111-1111-4111-8111-111111111111',
+                  '22222222-2222-4222-8222-222222222222')
+        a1, a2, a3, a4 = ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+                          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+                          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
+                          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4')
+        s1, b1, b2, g1 = ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',
+                          'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+                          'cccccccc-cccc-4ccc-8ccc-ccccccccccc2',
+                          'dddddddd-dddd-4ddd-8ddd-ddddddddddd1')
+        session = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1'
+        sql(f"""
+INSERT INTO catalog.principals(id,oidc_issuer,oidc_subject) VALUES
+ ('{p1}','migration-test','merge-p1'),('{p2}','migration-test','merge-p2');
+INSERT INTO catalog.assets(id,owner_id,filename,mime_type,tags,rating,rating_manual,status,created_at) VALUES
+ ('{a1}','{p1}','one.png','image/png',ARRAY['one'],'general',true,'ready',now()-interval '3 minutes'),
+ ('{a2}','{p1}','two.png','image/png',ARRAY['two'],'explicit',false,'ready',now()-interval '2 minutes'),
+ ('{a3}','{p2}','other.png','image/png',ARRAY['private'],'sensitive',true,'ready',now()-interval '1 minute'),
+ ('{a4}','{p1}','four.png','image/png',ARRAY['four'],'general',true,'ready',now()-interval '1 minute'),
+ ('{s1}','{p1}','series','application/vnd.ocms.series','{{}}','unrated',false,'ready',now());
+INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES
+ ('{a1}','{b1}'),('{a2}','{b1}'),('{a3}','{b1}'),('{a4}','{b2}');
+INSERT INTO catalog.asset_characters(asset_id,name,position) VALUES
+ ('{a1}','hero-one',0),('{a2}','hero-two',0);
+INSERT INTO catalog.asset_favorites(principal_id,asset_id,created_at) VALUES
+ ('{p1}','{a1}','2020-01-01');
+INSERT INTO catalog.content_groups(id,principal_id,name) VALUES ('{g1}','{p1}','merged');
+INSERT INTO catalog.asset_groups(group_id,principal_id,asset_id) VALUES ('{g1}','{p1}','{a1}');
+INSERT INTO catalog.default_group_exclusions(principal_id,asset_id) VALUES ('{p1}','{a1}');
+INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES ('{a1}','{p2}','read');
+INSERT INTO catalog.upload_sessions(id,asset_id,expected_size,state) VALUES ('{session}','{a1}',1,'completed');
+INSERT INTO catalog.series(asset_id,kind,version) VALUES ('{s1}','collection',1);
+INSERT INTO catalog.series_members(series_id,asset_id,position,composite) VALUES
+ ('{s1}','{a1}',0,false),('{s1}','{a4}',1,false);
+""")
+
+        def visible(principal, extra=''):
+            return sql(f"""SELECT count(*)::text||':'||coalesce(string_agg(id::text,',' ORDER BY id),'') FROM (
+ SELECT DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN 'blob:'||o.blob_id::text ELSE 'asset:'||a.id::text END AS id
+ FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id
+ WHERE a.deleted_at IS NULL AND a.series_kind='' AND (a.owner_id='{principal}' OR EXISTS(SELECT 1 FROM catalog.grants gr WHERE gr.asset_id=a.id AND gr.principal_id='{principal}')) {extra}
+) x""")
+
+        before = {name: visible(p1, extra) for name, extra in {
+            'all': '', 'tag-one': "AND 'one'=ANY(a.tags)", 'tag-two': "AND 'two'=ANY(a.tags)",
+            'favorite': f"AND EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id='{p1}' AND f.asset_id=a.id)",
+            'group': f"AND EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id='{p1}' AND g.asset_id=a.id)",
+        }.items()}
+        before_p2 = visible(p2)
+        shutil.move(str(stash016 / merge.name), merge)
+        run('up')
+        after = {name: visible(p1, extra) for name, extra in {
+            'all': '', 'tag-one': "AND 'one'=ANY(a.tags)", 'tag-two': "AND 'two'=ANY(a.tags)",
+            'favorite': f"AND EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id='{p1}' AND f.asset_id=a.id)",
+            'group': f"AND EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id='{p1}' AND g.asset_id=a.id)",
+        }.items()}
+        assert before == after and visible(p2) == before_p2, (before, after, visible(p2), before_p2)
+        merged_meta = sql(f"SELECT tags::text||'|'||characters::text FROM (SELECT tags,ARRAY(SELECT name FROM catalog.asset_characters WHERE asset_id='{a2}' ORDER BY position,name) AS characters FROM catalog.assets WHERE id='{a2}') x")
+        assert merged_meta == '{two,one}|{hero-two,hero-one}', merged_meta
+        assert sql(f"SELECT string_agg(filename,',') FROM catalog.asset_aliases WHERE asset_id='{a2}'") == 'one.png'
+        assert sql(f"SELECT rating FROM catalog.assets WHERE id='{a2}'") == 'explicit'
+        assert sql(f"SELECT deleted_at IS NOT NULL FROM catalog.assets WHERE id='{a1}'") == 't'
+        assert sql(f"SELECT count(*) FROM catalog.assets WHERE id='{a3}' AND deleted_at IS NULL") == '1'
+        assert sql(f"SELECT count(*) FROM catalog.asset_favorites WHERE principal_id='{p1}' AND asset_id='{a2}'") == '1'
+        assert sql(f"SELECT count(*) FROM catalog.asset_groups WHERE group_id='{g1}' AND asset_id='{a2}'") == '1'
+        assert sql(f"SELECT count(*) FROM catalog.grants WHERE asset_id='{a2}' AND principal_id='{p2}' AND permission='read'") == '1'
+        assert sql(f"SELECT asset_id::text FROM catalog.upload_sessions WHERE id='{session}'") == a2
+        assert sql(f"SELECT string_agg(asset_id::text,',' ORDER BY position) FROM catalog.series_members WHERE series_id='{s1}'") == a2 + ',' + a4
+        assert sql(f"SELECT count(*) FROM catalog.default_group_exclusions WHERE asset_id='{a2}'") == '0'
+        check('016 merges same-owner duplicates, preserves visible Blob sets and migrates metadata/ACL')
 
         # Use the real Compose dependency graph on a separate empty database.
         # No port mappings or existing development containers are involved.

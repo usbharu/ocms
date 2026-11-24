@@ -12,21 +12,12 @@ import (
 	"ocms/internal/platform"
 )
 
-// Resolve the readable favorites' Blob IDs once, including favorites on
-// aliases and composite members. Series still use their member-aware rule.
+// Resolve the readable favorites once, including favorites on composite
+// members. A favorite applies to the Asset that stores it.
 const recommendationDatasetSelect = `
 SELECT a.id,o.blob_id,` + displayBlobIDs + `,a.series_kind,a.member_ids,a.series_version,
        a.tags,a.characters,
-       CASE WHEN a.series_kind='' THEN
-         f.asset_id IS NOT NULL OR COALESCE(o.blob_id IN (
-           SELECT original.blob_id
-           FROM catalog.asset_favorites favorite
-           JOIN catalog.asset_originals original ON original.asset_id=favorite.asset_id
-           JOIN catalog.assets d ON d.id=favorite.asset_id
-           WHERE favorite.principal_id=$1 AND d.deleted_at IS NULL
-           AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1))
-         ), false)
-       ELSE ` + favoriteCondition + ` END,
+       CASE WHEN a.series_kind='' THEN f.asset_id IS NOT NULL ELSE ` + favoriteCondition + ` END,
        a.mime_type,a.rating
 FROM catalog.display_assets a
 LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id
@@ -55,7 +46,6 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 	}
 	defer rows.Close()
 	assets := []contracts.RecommendationInput{}
-	byBlob := map[string]int{}
 	for rows.Next() {
 		var item contracts.RecommendationInput
 		if err := rows.Scan(&item.ID, &item.BlobID, &item.BlobIDs, &item.SeriesKind, &item.MemberIDs, &item.Version, &item.Tags, &item.Characters, &item.Favorite, &item.MIME, &item.Rating); err != nil {
@@ -64,21 +54,6 @@ func (s *Service) recommendationDataset(w http.ResponseWriter, r *http.Request) 
 		}
 		sort.Strings(item.Tags)
 		sort.Strings(item.Characters)
-		if item.SeriesKind == "" && item.BlobID != nil {
-			if index, ok := byBlob[*item.BlobID]; ok {
-				tags, chars := map[string]bool{}, map[string]bool{}
-				for _, v := range append(assets[index].Tags, item.Tags...) {
-					tags[v] = true
-				}
-				for _, v := range append(assets[index].Characters, item.Characters...) {
-					chars[v] = true
-				}
-				assets[index].Tags, assets[index].Characters = sortedKeys(tags), sortedKeys(chars)
-				assets[index].Favorite = assets[index].Favorite || item.Favorite
-				continue
-			}
-			byBlob[*item.BlobID] = len(assets)
-		}
 		assets = append(assets, item)
 	}
 	if rows.Err() != nil {

@@ -35,11 +35,17 @@ func TestContentRatingsDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var owner, other, blob string
+	var owner, other, third, fourth, blob string
 	if err := db.QueryRow(ctx, `INSERT INTO catalog.principals(oidc_issuer,oidc_subject) VALUES('rating-test',gen_random_uuid()::text) RETURNING id`).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(ctx, `INSERT INTO catalog.principals(oidc_issuer,oidc_subject) VALUES('rating-test',gen_random_uuid()::text) RETURNING id`).Scan(&other); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO catalog.principals(oidc_issuer,oidc_subject) VALUES('rating-test',gen_random_uuid()::text) RETURNING id`).Scan(&third); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO catalog.principals(oidc_issuer,oidc_subject) VALUES('rating-test',gen_random_uuid()::text) RETURNING id`).Scan(&fourth); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(ctx, `SELECT gen_random_uuid()`).Scan(&blob); err != nil {
@@ -50,7 +56,7 @@ func TestContentRatingsDatabase(t *testing.T) {
 		exec(`DELETE FROM catalog.grants WHERE asset_id=ANY($1::uuid[])`, ids)
 		exec(`DELETE FROM catalog.asset_originals WHERE asset_id=ANY($1::uuid[])`, ids)
 		exec(`DELETE FROM catalog.assets WHERE id=ANY($1::uuid[])`, ids)
-		exec(`DELETE FROM catalog.principals WHERE id=ANY($1::uuid[])`, []string{owner, other})
+		exec(`DELETE FROM catalog.principals WHERE id=ANY($1::uuid[])`, []string{owner, other, third, fourth})
 		for _, table := range []string{"wd14_results", "wd14_character_results", "wd14_rating_results"} {
 			exec(`DELETE FROM catalog.`+table+` WHERE blob_id=$1`, blob)
 		}
@@ -114,7 +120,8 @@ func TestContentRatingsDatabase(t *testing.T) {
 	if rating(b, other) != "sensitive" {
 		t.Fatal("retry overwrote manual rating")
 	}
-	c := newAsset(owner)
+	c := newAsset(third)
+	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, c, owner)
 	call("POST", "/internal/blobs/"+blob+"/state", "", map[string]string{"status": "ready"}, 204)
 	if rating(c, owner) != "explicit" {
 		t.Fatal("cached inference not applied")
@@ -122,7 +129,7 @@ func TestContentRatingsDatabase(t *testing.T) {
 	for _, tc := range []struct {
 		filter string
 		count  int
-	}{{"general", 1}, {"explicit", 1}, {"sensitive", 0}, {"", 0}, {"general,explicit", 1}} {
+	}{{"general", 1}, {"explicit", 1}, {"sensitive", 0}, {"", 0}, {"general,explicit", 2}} {
 		var out struct {
 			Assets []Asset
 			Total  int
@@ -139,6 +146,7 @@ func TestContentRatingsDatabase(t *testing.T) {
 		t.Fatal("duplicate rating filter or ACL failed")
 	}
 	call("PUT", "/api/v1/assets/"+a+"/favorite", owner, nil, 204)
+	call("PUT", "/api/v1/assets/"+c+"/favorite", owner, nil, 204)
 	for _, tc := range []struct {
 		filter string
 		count  int
@@ -185,7 +193,7 @@ func TestContentRatingsDatabase(t *testing.T) {
 
 	var late, upload string
 	if err := db.QueryRow(ctx, `INSERT INTO catalog.assets(owner_id,filename,mime_type)
-		VALUES($1,'late fixture','image/png') RETURNING id`, other).Scan(&late); err != nil {
+		VALUES($1,'late fixture','image/png') RETURNING id`, fourth).Scan(&late); err != nil {
 		t.Fatal(err)
 	}
 	ids = append(ids, late)
@@ -195,9 +203,9 @@ func TestContentRatingsDatabase(t *testing.T) {
 	}
 	defer exec(`DELETE FROM catalog.upload_sessions WHERE id=$1`, upload)
 	defer exec(`DELETE FROM catalog.outbox_events WHERE blob_id=$1`, blob)
-	call("POST", "/internal/uploads/"+upload+"/complete", other, map[string]string{"blob_id": blob}, 200)
+	call("POST", "/internal/uploads/"+upload+"/complete", fourth, map[string]string{"blob_id": blob}, 200)
 	var inherited Asset
-	if err := json.Unmarshal(call("GET", "/api/v1/assets/"+late, other, nil, 200), &inherited); err != nil {
+	if err := json.Unmarshal(call("GET", "/api/v1/assets/"+late, fourth, nil, 200), &inherited); err != nil {
 		t.Fatal(err)
 	}
 	if inherited.Status != "ready" || inherited.Rating != "explicit" || !slices.Contains(inherited.Tags, "auto-tag") {

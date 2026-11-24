@@ -11,7 +11,6 @@ export const ratingLabel = (rating: Rating) =>
 
 export type Asset = {
   aliases?: string[];
-  uneditable_duplicates?: number;
   series_kind?: 'collection' | 'composite';
   series_version?: number;
   member_ids?: string[];

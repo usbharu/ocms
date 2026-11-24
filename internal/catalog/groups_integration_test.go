@@ -253,20 +253,39 @@ func TestGroupsDatabase(t *testing.T) {
 	}
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+upload.AssetID+"/groups", owner, nil, 200, ""), &membership)
 	if !reflect.DeepEqual(membership.IDs, []string{"all"}) {
-		t.Fatal("deleting group moved upload to default")
+		t.Fatalf("deleting group moved upload to default: %+v", membership.IDs)
 	}
 	call(cat.URL, "DELETE", "/api/v1/groups/"+g, owner, nil, 204, "")
 	list("/api/v1/assets?group_id=default", owner, []string{series.ID, c}, 2)
 
-	// Identical originals collapse before pagination and merge only readable labels.
+	// Same-owner duplicates merge permanently. The newest Asset survives, keeps
+	// its name and receives aliases, labels, favorites and memberships.
 	x, y := asset("duplicate-one"), asset("duplicate-two")
 	exec(`UPDATE catalog.asset_originals SET blob_id=(SELECT blob_id FROM catalog.asset_originals WHERE asset_id=$1) WHERE asset_id=$2`, x, y)
 	exec(`UPDATE catalog.assets SET tags=ARRAY['label-one'] WHERE id=$1`, x)
 	exec(`UPDATE catalog.assets SET tags=ARRAY['label-two'] WHERE id=$1`, y)
+	exec(`INSERT INTO catalog.asset_characters(asset_id,name,position) VALUES($1,'hero-one',0),($2,'hero-two',0)`, x, y)
+	dedupeGroup := group("Duplicates")
+	save(x, owner, []string{dedupeGroup, "default"}, 200)
+	save(y, owner, []string{"default"}, 200)
+	call(cat.URL, "PUT", "/api/v1/assets/"+x+"/favorite", owner, nil, 204, "")
+	var mergedBlob string
+	if err := db.QueryRow(ctx, `SELECT blob_id FROM catalog.asset_originals WHERE asset_id=$1`, y).Scan(&mergedBlob); err != nil {
+		t.Fatal(err)
+	}
+	exec(`SELECT catalog.merge_asset($1,$2)`, y, x)
+	call(cat.URL, "GET", "/api/v1/assets/"+x, owner, nil, 404, "")
 	var details catalog.Asset
-	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+x, owner, nil, 200, ""), &details)
-	if !reflect.DeepEqual(details.Tags, []string{"label-one", "label-two"}) || !reflect.DeepEqual(details.Aliases, []string{"duplicate-two"}) {
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+y, owner, nil, 200, ""), &details)
+	if !reflect.DeepEqual(details.Tags, []string{"label-two", "label-one"}) || !reflect.DeepEqual(details.Characters, []string{"hero-two", "hero-one"}) || !reflect.DeepEqual(details.Aliases, []string{"duplicate-one"}) {
 		t.Fatalf("wrong merged details: %+v", details)
+	}
+	if !details.IsFavorite {
+		t.Fatal("merged favorite was lost")
+	}
+	var membershipCount int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM catalog.asset_groups WHERE principal_id=$1 AND group_id=$2 AND asset_id=$3`, owner, dedupeGroup, y).Scan(&membershipCount); err != nil || membershipCount != 1 {
+		t.Fatalf("merged group rows: %d %v", membershipCount, err)
 	}
 	var page1, page2 struct {
 		Assets []catalog.Asset
@@ -274,76 +293,52 @@ func TestGroupsDatabase(t *testing.T) {
 	}
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?q=duplicate-&limit=1&offset=0", owner, nil, 200, ""), &page1)
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?q=duplicate-&limit=1&offset=1", owner, nil, 200, ""), &page2)
-	if page1.Total != 1 || len(page1.Assets) != 1 || page2.Total != 1 || len(page2.Assets) != 0 {
-		t.Fatalf("duplicate pagination: %+v %+v", page1, page2)
+	if page1.Total != 1 || len(page1.Assets) != 1 || page1.Assets[0].ID != y || page2.Total != 1 || len(page2.Assets) != 0 {
+		t.Fatalf("merged pagination: %+v %+v", page1, page2)
 	}
-	pageOther := asset("duplicate-page-probe")
-	exec(`UPDATE catalog.assets SET created_at=now()-interval '2 minutes' WHERE id=$1`, x)
-	exec(`UPDATE catalog.assets SET created_at=now()-interval '1 minute' WHERE id=$1`, pageOther)
-	exec(`UPDATE catalog.assets SET created_at=now() WHERE id=$1`, y)
-	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?q=duplicate-&limit=1&offset=0", owner, nil, 200, ""), &page1)
-	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?q=duplicate-&limit=1&offset=1", owner, nil, 200, ""), &page2)
-	if page1.Total != 2 || page2.Total != 2 || len(page1.Assets) != 1 || len(page2.Assets) != 1 || page1.Assets[0].ID != y || page2.Assets[0].ID != pageOther {
-		t.Fatalf("duplicate representative and page ordering: %+v %+v", page1, page2)
+	// The alias stays searchable even though the duplicate Asset is retired.
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?q=duplicate-one", owner, nil, 200, ""), &page1)
+	if page1.Total != 1 || len(page1.Assets) != 1 || page1.Assets[0].ID != y {
+		t.Fatalf("alias search failed: %+v", page1)
 	}
-	exec(`UPDATE catalog.assets SET deleted_at=now() WHERE id=$1`, pageOther)
-	call(cat.URL, "PATCH", "/api/v1/assets/"+x, owner, map[string]any{"tags": []string{"merged"}, "characters": []string{"hero"}}, 200, "")
+	// A later upload of the same content and owner merges into the survivor too.
+	var mergedUpload catalog.Upload
+	json.Unmarshal(call(cat.URL, "POST", "/api/v1/uploads", owner, map[string]any{"filename": "duplicate-three.png", "mime_type": "image/png", "size_bytes": 1, "group_id": dedupeGroup}, 201, "duplicate-merge-upload"), &mergedUpload)
+	var completed map[string]string
+	json.Unmarshal(call(cat.URL, "POST", "/internal/uploads/"+mergedUpload.ID+"/complete", owner, map[string]any{"blob_id": mergedBlob}, 200, ""), &completed)
+	if completed["asset_id"] != y {
+		t.Fatalf("same-hash upload did not reuse the survivor: %+v", completed)
+	}
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+y, owner, nil, 200, ""), &details)
-	if !reflect.DeepEqual(details.Tags, []string{"merged"}) || !reflect.DeepEqual(details.Characters, []string{"hero"}) {
-		t.Fatalf("metadata not updated: %+v", details)
+	if !reflect.DeepEqual(details.Aliases, []string{"duplicate-one", "duplicate-three.png"}) {
+		t.Fatalf("upload alias missing: %+v", details)
 	}
-	call(cat.URL, "PUT", "/api/v1/assets/"+x+"/favorite", owner, nil, 204, "")
-	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+y, owner, nil, 200, ""), &details)
-	if !details.IsFavorite {
-		t.Fatal("duplicate favorite not shared")
-	}
-	call(cat.URL, "DELETE", "/api/v1/assets/"+y+"/favorite", owner, nil, 204, "")
-	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+x, owner, nil, 200, ""), &details)
-	if details.IsFavorite {
-		t.Fatal("duplicate favorite not removed")
-	}
-	dedupeGroup := group("Duplicates")
-	save(x, owner, []string{dedupeGroup, "default"}, 200)
-	save(y, owner, []string{dedupeGroup, "default"}, 200)
-	var membershipCount int
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM catalog.asset_groups WHERE principal_id=$1 AND group_id=$2 AND asset_id=ANY($3::uuid[])`, owner, dedupeGroup, []string{x, y}).Scan(&membershipCount); err != nil || membershipCount != 1 {
-		t.Fatalf("duplicate group rows: %d %v", membershipCount, err)
-	}
-	save(y, owner, []string{"default"}, 200)
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM catalog.asset_groups WHERE principal_id=$1 AND group_id=$2 AND asset_id=ANY($3::uuid[])`, owner, dedupeGroup, []string{x, y}).Scan(&membershipCount); err != nil || membershipCount != 0 {
-		t.Fatalf("duplicate group removal: %d %v", membershipCount, err)
-	}
-	var hidden string
-	if err := db.QueryRow(ctx, `INSERT INTO catalog.assets(owner_id,filename,mime_type,status,tags) VALUES($1,'hidden-name','image/png','ready',ARRAY['hidden-label']) RETURNING id`, other).Scan(&hidden); err != nil {
-		t.Fatal(err)
-	}
-	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) SELECT $1,blob_id FROM catalog.asset_originals WHERE asset_id=$2`, hidden, x)
-	rawHidden := call(cat.URL, "GET", "/api/v1/assets/"+x, owner, nil, 200, "")
-	if bytes.Contains(rawHidden, []byte("hidden-name")) || bytes.Contains(rawHidden, []byte("hidden-label")) {
-		t.Fatal("hidden duplicate leaked")
-	}
+	// Another owner's registration stays independent; hidden copies stay hidden.
 	var z string
 	if err := db.QueryRow(ctx, `INSERT INTO catalog.assets(owner_id,filename,mime_type,status,tags) VALUES($1,'read-only','image/png','ready',ARRAY['private-label']) RETURNING id`, other).Scan(&z); err != nil {
 		t.Fatal(err)
 	}
-	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) SELECT $1,blob_id FROM catalog.asset_originals WHERE asset_id=$2`, z, x)
+	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES($1,$2)`, z, mergedBlob)
 	exec(`INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES($1,$2,'read')`, z, owner)
-	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+x, owner, nil, 200, ""), &details)
-	if details.UneditableDuplicates != 1 {
-		t.Fatalf("read-only duplicate not reported: %+v", details)
+	var hidden string
+	if err := db.QueryRow(ctx, `INSERT INTO catalog.assets(owner_id,filename,mime_type,status,tags) VALUES($1,'hidden-name','image/png','ready',ARRAY['hidden-label']) RETURNING id`, other).Scan(&hidden); err != nil {
+		t.Fatal(err)
 	}
-	call(cat.URL, "PATCH", "/api/v1/assets/"+x, owner, map[string]any{"tags": []string{"changed"}}, 200, "")
+	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES($1,$2)`, hidden, mergedBlob)
+	rawDetails := call(cat.URL, "GET", "/api/v1/assets/"+y, owner, nil, 200, "")
+	if bytes.Contains(rawDetails, []byte("private-label")) || bytes.Contains(rawDetails, []byte("hidden-name")) || bytes.Contains(rawDetails, []byte("hidden-label")) {
+		t.Fatalf("another owner's metadata leaked: %s", rawDetails)
+	}
+	var duplicates struct{ Assets []catalog.Asset }
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets/"+y+"/duplicates", owner, nil, 200, ""), &duplicates)
+	if len(duplicates.Assets) != 1 || duplicates.Assets[0].ID != z {
+		t.Fatalf("cross-owner duplicate visibility: %+v", duplicates)
+	}
+	call(cat.URL, "PATCH", "/api/v1/assets/"+y, owner, map[string]any{"tags": []string{"changed"}}, 200, "")
 	var tags []string
 	if err := db.QueryRow(ctx, `SELECT tags FROM catalog.assets WHERE id=$1`, z).Scan(&tags); err != nil || !reflect.DeepEqual(tags, []string{"private-label"}) {
 		t.Fatalf("read-only tags changed: %v %v", tags, err)
 	}
-	var deleted struct {
-		Remaining int `json:"remaining_duplicates"`
-	}
-	json.Unmarshal(call(cat.URL, "DELETE", "/api/v1/assets/"+x, owner, nil, 200, ""), &deleted)
-	if deleted.Remaining != 1 {
-		t.Fatalf("remaining duplicates: %+v", deleted)
-	}
-	call(cat.URL, "GET", "/api/v1/assets/"+y, owner, nil, 404, "")
+	call(cat.URL, "DELETE", "/api/v1/assets/"+y, owner, nil, 204, "")
 	call(cat.URL, "GET", "/api/v1/assets/"+z, owner, nil, 200, "")
 }

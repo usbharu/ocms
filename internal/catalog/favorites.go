@@ -7,34 +7,20 @@ import (
 	"ocms/internal/platform"
 )
 
-const favoriteCondition = `EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND ((f.asset_id=a.id AND a.series_kind<>'composite') OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite) OR (a.series_kind='' AND EXISTS(SELECT 1 FROM catalog.asset_originals x JOIN catalog.asset_originals y ON x.blob_id=y.blob_id JOIN catalog.assets d ON d.id=y.asset_id WHERE x.asset_id=a.id AND y.asset_id=f.asset_id AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants dg WHERE dg.asset_id=d.id AND dg.principal_id=$1))))))`
+const favoriteCondition = `EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND ((f.asset_id=a.id AND a.series_kind<>'composite') OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite)))`
 
 // favoriteTargetsCTE resolves the principal's favorites once for list
-// filtering and ordering. A target is a directly favorited Asset, a composite
-// Series favorited through any of its members, or an Asset that displays a
-// favorited Blob through another readable alias. The timestamp is the newest
-// matching favorite, preserving the registration ordering of the list.
+// filtering and ordering. A target is a directly favorited Asset or a
+// composite Series favorited through any of its members. The timestamp is the
+// newest matching favorite, preserving the registration ordering of the list.
 const favoriteTargetsCTE = `WITH favorite_rows AS MATERIALIZED (
  SELECT asset_id,created_at FROM catalog.asset_favorites WHERE principal_id=$1
-),favorite_blobs AS MATERIALIZED (
- SELECT o.blob_id,max(f.created_at) AS created_at
- FROM favorite_rows f
- JOIN catalog.assets d ON d.id=f.asset_id
- JOIN catalog.asset_originals o ON o.asset_id=f.asset_id
- WHERE d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1))
- GROUP BY o.blob_id
-),favorite_assets AS MATERIALIZED (
+),favorite_targets AS MATERIALIZED (
  SELECT target.asset_id,max(target.created_at) AS created_at FROM (
   SELECT f.asset_id,f.created_at FROM favorite_rows f
   WHERE NOT EXISTS(SELECT 1 FROM catalog.series s WHERE s.asset_id=f.asset_id AND s.kind='composite')
   UNION ALL
   SELECT m.series_id,f.created_at FROM favorite_rows f JOIN catalog.series_members m ON m.asset_id=f.asset_id AND m.composite
- ) target GROUP BY target.asset_id
-),favorite_targets AS MATERIALIZED (
- SELECT target.asset_id,max(target.created_at) AS created_at FROM (
-  SELECT asset_id,created_at FROM favorite_assets
-  UNION ALL
-  SELECT o.asset_id,b.created_at FROM favorite_blobs b JOIN catalog.asset_originals o ON o.blob_id=b.blob_id
  ) target GROUP BY target.asset_id
 )`
 
@@ -79,7 +65,7 @@ func (s *Service) favorite(w http.ResponseWriter, r *http.Request) {
 			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_favorites(principal_id,asset_id) SELECT $1,m.asset_id FROM catalog.series_members m WHERE m.series_id=$2 AND m.composite ON CONFLICT DO NOTHING`, user(r), id)
 		}
 	} else {
-		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_favorites WHERE principal_id=$1 AND (asset_id=$2 OR asset_id IN (SELECT asset_id FROM catalog.series_members WHERE series_id=$2 AND composite) OR asset_id IN (SELECT d.id FROM catalog.assets d JOIN catalog.asset_originals y ON y.asset_id=d.id JOIN catalog.asset_originals x ON x.blob_id=y.blob_id WHERE x.asset_id=$2 AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1))))`, user(r), id)
+		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_favorites WHERE principal_id=$1 AND (asset_id=$2 OR asset_id IN (SELECT asset_id FROM catalog.series_members WHERE series_id=$2 AND composite))`, user(r), id)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

@@ -1308,17 +1308,14 @@ export function App() {
       !confirm(
         selected.series_kind
           ? 'シリーズを解除しますか？ 元のファイルは残ります。'
-          : '同じ内容のファイルを削除しますか？',
+          : 'このファイルを削除しますか？',
       )
     )
       return;
     run(async () => {
-      const result = await request(`/api/v1/assets/${selected.asset_id}`, {
+      await request(`/api/v1/assets/${selected.asset_id}`, {
         method: 'DELETE',
       });
-      if (result?.remaining_duplicates > 0) {
-        window.alert('削除権限のない別名が残っています。');
-      }
       setSelected(null);
       snapshots.current.clear();
       loadedCollection.current = '';

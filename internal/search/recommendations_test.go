@@ -32,7 +32,7 @@ func TestOverlap(t *testing.T) {
 	}
 }
 func TestRecommendationRanking(t *testing.T) {
-	sourceBlob, otherBlob := "source", "other"
+	sourceBlob, otherBlob, unmatchedBlob := "source", "other", "unmatched"
 	source := catalog.Asset{ID: "source", Tags: []string{"tag"}, Characters: []string{"character"}, BlobID: &sourceBlob}
 	candidateAsset := catalog.Asset{ID: "b", Tags: source.Tags, Characters: source.Characters, BlobID: &otherBlob}
 	sameContent := candidateAsset
@@ -40,6 +40,7 @@ func TestRecommendationRanking(t *testing.T) {
 	sameContent.BlobID = &sourceBlob
 	noMetadata := candidateAsset
 	noMetadata.ID = "hash-only"
+	noMetadata.BlobID = &unmatchedBlob
 	noMetadata.Tags = nil
 	noMetadata.Characters = nil
 	out := rankRecommendations(source, []catalog.Asset{source, sameContent, candidateAsset, candidateAsset, noMetadata, {ID: "zero"}}, map[string]candidate{otherBlob: {rank: 1 - 12.0/64}}, labelFrequency{})

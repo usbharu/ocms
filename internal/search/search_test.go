@@ -126,7 +126,7 @@ func TestSemanticSearchEnabledByDefault(t *testing.T) {
 	}
 }
 
-func TestDuplicateBlobsAreCollapsedBeforeLimit(t *testing.T) {
+func TestSharedBlobsRemainDistinctAssets(t *testing.T) {
 	t.Setenv("INTERNAL_TOKEN", strings.Repeat("t", 32))
 	shared, distinct := "shared", "distinct"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +148,9 @@ func TestDuplicateBlobsAreCollapsedBeforeLimit(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || len(out.Assets) != 2 || out.Assets[0].ID != "first" || out.Assets[1].ID != "third" {
+	// Multiple owners may register the same Blob. Those Assets stay independent;
+	// duplicates within one owner are merged before indexing.
+	if rec.Code != 200 || len(out.Assets) != 2 || out.Assets[0].ID != "first" || out.Assets[1].ID != "second" {
 		t.Fatalf("unexpected results: %s", rec.Body.String())
 	}
 }
