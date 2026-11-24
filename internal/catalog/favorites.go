@@ -9,6 +9,35 @@ import (
 
 const favoriteCondition = `EXISTS(SELECT 1 FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND ((f.asset_id=a.id AND a.series_kind<>'composite') OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite) OR (a.series_kind='' AND EXISTS(SELECT 1 FROM catalog.asset_originals x JOIN catalog.asset_originals y ON x.blob_id=y.blob_id JOIN catalog.assets d ON d.id=y.asset_id WHERE x.asset_id=a.id AND y.asset_id=f.asset_id AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants dg WHERE dg.asset_id=d.id AND dg.principal_id=$1))))))`
 
+// favoriteTargetsCTE resolves the principal's favorites once for list
+// filtering and ordering. A target is a directly favorited Asset, a composite
+// Series favorited through any of its members, or an Asset that displays a
+// favorited Blob through another readable alias. The timestamp is the newest
+// matching favorite, preserving the registration ordering of the list.
+const favoriteTargetsCTE = `WITH favorite_rows AS MATERIALIZED (
+ SELECT asset_id,created_at FROM catalog.asset_favorites WHERE principal_id=$1
+),favorite_blobs AS MATERIALIZED (
+ SELECT o.blob_id,max(f.created_at) AS created_at
+ FROM favorite_rows f
+ JOIN catalog.assets d ON d.id=f.asset_id
+ JOIN catalog.asset_originals o ON o.asset_id=f.asset_id
+ WHERE d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1))
+ GROUP BY o.blob_id
+),favorite_assets AS MATERIALIZED (
+ SELECT target.asset_id,max(target.created_at) AS created_at FROM (
+  SELECT f.asset_id,f.created_at FROM favorite_rows f
+  WHERE NOT EXISTS(SELECT 1 FROM catalog.series s WHERE s.asset_id=f.asset_id AND s.kind='composite')
+  UNION ALL
+  SELECT m.series_id,f.created_at FROM favorite_rows f JOIN catalog.series_members m ON m.asset_id=f.asset_id AND m.composite
+ ) target GROUP BY target.asset_id
+),favorite_targets AS MATERIALIZED (
+ SELECT target.asset_id,max(target.created_at) AS created_at FROM (
+  SELECT asset_id,created_at FROM favorite_assets
+  UNION ALL
+  SELECT o.asset_id,b.created_at FROM favorite_blobs b JOIN catalog.asset_originals o ON o.blob_id=b.blob_id
+ ) target GROUP BY target.asset_id
+)`
+
 func favoriteFilter(r *http.Request) (bool, error) {
 	values, ok := r.URL.Query()["favorites"]
 	if !ok {

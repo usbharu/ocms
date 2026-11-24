@@ -193,18 +193,34 @@ func TestSeriesDatabase(t *testing.T) {
 	if !decode(call(cat.URL, "GET", "/api/v1/assets/"+comp.ID, owner, nil, 200)).IsFavorite {
 		t.Fatal("favorite not inherited")
 	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?favorites=true&kind=series", owner, nil, 200), &list)
+	if list.Total != 1 || len(list.Assets) != 1 || list.Assets[0].ID != comp.ID || !list.Assets[0].IsFavorite {
+		t.Fatalf("member favorite did not resolve to one composite: %+v", list)
+	}
 	call(cat.URL, "DELETE", "/api/v1/assets/"+comp.ID+"/favorite", owner, nil, 204)
 	if decode(call(cat.URL, "GET", "/api/v1/assets/"+a.ID, owner, nil, 200)).IsFavorite {
 		t.Fatal("favorite removal not propagated")
+	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?favorites=true&kind=series", owner, nil, 200), &list)
+	if list.Total != 0 || len(list.Assets) != 0 {
+		t.Fatalf("composite favorite removal left a member: %+v", list)
 	}
 	call(cat.URL, "PUT", "/api/v1/assets/"+comp.ID+"/favorite", owner, nil, 204)
 	if !decode(call(cat.URL, "GET", "/api/v1/assets/"+b.ID, owner, nil, 200)).IsFavorite {
 		t.Fatal("favorite registration not propagated")
 	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?favorites=true&kind=series", owner, nil, 200), &list)
+	if list.Total != 1 || len(list.Assets) != 1 || list.Assets[0].ID != comp.ID {
+		t.Fatalf("composite favorite did not appear once: %+v", list)
+	}
 	call(cat.URL, "DELETE", "/api/v1/assets/"+a.ID+"/favorite", owner, nil, 204)
 	call(cat.URL, "DELETE", "/api/v1/assets/"+b.ID+"/favorite", owner, nil, 204)
 	if decode(call(cat.URL, "GET", "/api/v1/assets/"+comp.ID, owner, nil, 200)).IsFavorite {
 		t.Fatal("composite retained a stale own favorite")
+	}
+	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?favorites=true&kind=series", owner, nil, 200), &list)
+	if list.Total != 0 || len(list.Assets) != 0 {
+		t.Fatalf("member favorite removal left a composite: %+v", list)
 	}
 	// Personalized learning sees the composite once and invalidates persisted sessions after edits.
 	learned := make(chan []contracts.RecommendationInput, 4)
