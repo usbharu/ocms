@@ -63,6 +63,18 @@ export type Mode =
   | 'perceptual'
   | 'exact_duplicate'
   | 'recommendation';
+export type AssetSort =
+  | 'created_desc'
+  | 'created_asc'
+  | 'updated_desc'
+  | 'updated_asc';
+export type LibrarySort = AssetSort | 'favorite_desc';
+export const assetSorts: { id: AssetSort; label: string }[] = [
+  { id: 'created_desc', label: '追加が新しい順' },
+  { id: 'created_asc', label: '追加が古い順' },
+  { id: 'updated_desc', label: '更新が新しい順' },
+  { id: 'updated_asc', label: '更新が古い順' },
+];
 export type SearchContext = {
   groupId?: string;
   personalized?: boolean;
@@ -75,6 +87,7 @@ export type SearchContext = {
   character?: string;
   source?: Asset;
   ratings?: Rating[];
+  sort?: AssetSort;
 };
 export type View = 'list' | 'grid' | 'detailed-grid';
 export type Kind = 'all' | 'image' | 'video' | 'audio' | 'document' | 'series';

@@ -91,6 +91,19 @@ test('character cloud, list, search and graph open an independent exact filter',
   ).toBeVisible();
 });
 
+test('sorts characters by asset addition order', async ({ page }) => {
+  await page.getByRole('button', { name: '一覧', exact: true }).click();
+  const request = page.waitForRequest(
+    (r) => new URL(r.url()).searchParams.get('sort') === 'added_asc',
+  );
+  await page.getByLabel('キャラクターの並べ替え').selectOption('added_asc');
+  await request;
+  await expect(page).toHaveURL(/sort=added_asc/);
+  await expect(page.getByLabel('キャラクターの並べ替え')).toHaveValue(
+    'added_asc',
+  );
+});
+
 test('character views fit mobile widths', async ({ page }) => {
   await expect(page.locator('.tag-cloud [role=button]')).toHaveCount(2);
   for (const width of [390, 320]) {

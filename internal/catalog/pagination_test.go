@@ -14,6 +14,10 @@ func TestListOptions(t *testing.T) {
 	}{
 		{"", listOptions{limit: 200}, false},
 		{"?limit=24&offset=216&kind=image", listOptions{limit: 24, offset: 216, kind: "image"}, false},
+		{"?sort=updated_desc", listOptions{limit: 200, sort: "updated_desc"}, false},
+		{"?sort=created_asc", listOptions{limit: 200, sort: "created_asc"}, false},
+		{"?sort=created_desc&sort=updated_desc", listOptions{limit: 200, sort: "created_desc"}, true},
+		{"?sort=unknown", listOptions{limit: 200, sort: "unknown"}, true},
 		{"?kind=document", listOptions{limit: 200, kind: "document"}, false},
 		{"?kind=series", listOptions{limit: 200, kind: "series"}, false},
 		{"?kind=series&series_kind=composite", listOptions{limit: 200, kind: "series", seriesKind: "composite"}, false},

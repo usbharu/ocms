@@ -31,12 +31,14 @@ import { NativeSelect } from './components/ui/native-select';
 import {
   type Asset,
   type AssetChanges,
+  type AssetSort,
   allFiles,
   type HashStatus,
   type Job,
   type Kind,
   kindOf,
   kinds,
+  type LibrarySort,
   type Me,
   type Mode,
   pageSize,
@@ -272,6 +274,7 @@ export function App() {
           ...(next.tag ? { tag: next.tag } : {}),
           ...(next.character ? { character: next.character } : {}),
           ...(next.ratings ? { ratings: next.ratings.join(',') } : {}),
+          ...(next.sort ? { sort: next.sort } : {}),
           limit: String(pageSize),
           offset: String((nextPage - 1) * pageSize),
           ...(nextKind !== 'all' ? { kind: nextKind } : {}),
@@ -1060,6 +1063,10 @@ export function App() {
     [isResult, total, visibleAssets, currentPage],
   );
 
+  const sortValue: LibrarySort =
+    context.sort ??
+    (section === 'favorites' ? 'favorite_desc' : 'created_desc');
+
   const selectedIndex = pageAssets.findIndex(
     (asset) => asset.asset_id === selected?.asset_id,
   );
@@ -1157,6 +1164,7 @@ export function App() {
         mode: 'keyword',
         query: '',
         [field]: name,
+        sort: context.sort,
         groupId:
           section === 'library' || section === 'groups'
             ? context.groupId
@@ -1170,6 +1178,16 @@ export function App() {
 
   function changeKind(nextKind: Kind) {
     goCollection(context, 1, nextKind, section, true);
+  }
+
+  function changeSort(nextSort: LibrarySort) {
+    const next: AssetSort | undefined =
+      nextSort === 'favorite_desc' ||
+      (nextSort === 'created_desc' && section !== 'favorites')
+        ? undefined
+        : nextSort;
+    if (next === context.sort) return;
+    goCollection({ ...context, sort: next }, 1, kind, section, true);
   }
 
   useEffect(() => {
@@ -1269,6 +1287,8 @@ export function App() {
         context.character ||
         context.source ||
         context.personalized ||
+        context.sort === 'updated_desc' ||
+        context.sort === 'updated_asc' ||
         (context.ratings && changes.rating !== undefined),
     );
     if (
@@ -1513,8 +1533,11 @@ export function App() {
                   <LibraryToolbar
                     kind={kind}
                     view={view}
+                    sort={isResult ? undefined : sortValue}
+                    favorites={section === 'favorites'}
                     onKindChange={changeKind}
                     onViewChange={setView}
+                    onSortChange={isResult ? undefined : changeSort}
                     onRefresh={refreshCollection}
                   />
                 )}

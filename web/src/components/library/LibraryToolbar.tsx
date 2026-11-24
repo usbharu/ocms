@@ -1,20 +1,38 @@
-import { type Kind, kinds, type View } from '../../lib/assets';
+import {
+  assetSorts,
+  type Kind,
+  kinds,
+  type LibrarySort,
+  type View,
+} from '../../lib/assets';
 import { Button } from '../ui/button';
 import { NativeSelect } from '../ui/native-select';
 
 export function LibraryToolbar({
   kind,
   view,
+  sort,
+  favorites,
   onKindChange,
   onViewChange,
+  onSortChange,
   onRefresh,
 }: {
   kind: Kind;
   view: View;
+  sort?: LibrarySort;
+  favorites?: boolean;
   onKindChange: (kind: Kind) => void;
   onViewChange: (view: View) => void;
+  onSortChange?: (sort: LibrarySort) => void;
   onRefresh: () => void;
 }) {
+  const sortOptions: { id: LibrarySort; label: string }[] = [
+    ...(favorites
+      ? [{ id: 'favorite_desc' as const, label: 'お気に入り登録が新しい順' }]
+      : []),
+    ...assetSorts,
+  ];
   return (
     <div className="library-toolbar">
       {/* biome-ignore lint/a11y/useSemanticElements: These toggle buttons form a labeled group without fieldset styling. */}
@@ -40,6 +58,19 @@ export function LibraryToolbar({
         >
           更新
         </Button>
+        {sort && onSortChange && (
+          <NativeSelect
+            aria-label="並べ替え"
+            value={sort}
+            onChange={(e) => onSortChange(e.target.value as LibrarySort)}
+          >
+            {sortOptions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </NativeSelect>
+        )}
         <NativeSelect
           aria-label="表示方法"
           value={view}

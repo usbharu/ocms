@@ -107,16 +107,46 @@ func (s *Service) listCharacters(w http.ResponseWriter, r *http.Request) {
 	s.listLabels(w, r, "characters", `CROSS JOIN LATERAL unnest(a.characters) t(name)`)
 }
 
+// Tags and characters have no timestamp of their own. Order them by the
+// newest (or oldest) Asset addition among the authorized assets that use them.
+func labelOrder(sort string) (string, bool) {
+	switch sort {
+	case "", "count":
+		return `asset_count DESC,name COLLATE "C"`, true
+	case "added_desc":
+		return `latest_at DESC,name COLLATE "C"`, true
+	case "added_asc":
+		return `earliest_at ASC,name COLLATE "C"`, true
+	default:
+		return "", false
+	}
+}
+
 func (s *Service) listLabels(w http.ResponseWriter, r *http.Request, key, source string) {
 	if !guard(w, r) {
 		return
 	}
+	values := r.URL.Query()["sort"]
+	if len(values) > 1 {
+		platform.Error(w, 400, "INVALID_SORT")
+		return
+	}
+	sort := ""
+	if len(values) == 1 {
+		sort = values[0]
+	}
+	order, valid := labelOrder(sort)
+	if !valid {
+		platform.Error(w, 400, "INVALID_SORT")
+		return
+	}
 	var result json.RawMessage
 	err := s.DB.QueryRow(r.Context(), `WITH visible AS MATERIALIZED (
- SELECT DISTINCT a.id::text AS id,t.name FROM catalog.display_assets a `+source+`
+ SELECT DISTINCT a.id::text AS id,t.name,a.created_at FROM catalog.display_assets a `+source+`
  WHERE `+displayed+` AND btrim(t.name)<>''
  ), counts AS MATERIALIZED (
- SELECT name,count(*) AS asset_count FROM visible WHERE strpos(lower(name),lower($2))>0 GROUP BY name
+ SELECT name,count(*) AS asset_count,min(created_at) AS earliest_at,max(created_at) AS latest_at
+ FROM visible WHERE strpos(lower(name),lower($2))>0 GROUP BY name
  ), top_tags AS MATERIALIZED (
  SELECT * FROM counts ORDER BY asset_count DESC,name COLLATE "C" LIMIT 200
  ), graph_tags AS MATERIALIZED (
@@ -128,7 +158,7 @@ func (s *Service) listLabels(w http.ResponseWriter, r *http.Request, key, source
  FROM graph_assets a JOIN graph_assets b ON a.id=b.id AND a.name COLLATE "C" < b.name COLLATE "C"
  GROUP BY a.name,b.name
  ) SELECT json_build_object(
- '`+key+`',COALESCE((SELECT json_agg(t ORDER BY asset_count DESC,name COLLATE "C") FROM top_tags t),'[]'::json),
+ '`+key+`',COALESCE((SELECT json_agg(json_build_object('name',t.name,'asset_count',t.asset_count) ORDER BY `+order+`) FROM top_tags t),'[]'::json),
  'total',(SELECT count(*) FROM counts),
  'links',COALESCE((SELECT json_agg(l ORDER BY source COLLATE "C",target COLLATE "C") FROM links l),'[]'::json)
  )`, user(r), r.URL.Query().Get("q")).Scan(&result)

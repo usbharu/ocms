@@ -234,6 +234,46 @@ for (const view of ['list', 'grid', 'detailed-grid']) {
   });
 }
 
+test('favorites default to registration order and can use asset sorting', async ({
+  page,
+}) => {
+  await page.route('**/auth/config', (r) => r.fulfill({ json: {} }));
+  await page.route('**/api/v1/**', (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/me'))
+      return route.fulfill({ json: { principal_id: 'alice' } });
+    if (url.pathname === '/api/v1/assets')
+      return route.fulfill({
+        json: {
+          assets: [
+            {
+              asset_id: 'image',
+              filename: '風景.png',
+              mime_type: 'image/png',
+              tags: [],
+              status: 'ready',
+              is_favorite: true,
+            },
+          ],
+          total: 1,
+        },
+      });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto('/favorites');
+  await expect(page.getByLabel('並べ替え')).toHaveValue('favorite_desc');
+  const request = page.waitForRequest(
+    (r) =>
+      new URL(r.url()).pathname === '/api/v1/assets' &&
+      new URL(r.url()).searchParams.get('sort') === 'created_desc',
+  );
+  await page.getByLabel('並べ替え').selectOption('created_desc');
+  await request;
+  await expect(page).toHaveURL(/sort=created_desc/);
+  await page.getByLabel('並べ替え').selectOption('favorite_desc');
+  await expect(page).not.toHaveURL(/sort=/);
+});
+
 test('removing the last favorite on a page corrects pagination and keeps detail focus', async ({
   page,
 }) => {
