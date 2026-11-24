@@ -11,6 +11,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const Image: Story = {};
+export const Video: Story = { args: { asset: assets[1] } };
 export const Audio: Story = { args: { asset: assets[2] } };
 export const PDFPage: Story = { args: { asset: assets[3] } };
 export const Unavailable: Story = {
