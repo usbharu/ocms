@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify permanent same-owner duplicate merging on the development stack.
 
-The checks cover the upload path and the migration 015 merge function. Synthetic
+The checks cover the upload path and the migration 016 merge function. Synthetic
 rows are removed; uploaded Assets are left logically deleted like other tests.
 """
 import uuid
@@ -36,7 +36,7 @@ try:
     alice.call('GET', '/api/v1/assets/' + other['asset_id'], expected=404)
     check('same-owner same-hash uploads merge; another owner stays independent')
 
-    # Seed the pre-migration state, then apply the same merge function used by 015.
+    # Seed the pre-migration state, then apply the same merge function used by 016.
     ids = {name: str(uuid.uuid4()) for name in ('old', 'keep', 'series', 'member', 'group', 'session', 'blob')}
     seeded.extend(ids[name] for name in ('old', 'keep', 'series', 'member'))
     old, keep = ids['old'], ids['keep']

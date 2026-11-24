@@ -203,13 +203,13 @@ with tempfile.TemporaryDirectory(prefix='migration-', dir=root / '.cache') as te
         assert sql('SELECT version FROM public.schema_migrations') == str(latest)
         check('first-migration rollback recovers with the upstream nil version (-1)')
 
-        # Migration 015 merges same-owner duplicates without changing the set of
-        # content visible to a principal. Seed first, then apply only 015.
+        # Migration 016 merges same-owner duplicates without changing the set of
+        # content visible to a principal. Seed first, then apply only 016.
         reset()
-        merge = migrations / '015_merge_duplicate_assets.up.sql'
-        stash015 = temp / '015-stash'
-        stash015.mkdir()
-        shutil.move(str(merge), stash015 / merge.name)
+        merge = migrations / '016_merge_duplicate_assets.up.sql'
+        stash016 = temp / '016-stash'
+        stash016.mkdir()
+        shutil.move(str(merge), stash016 / merge.name)
         run('up')
         p1, p2 = ('11111111-1111-4111-8111-111111111111',
                   '22222222-2222-4222-8222-222222222222')
@@ -260,7 +260,7 @@ INSERT INTO catalog.series_members(series_id,asset_id,position,composite) VALUES
             'group': f"AND EXISTS(SELECT 1 FROM catalog.asset_groups g WHERE g.principal_id='{p1}' AND g.asset_id=a.id)",
         }.items()}
         before_p2 = visible(p2)
-        shutil.move(str(stash015 / merge.name), merge)
+        shutil.move(str(stash016 / merge.name), merge)
         run('up')
         after = {name: visible(p1, extra) for name, extra in {
             'all': '', 'tag-one': "AND 'one'=ANY(a.tags)", 'tag-two': "AND 'two'=ANY(a.tags)",
@@ -280,7 +280,7 @@ INSERT INTO catalog.series_members(series_id,asset_id,position,composite) VALUES
         assert sql(f"SELECT asset_id::text FROM catalog.upload_sessions WHERE id='{session}'") == a2
         assert sql(f"SELECT string_agg(asset_id::text,',' ORDER BY position) FROM catalog.series_members WHERE series_id='{s1}'") == a2 + ',' + a4
         assert sql(f"SELECT count(*) FROM catalog.default_group_exclusions WHERE asset_id='{a2}'") == '0'
-        check('015 merges same-owner duplicates, preserves visible Blob sets and migrates metadata/ACL')
+        check('016 merges same-owner duplicates, preserves visible Blob sets and migrates metadata/ACL')
 
         # Use the real Compose dependency graph on a separate empty database.
         # No port mappings or existing development containers are involved.

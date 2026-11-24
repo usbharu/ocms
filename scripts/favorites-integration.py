@@ -22,7 +22,7 @@ try:
         f"('{x}','{bid if i == 2 else aid}','{prefix}-{i}','{'audio/ogg' if i == 1 else 'image/png'}')"
         for i, x in enumerate(ids)))
     sql(f"INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES ('{ids[0]}','{blob}'),('{ids[1]}','{blob}');")
-    # Simulate migration 015: the newest same-owner Asset survives.
+    # Simulate migration 016: the newest same-owner Asset survives.
     sql(f"SELECT catalog.merge_asset('{ids[1]}','{ids[0]}')")
     Client().call('GET', '/api/v1/assets?favorites=true', expected=401)
     favorite(bob, 1, expected=404)
