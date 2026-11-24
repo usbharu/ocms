@@ -92,7 +92,8 @@ with tempfile.TemporaryDirectory(prefix='migration-', dir=root / '.cache') as te
             raise AssertionError('test initialization hook did not become ready')
         assert docker('exec', name, 'pg_isready', '-U', 'ocms', '-d', 'ocms', expected=None).returncode == 0
         assert docker('exec', name, 'pg_isready', '-h', '127.0.0.1', '-U', 'ocms', '-d', 'ocms', expected=None).returncode != 0
-        assert 'MIGRATION_DATABASE_UNAVAILABLE' in run('up', expected=1).stderr
+        unavailable = run('up', expected=1)
+        assert 'MIGRATION_DATABASE_UNAVAILABLE' in unavailable.stderr, unavailable.stderr[-500:]
         (init_gate / 'release').touch()
         check('socket-only initialization is not TCP-ready for migrations')
         for _ in range(60):
