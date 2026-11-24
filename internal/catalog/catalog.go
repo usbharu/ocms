@@ -334,7 +334,13 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 // Ordinary assets have at most one original. Only series need to expand their leaves.
 const displayBlobIDs = `CASE WHEN a.series_kind='' THEN ARRAY(SELECT o.blob_id::text WHERE o.blob_id IS NOT NULL) ELSE a.blob_ids END`
 const displayBlobAssetIDs = `CASE WHEN a.series_kind='' THEN ARRAY(SELECT o.asset_id::text WHERE o.asset_id IS NOT NULL) ELSE a.blob_asset_ids END`
-const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,a.characters,a.rating,` + favoriteCondition + `,a.series_kind,a.series_version,a.composite_id,a.cover_asset_id,` + displayBlobIDs + `,a.member_ids,` + displayBlobAssetIDs + ` FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
+
+func assetSelect(favorite string) string {
+	return `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,a.characters,a.rating,` + favorite + `,a.series_kind,a.series_version,a.composite_id,a.cover_asset_id,` + displayBlobIDs + `,a.member_ids,` + displayBlobAssetIDs + ` FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
+}
+
+var selectAsset = assetSelect(favoriteCondition)
+
 const allowed = `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1)) AND NOT EXISTS(SELECT 1 FROM catalog.series_leaves l JOIN catalog.assets x ON x.id=l.asset_id WHERE l.series_id=a.id AND NOT(x.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=x.id AND g.principal_id=$1)))`
 const displayed = allowed + ` AND a.composite_id=''`
 
@@ -475,22 +481,25 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		where += ` AND a.series_kind='composite'`
 	}
 	order := ` ORDER BY a.created_at DESC,a.id DESC`
-	if favorites {
-		where += ` AND ` + favoriteCondition
-		order = ` ORDER BY (SELECT max(f.created_at) FROM catalog.asset_favorites f WHERE f.principal_id=$1 AND (f.asset_id=a.id OR f.asset_id IN (SELECT m.asset_id FROM catalog.series_members m WHERE m.series_id=a.id AND m.composite) OR (a.series_kind='' AND EXISTS(SELECT 1 FROM catalog.asset_originals x JOIN catalog.asset_originals y ON x.blob_id=y.blob_id JOIN catalog.assets d ON d.id=y.asset_id WHERE x.asset_id=a.id AND y.asset_id=f.asset_id AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1)))))) DESC,a.id DESC`
-	}
 	where += ` AND ` + groupCondition(7)
-	var total int
-	err = s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END) FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `+where, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group).Scan(&total)
-	if err != nil {
-		platform.RespondError(w, err)
-		return
-	}
+	countQuery := `SELECT count(DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END) FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where
 	pageQuery := selectAsset + `WHERE a.id IN (SELECT id FROM (SELECT a.id,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ` + order + `) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where + `) ranked WHERE duplicate_rank=1)` + order + ` LIMIT $8 OFFSET $9`
-	if !favorites {
+	if favorites {
+		// Resolve the principal's favorites once instead of evaluating an
+		// EXISTS for every Asset, then page before expanding display metadata.
+		countQuery = favoriteTargetsCTE + ` SELECT count(DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END) FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id JOIN favorite_targets ft ON ft.asset_id=a.id ` + where
+		// Every page row passed the favorite_targets join, so its flag is known.
+		pageQuery = favoriteTargetsCTE + `,ranked AS MATERIALIZED (SELECT a.id,ft.created_at AS favorite_at,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ORDER BY ft.created_at DESC,a.id DESC) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id JOIN favorite_targets ft ON ft.asset_id=a.id ` + where + `),paged AS MATERIALIZED (SELECT id,favorite_at FROM ranked WHERE duplicate_rank=1 ORDER BY favorite_at DESC,id DESC LIMIT $8 OFFSET $9)` + assetSelect(`TRUE`) + `JOIN paged p ON p.id=a.id ORDER BY p.favorite_at DESC,a.id DESC`
+	} else {
 		// Select the page before expanding the expensive display metadata and
 		// favorite state. The same ordering selects duplicate representatives.
 		pageQuery = selectAsset + `WHERE a.id IN (SELECT id FROM (SELECT a.id,a.created_at,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ` + order + `) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where + `) ranked WHERE duplicate_rank=1 ORDER BY created_at DESC,id DESC LIMIT $8 OFFSET $9)` + order
+	}
+	var total int
+	err = s.DB.QueryRow(r.Context(), countQuery, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group).Scan(&total)
+	if err != nil {
+		platform.RespondError(w, err)
+		return
 	}
 	rows, err := s.DB.Query(r.Context(), pageQuery, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group, options.limit, options.offset)
 	if err != nil {
