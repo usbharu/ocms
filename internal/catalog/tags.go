@@ -39,6 +39,8 @@ func (s *Service) blobTags(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	in.Tags = contracts.NormalizeTags(in.Tags)
+	in.Characters = contracts.NormalizeTags(in.Characters)
 	if in.Tags == nil {
 		in.Tags = []string{}
 	}

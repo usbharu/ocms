@@ -37,6 +37,26 @@ func TestTagAggregation(t *testing.T) {
 	}
 }
 
+func TestTagAggregationNormalizesSpaces(t *testing.T) {
+	scores := map[string]float64{}
+	result := contracts.TagResult{Model: contracts.TagModel, Revision: contracts.TagRevision,
+		Tags: []contracts.TagScore{{Name: "long hair", Score: .8}, {Name: "long_hair", Score: .9}, {Name: "blue eyes", Score: .7}}}
+	if err := mergeTags(scores, result); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(sortedTags(scores), []string{"long_hair", "blue_eyes"}) || scores["long_hair"] != .9 {
+		t.Fatal("space-separated tags were not merged")
+	}
+	characters := map[string]float64{}
+	result.Characters = []contracts.TagScore{{Name: "hero name", Score: .6}, {Name: "hero_name", Score: .7}}
+	if err := mergeCharacters(characters, result); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(sortedTags(characters), []string{"hero_name"}) || characters["hero_name"] != .7 {
+		t.Fatal("space-separated characters were not merged")
+	}
+}
+
 func TestTagSampling(t *testing.T) {
 	for _, duration := range []float64{.1, 5, 12, 60, 600} {
 		times := tagFrameTimes(duration)

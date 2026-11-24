@@ -20,6 +20,14 @@ class TaggerTest(unittest.TestCase):
         labels = [{'name': str(i), 'category': 'character'} for i in range(300)]
         self.assertEqual(len(select_tags(labels, [1] * 300, category='character', threshold=.55)), 256)
 
+    def test_names_use_underscores_and_collisions_keep_highest_score(self):
+        labels = [{'name': name, 'category': category} for name, category in
+                  [('long hair', 'general'), ('long_hair', 'general'), ('blue eyes', 'character')]]
+        self.assertEqual(select_tags(labels, [.8, .9, .7]),
+                         [{'name': 'long_hair', 'score': .9}])
+        self.assertEqual(select_tags(labels, [.8, .9, .7], category='character', threshold=.55),
+                         [{'name': 'blue_eyes', 'score': .7}])
+
     def test_invalid_output_rejected(self):
         for scores in [[float('nan')], [float('inf')], [-1], [1.1], []]:
             with self.assertRaises(ValueError):

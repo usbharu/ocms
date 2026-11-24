@@ -203,13 +203,16 @@ with tempfile.TemporaryDirectory(prefix='migration-', dir=root / '.cache') as te
         assert sql('SELECT version FROM public.schema_migrations') == str(latest)
         check('first-migration rollback recovers with the upstream nil version (-1)')
 
-        # Migration 016 merges same-owner duplicates without changing the set of
-        # content visible to a principal. Seed first, then apply only 016.
+        # Migrations 016 and 017 are seeded and applied one at a time.
         reset()
         merge = migrations / '016_merge_duplicate_assets.up.sql'
+        normalize = migrations / '017_normalize_tags.up.sql'
         stash016 = temp / '016-stash'
+        stash017 = temp / '017-stash'
         stash016.mkdir()
+        stash017.mkdir()
         shutil.move(str(merge), stash016 / merge.name)
+        shutil.move(str(normalize), stash017 / normalize.name)
         run('up')
         p1, p2 = ('11111111-1111-4111-8111-111111111111',
                   '22222222-2222-4222-8222-222222222222')
@@ -281,6 +284,33 @@ INSERT INTO catalog.series_members(series_id,asset_id,position,composite) VALUES
         assert sql(f"SELECT string_agg(asset_id::text,',' ORDER BY position) FROM catalog.series_members WHERE series_id='{s1}'") == a2 + ',' + a4
         assert sql(f"SELECT count(*) FROM catalog.default_group_exclusions WHERE asset_id='{a2}'") == '0'
         check('016 merges same-owner duplicates, preserves visible Blob sets and migrates metadata/ACL')
+
+        # Migration 017 stores tags and characters in the WD14 underscore form.
+        # Seed a pre-017 database, including collisions and cached results.
+        reset()
+        run('up')
+        a5 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5'
+        b3 = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'
+        sql(f"""
+INSERT INTO catalog.principals(id,oidc_issuer,oidc_subject) VALUES ('{p1}','migration-test','normalize-p1');
+INSERT INTO catalog.assets(id,owner_id,filename,mime_type,tags,rating,status,wd14_tagged,wd14_characters_tagged) VALUES
+ ('{a5}','{p1}','spaces.png','image/png',ARRAY['long hair','solo','long_hair',' blue eyes ',''],'general','ready',true,true);
+INSERT INTO catalog.asset_characters(asset_id,name,position) VALUES
+ ('{a5}','long hair',0),('{a5}','solo',1),('{a5}','long_hair',2),('{a5}',' blue eyes ',3);
+INSERT INTO catalog.wd14_results(blob_id,tags,model_id,model_revision) VALUES
+ ('{b3}',ARRAY['long hair','long_hair','solo',''],'test','test');
+INSERT INTO catalog.wd14_character_results(blob_id,characters,model_id,model_revision) VALUES
+ ('{b3}',ARRAY['long hair','long_hair','solo'],'test','test');
+""")
+        shutil.move(str(stash017 / normalize.name), normalize)
+        run('up')
+        assert sql(f"SELECT tags::text FROM catalog.assets WHERE id='{a5}'") == '{long_hair,solo,blue_eyes}'
+        assert sql(f"SELECT string_agg(name,',' ORDER BY position) FROM catalog.asset_characters WHERE asset_id='{a5}'") == 'long_hair,solo,blue_eyes'
+        assert sql(f"SELECT count(*) FROM catalog.asset_characters WHERE asset_id='{a5}'") == '3'
+        assert sql(f"SELECT tags::text FROM catalog.wd14_results WHERE blob_id='{b3}'") == '{long_hair,solo}'
+        assert sql(f"SELECT characters::text FROM catalog.wd14_character_results WHERE blob_id='{b3}'") == '{long_hair,solo}'
+        assert sql(f"SELECT wd14_tagged::text||':'||wd14_characters_tagged::text FROM catalog.assets WHERE id='{a5}'") == 'true:true'
+        check('017 normalizes tags, characters and cached inference without reprocessing')
 
         # Use the real Compose dependency graph on a separate empty database.
         # No port mappings or existing development containers are involved.

@@ -570,6 +570,14 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		platform.Error(w, 400, "INVALID_REQUEST")
 		return
 	}
+	if in.Tags != nil {
+		tags := contracts.NormalizeTags(*in.Tags)
+		in.Tags = &tags
+	}
+	if in.Characters != nil {
+		characters := contracts.NormalizeTags(*in.Characters)
+		in.Characters = &characters
+	}
 
 	tx, err := s.DB.Begin(r.Context())
 	if err != nil {
