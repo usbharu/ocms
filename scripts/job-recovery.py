@@ -76,7 +76,7 @@ a.call('POST',f"/api/v1/assets/{u['asset_id']}/renditions",{},expected=202)
 deadline=time.monotonic()+240
 while time.monotonic()<deadline:
     jobs=a.call('GET',f"/api/v1/assets/{u['asset_id']}/jobs")[2]['jobs']
-    required={'media.process','embedding.generate'}
+    required={'media.process','embedding.generate','tags.generate'}
     if required <= {j['job_type'] for j in jobs} and all(j['status']=='completed' for j in jobs):break
     time.sleep(2)
 else:raise AssertionError(jobs)
