@@ -225,6 +225,10 @@ func TestSeriesDatabase(t *testing.T) {
 	if matched == 0 {
 		t.Fatal("favorite blob missing from recommendation dataset")
 	}
+	// The alias is synthetic; remove it before the collapse assertions so it
+	// cannot shadow the series member that resolves the same Blob.
+	exec(`DELETE FROM catalog.asset_originals WHERE asset_id=$1`, alias)
+	exec(`DELETE FROM catalog.assets WHERE id=$1`, alias)
 	json.Unmarshal(call(cat.URL, "GET", "/api/v1/assets?favorites=true&kind=series", owner, nil, 200), &list)
 	if list.Total != 1 || len(list.Assets) != 1 || list.Assets[0].ID != comp.ID || !list.Assets[0].IsFavorite {
 		t.Fatalf("member favorite did not resolve to one composite: %+v", list)
