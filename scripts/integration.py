@@ -52,17 +52,20 @@ other = b.create(name + '.png', body)
 assert b.call('PUT', f"/api/v1/uploads/{other['upload_id']}/content", body)[2]['asset_id'] == other['asset_id']
 different = a.create(name + '.png', body + b'x')
 assert a.call('PUT', f"/api/v1/uploads/{different['upload_id']}/content", body + b'x')[2]['asset_id'] == different['asset_id']
-check('same-owner exact duplicates reuse an Asset; other owners and different content remain separate')
-# Independent users upload the same bytes concurrently.
+check('same-owner same-hash uploads merge into one Asset; other owners and different content remain separate')
+# Independent users upload the same bytes concurrently. Each owner's copies are
+# merged into that owner's existing Asset; the other owner stays independent.
 sessions = [(a if i % 2 == 0 else b, (a if i % 2 == 0 else b).create(name + f'-copy-{i}.png', body)) for i in range(8)]
 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-    list(executor.map(lambda pair: pair[0].put(pair[1], body), sessions))
-assert all(client.asset(item)['blob_id'] == blob for client, item in sessions)
+    results = list(executor.map(lambda pair: pair[0].put(pair[1], body)[2], sessions))
+assert all(result['asset_id'] == (u['asset_id'] if i % 2 == 0 else other['asset_id']) for i, result in enumerate(results))
+assert all(client.asset({'asset_id': result['asset_id']})['blob_id'] == blob for client, result in zip((pair[0] for pair in sessions), results))
+assert len(a.asset(u)['aliases']) == 4
 assert sql(f"SELECT count(*) FROM storage.blobs WHERE id='{blob}'") == '1'
 assert sql(f"SELECT count(*) FROM catalog.outbox_events WHERE blob_id='{blob}'") == '1'
 # A repeated PUT uses the already committed result.
 a.put(u, body)
-check('concurrent cross-user deduplication, idempotent PUT, single outbox event')
+check('concurrent cross-owner storage dedup and per-owner same-hash merge, idempotent PUT, single outbox event')
 b.call('GET', path, expected=404)
 b.call('GET', f"/api/v1/assets/{u['asset_id']}", expected=404)
 b.call('DELETE', f"/api/v1/assets/{u['asset_id']}", expected=404)
@@ -70,7 +73,7 @@ a.call('GET', '/api/v1/assets/' + str(uuid.uuid4()), expected=404)
 _, _, found = b.call('POST', '/api/v1/search', {'mode': 'keyword', 'query': name})
 assert u['asset_id'] not in {x['asset_id'] for x in found['assets']}
 dup = a.call('GET', f"/api/v1/assets/{u['asset_id']}/duplicates")[2]['assets']
-assert len(dup) == 4
+assert len(dup) == 0
 b.call('GET', path, headers={'X-Principal': a.me['principal_id'], 'X-Service-Token': 'forged'}, expected=404)
 check('ACL isolation in content, details, delete, search, duplicates and forged headers')
 a.call('PATCH', f"/api/v1/assets/{u['asset_id']}", {'tags': [name + '-タグ'], 'filename': name + '-renamed.png'})
@@ -83,7 +86,7 @@ empty = a.create(name + '-empty.png', b''); a.put(empty, b''); assert a.call('GE
 check('size mismatch rejected, empty Blob roundtrip')
 a.call('DELETE', f"/api/v1/assets/{u['asset_id']}", expected=204)
 a.call('GET', path, expected=404)
-assert b.call('GET', f"/api/v1/assets/{sessions[1][1]['asset_id']}/content")[2] == body
+assert b.call('GET', f"/api/v1/assets/{other['asset_id']}/content")[2] == body
 check('logical deletion preserves another owner\'s shared Blob')
 # Roles must not cross-write the other service's schema.
 assert sql("SELECT has_schema_privilege('catalog_app','storage','USAGE') OR has_schema_privilege('transfer_app','catalog','USAGE')") == 'f'

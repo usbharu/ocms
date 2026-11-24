@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -20,25 +19,24 @@ type Service struct {
 	MaxSize int64
 }
 type Asset struct {
-	Aliases              []string `json:"aliases,omitempty"`
-	UneditableDuplicates int      `json:"uneditable_duplicates,omitempty"`
-	BlobAssetIDs         []string `json:"blob_asset_ids,omitempty"`
-	MatchedAssetID       string   `json:"matched_asset_id,omitempty"`
-	SeriesKind           string   `json:"series_kind,omitempty"`
-	SeriesVersion        int64    `json:"series_version,omitempty"`
-	CompositeID          string   `json:"composite_id,omitempty"`
-	CoverAssetID         string   `json:"cover_asset_id,omitempty"`
-	BlobIDs              []string `json:"blob_ids,omitempty"`
-	MemberIDs            []string `json:"member_ids,omitempty"`
-	Rating               string   `json:"rating"`
-	IsFavorite           bool     `json:"is_favorite"`
-	ID                   string   `json:"asset_id"`
-	Filename             string   `json:"filename"`
-	MIME                 string   `json:"mime_type"`
-	Tags                 []string `json:"tags"`
-	Characters           []string `json:"characters"`
-	Status               string   `json:"status"`
-	BlobID               *string  `json:"blob_id,omitempty"`
+	Aliases        []string `json:"aliases,omitempty"`
+	BlobAssetIDs   []string `json:"blob_asset_ids,omitempty"`
+	MatchedAssetID string   `json:"matched_asset_id,omitempty"`
+	SeriesKind     string   `json:"series_kind,omitempty"`
+	SeriesVersion  int64    `json:"series_version,omitempty"`
+	CompositeID    string   `json:"composite_id,omitempty"`
+	CoverAssetID   string   `json:"cover_asset_id,omitempty"`
+	BlobIDs        []string `json:"blob_ids,omitempty"`
+	MemberIDs      []string `json:"member_ids,omitempty"`
+	Rating         string   `json:"rating"`
+	IsFavorite     bool     `json:"is_favorite"`
+	ID             string   `json:"asset_id"`
+	Filename       string   `json:"filename"`
+	MIME           string   `json:"mime_type"`
+	Tags           []string `json:"tags"`
+	Characters     []string `json:"characters"`
+	Status         string   `json:"status"`
+	BlobID         *string  `json:"blob_id,omitempty"`
 }
 type Upload struct {
 	ID      string  `json:"upload_id"`
@@ -273,24 +271,18 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			var duplicate string
-			err = tx.QueryRow(r.Context(), `SELECT existing.id FROM catalog.assets current JOIN catalog.assets existing ON existing.owner_id=current.owner_id AND existing.filename=current.filename AND existing.deleted_at IS NULL JOIN catalog.asset_originals o ON o.asset_id=existing.id AND o.blob_id=$2 WHERE current.id=$1 AND existing.id<>current.id ORDER BY existing.created_at,existing.id LIMIT 1`, assetID, in.BlobID).Scan(&duplicate)
+			err = tx.QueryRow(r.Context(), `SELECT existing.id FROM catalog.assets current JOIN catalog.asset_originals o ON o.blob_id=$2 JOIN catalog.assets existing ON existing.id=o.asset_id AND existing.owner_id=current.owner_id AND existing.deleted_at IS NULL WHERE current.id=$1 AND existing.id<>current.id ORDER BY existing.created_at DESC,existing.id DESC LIMIT 1 FOR UPDATE OF existing`, assetID, in.BlobID).Scan(&duplicate)
 			if errors.Is(err, pgx.ErrNoRows) {
 				err = nil
 			} else if err == nil {
-				// Reusing a logical Asset must retain its existing memberships and
-				// also apply the upload destination from the temporary Asset.
-				_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_groups(group_id,principal_id,asset_id) SELECT group_id,principal_id,$3 FROM catalog.asset_groups WHERE principal_id=$1 AND asset_id=$2 ON CONFLICT DO NOTHING`, user(r), assetID, duplicate)
+				// The same owner's identical content is one logical Asset. Keep the
+				// existing Asset, retain the new name as an alias and merge the
+				// upload destination instead of creating a second registration.
+				_, err = tx.Exec(r.Context(), `SELECT catalog.merge_asset($1,$2)`, duplicate, assetID)
 				if err == nil {
-					_, err = tx.Exec(r.Context(), `DELETE FROM catalog.default_group_exclusions e WHERE e.principal_id=$1 AND e.asset_id=$3 AND NOT EXISTS(SELECT 1 FROM catalog.default_group_exclusions source WHERE source.principal_id=$1 AND source.asset_id=$2)`, user(r), assetID, duplicate)
+					assetID = duplicate
+					duplicateFound = true
 				}
-				if err == nil {
-					_, err = tx.Exec(r.Context(), `UPDATE catalog.upload_sessions SET asset_id=$2 WHERE id=$1`, r.PathValue("id"), duplicate)
-				}
-				if err == nil {
-					_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=$1`, assetID)
-				}
-				assetID = duplicate
-				duplicateFound = true
 			}
 		}
 	}
@@ -304,10 +296,6 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, assetID, in.BlobID)
-	}
-	if err == nil && state != "completed" {
-		// Keep a single membership row per principal, group and Blob after upload.
-		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_groups g WHERE g.principal_id=$1 AND g.asset_id=$2 AND EXISTS (SELECT 1 FROM catalog.asset_groups other JOIN catalog.asset_originals o ON o.asset_id=other.asset_id JOIN catalog.assets a ON a.id=other.asset_id WHERE other.principal_id=g.principal_id AND other.group_id=g.group_id AND other.asset_id<>g.asset_id AND o.blob_id=$3 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants gr WHERE gr.asset_id=a.id AND gr.principal_id=$1)))`, user(r), assetID, in.BlobID)
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE catalog.upload_sessions SET state='completed' WHERE id=$1`, r.PathValue("id"))
@@ -371,48 +359,24 @@ func (s *Service) detail(w http.ResponseWriter, r *http.Request) {
 	if assetError(w, err) {
 		return
 	}
-	if a.SeriesKind == "" && a.BlobID != nil {
-		rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+allowed+` AND a.series_kind='' AND o.blob_id=$2 ORDER BY a.created_at,a.id`, user(r), *a.BlobID)
+	if a.SeriesKind == "" {
+		rows, err := s.DB.Query(r.Context(), `SELECT filename FROM catalog.asset_aliases WHERE asset_id=$1 ORDER BY filename COLLATE "C"`, a.ID)
 		if assetError(w, err) {
 			return
 		}
 		defer rows.Close()
-		tags, characters, aliases := map[string]bool{}, map[string]bool{}, map[string]bool{}
 		for rows.Next() {
-			other, err := scanAsset(rows)
-			if assetError(w, err) {
+			var filename string
+			if assetError(w, rows.Scan(&filename)) {
 				return
 			}
-			for _, value := range other.Tags {
-				tags[value] = true
-			}
-			for _, value := range other.Characters {
-				characters[value] = true
-			}
-			if other.Filename != a.Filename {
-				aliases[other.Filename] = true
-			}
+			a.Aliases = append(a.Aliases, filename)
 		}
 		if assetError(w, rows.Err()) {
 			return
 		}
-		a.Tags, a.Characters = sortedKeys(tags), sortedKeys(characters)
-		a.Aliases = sortedKeys(aliases)
-		err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets d JOIN catalog.asset_originals o ON o.asset_id=d.id WHERE o.blob_id=$2 AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1)) AND NOT (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1 AND g.permission IN ('write','admin')))`, user(r), *a.BlobID).Scan(&a.UneditableDuplicates)
-		if assetError(w, err) {
-			return
-		}
 	}
 	platform.JSON(w, 200, a)
-}
-
-func sortedKeys(values map[string]bool) []string {
-	out := make([]string, 0, len(values))
-	for value := range values {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
 }
 
 type listOptions struct {
@@ -467,7 +431,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query().Get("q")
-	where := `WHERE ` + displayed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM unnest(a.characters) c WHERE strpos(lower(c),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='series' AND a.series_kind<>'') OR ($3='document' AND a.series_kind='' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
+	where := `WHERE ` + displayed + ` AND ($2='' OR strpos(lower(a.filename),lower($2))>0 OR EXISTS(SELECT 1 FROM catalog.asset_aliases al WHERE al.asset_id=a.id AND strpos(lower(al.filename),lower($2))>0) OR EXISTS(SELECT 1 FROM unnest(a.tags) t WHERE strpos(lower(t),lower($2))>0) OR EXISTS(SELECT 1 FROM unnest(a.characters) c WHERE strpos(lower(c),lower($2))>0)) AND ($3='' OR split_part(a.mime_type,'/',1)=$3 OR ($3='series' AND a.series_kind<>'') OR ($3='document' AND a.series_kind='' AND split_part(a.mime_type,'/',1) NOT IN ('image','video','audio')))`
 	where += ` AND ($4='' OR $4=ANY(a.tags)) AND ($5='' OR $5=ANY(a.characters))`
 	where += ` AND ($6::text[] IS NULL OR a.rating=ANY($6))`
 	favorites, err := favoriteFilter(r)
@@ -482,18 +446,13 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	}
 	order := ` ORDER BY a.created_at DESC,a.id DESC`
 	where += ` AND ` + groupCondition(7)
-	countQuery := `SELECT count(DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END) FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where
-	pageQuery := selectAsset + `WHERE a.id IN (SELECT id FROM (SELECT a.id,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ` + order + `) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where + `) ranked WHERE duplicate_rank=1)` + order + ` LIMIT $8 OFFSET $9`
+	countQuery := `SELECT count(*) FROM catalog.display_assets a ` + where
+	pageQuery := selectAsset + `WHERE a.id IN (SELECT a.id FROM catalog.display_assets a ` + where + order + ` LIMIT $8 OFFSET $9)` + order
 	if favorites {
-		// Resolve the principal's favorites once instead of evaluating an
-		// EXISTS for every Asset, then page before expanding display metadata.
-		countQuery = favoriteTargetsCTE + ` SELECT count(DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END) FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id JOIN favorite_targets ft ON ft.asset_id=a.id ` + where
-		// Every page row passed the favorite_targets join, so its flag is known.
-		pageQuery = favoriteTargetsCTE + `,ranked AS MATERIALIZED (SELECT a.id,ft.created_at AS favorite_at,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ORDER BY ft.created_at DESC,a.id DESC) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id JOIN favorite_targets ft ON ft.asset_id=a.id ` + where + `),paged AS MATERIALIZED (SELECT id,favorite_at FROM ranked WHERE duplicate_rank=1 ORDER BY favorite_at DESC,id DESC LIMIT $8 OFFSET $9)` + assetSelect(`TRUE`) + `JOIN paged p ON p.id=a.id ORDER BY p.favorite_at DESC,a.id DESC`
-	} else {
-		// Select the page before expanding the expensive display metadata and
-		// favorite state. The same ordering selects duplicate representatives.
-		pageQuery = selectAsset + `WHERE a.id IN (SELECT id FROM (SELECT a.id,a.created_at,row_number() OVER (PARTITION BY CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN o.blob_id::text ELSE a.id::text END ` + order + `) AS duplicate_rank FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id ` + where + `) ranked WHERE duplicate_rank=1 ORDER BY created_at DESC,id DESC LIMIT $8 OFFSET $9)` + order
+		// Resolve the principal's favorites once, page first, then expand the
+		// display metadata for the selected rows.
+		countQuery = favoriteTargetsCTE + ` SELECT count(*) FROM catalog.display_assets a JOIN favorite_targets ft ON ft.asset_id=a.id ` + where
+		pageQuery = favoriteTargetsCTE + `,paged AS MATERIALIZED (SELECT a.id,ft.created_at AS favorite_at FROM catalog.display_assets a JOIN favorite_targets ft ON ft.asset_id=a.id ` + where + ` ORDER BY ft.created_at DESC,a.id DESC LIMIT $8 OFFSET $9)` + assetSelect(`TRUE`) + `JOIN paged p ON p.id=a.id ORDER BY p.favorite_at DESC,a.id DESC`
 	}
 	var total int
 	err = s.DB.QueryRow(r.Context(), countQuery, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group).Scan(&total)
@@ -618,10 +577,9 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	// Names and ratings belong to the selected Asset; labels are shared across
-	// the visible duplicates that the caller is allowed to edit.
-	targets := `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission IN ('write','admin'))) AND (a.id=$2 OR (($4::text[] IS NOT NULL OR $6::text[] IS NOT NULL) AND EXISTS(SELECT 1 FROM catalog.asset_originals x JOIN catalog.asset_originals y ON x.blob_id=y.blob_id WHERE x.asset_id=$2 AND y.asset_id=a.id)))`
-	tag, err := tx.Exec(r.Context(), `UPDATE catalog.assets a SET filename=CASE WHEN a.id=$2 THEN coalesce($3,filename) ELSE filename END,tags=coalesce($4,tags),rating=CASE WHEN a.id=$2 THEN coalesce($5,rating) ELSE rating END,rating_manual=rating_manual OR (a.id=$2 AND $5::text IS NOT NULL),updated_at=now() WHERE `+targets, user(r), r.PathValue("id"), in.Filename, in.Tags, in.Rating, in.Characters)
+	// Names, labels and ratings belong to the selected Asset.
+	targets := `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission IN ('write','admin'))) AND a.id=$2`
+	tag, err := tx.Exec(r.Context(), `UPDATE catalog.assets a SET filename=coalesce($3,filename),tags=coalesce($4,tags),rating=coalesce($5,rating),rating_manual=rating_manual OR $5::text IS NOT NULL,updated_at=now() WHERE `+targets, user(r), r.PathValue("id"), in.Filename, in.Tags, in.Rating)
 	if err != nil {
 		platform.RespondError(w, err)
 		return
@@ -631,10 +589,9 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Characters != nil {
-		characterTargets := strings.NewReplacer("$4", "$3", "$6", "$4").Replace(targets)
-		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_characters WHERE asset_id IN (SELECT a.id FROM catalog.assets a WHERE `+characterTargets+`)`, user(r), r.PathValue("id"), in.Tags, in.Characters)
+		_, err = tx.Exec(r.Context(), `DELETE FROM catalog.asset_characters WHERE asset_id=$1`, r.PathValue("id"))
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_characters(asset_id,name,position) SELECT a.id,c.name,c.n FROM catalog.assets a CROSS JOIN unnest($4::text[]) WITH ORDINALITY AS c(name,n) WHERE `+characterTargets+` ON CONFLICT DO NOTHING`, user(r), r.PathValue("id"), in.Tags, in.Characters)
+			_, err = tx.Exec(r.Context(), `INSERT INTO catalog.asset_characters(asset_id,name,position) SELECT $1,name,n FROM unnest($2::text[]) WITH ORDINALITY AS c(name,n) ON CONFLICT DO NOTHING`, r.PathValue("id"), *in.Characters)
 		}
 	}
 	if err == nil {
@@ -661,74 +618,47 @@ func (s *Service) remove(w http.ResponseWriter, r *http.Request) {
 		platform.RespondError(w, err)
 		return
 	}
-	selected, err := s.readable(r.Context(), r.PathValue("id"), user(r))
+	var id string
+	err = tx.QueryRow(r.Context(), `SELECT a.id FROM catalog.assets a WHERE a.id=$2 AND a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission='admin')) FOR UPDATE OF a`, user(r), r.PathValue("id")).Scan(&id)
 	if assetError(w, err) {
 		return
 	}
-	rows, err := tx.Query(r.Context(), `SELECT a.id FROM catalog.assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id WHERE a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1 AND g.permission='admin')) AND (a.id=$2 OR ($3::uuid IS NOT NULL AND o.blob_id=$3)) ORDER BY a.id FOR UPDATE OF a`, user(r), selected.ID, selected.BlobID)
-	if assetError(w, err) {
-		return
-	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			break
+	var series bool
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM catalog.series WHERE asset_id=$1)`, id).Scan(&series)
+	if err == nil && series {
+		err = dissolveSeries(r.Context(), tx, id)
+	} else if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=$1`, id)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE catalog.series SET version=version+1 WHERE asset_id IN (SELECT series_id FROM catalog.series_members WHERE asset_id=$1)`, id)
 		}
-		ids = append(ids, id)
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if assetError(w, err) {
-		return
-	}
-	if len(ids) == 0 {
-		platform.Error(w, 404, "NOT_FOUND")
-		return
-	}
-	for _, id := range ids {
-		var series bool
-		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM catalog.series WHERE asset_id=$1)`, id).Scan(&series)
-		if err == nil && series {
-			err = dissolveSeries(r.Context(), tx, id)
-		} else if err == nil {
-			_, err = tx.Exec(r.Context(), `UPDATE catalog.assets SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=$1`, id)
-			if err == nil {
-				_, err = tx.Exec(r.Context(), `UPDATE catalog.series SET version=version+1 WHERE asset_id IN (SELECT series_id FROM catalog.series_members WHERE asset_id=$1)`, id)
-			}
-			if err == nil {
-				_, err = tx.Exec(r.Context(), `DELETE FROM catalog.series_members WHERE asset_id=$1`, id)
-			}
-			if err == nil {
-				rows, e := tx.Query(r.Context(), `SELECT s.asset_id::text FROM catalog.series s WHERE s.kind='composite' AND (SELECT count(*) FROM catalog.series_members WHERE series_id=s.asset_id)<2`)
-				if e != nil {
-					err = e
-				} else {
-					ids := []string{}
-					for rows.Next() {
-						var v string
-						if e = rows.Scan(&v); e != nil {
-							break
-						}
-						ids = append(ids, v)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `DELETE FROM catalog.series_members WHERE asset_id=$1`, id)
+		}
+		if err == nil {
+			rows, e := tx.Query(r.Context(), `SELECT s.asset_id::text FROM catalog.series s WHERE s.kind='composite' AND (SELECT count(*) FROM catalog.series_members WHERE series_id=s.asset_id)<2`)
+			if e != nil {
+				err = e
+			} else {
+				dissolve := []string{}
+				for rows.Next() {
+					var v string
+					if e = rows.Scan(&v); e != nil {
+						break
 					}
-					if e == nil {
-						e = rows.Err()
-					}
-					rows.Close()
-					err = e
-					for _, v := range ids {
-						if err == nil {
-							err = dissolveSeries(r.Context(), tx, v)
-						}
+					dissolve = append(dissolve, v)
+				}
+				if e == nil {
+					e = rows.Err()
+				}
+				rows.Close()
+				err = e
+				for _, v := range dissolve {
+					if err == nil {
+						err = dissolveSeries(r.Context(), tx, v)
 					}
 				}
 			}
-		}
-		if err != nil {
-			break
 		}
 	}
 	if err == nil {
@@ -740,17 +670,6 @@ func (s *Service) remove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	platform.Audit(r.Context(), "asset.deleted", user(r), r.PathValue("id"))
-	if selected.BlobID != nil {
-		var remaining int
-		err = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM catalog.assets d JOIN catalog.asset_originals o ON o.asset_id=d.id WHERE o.blob_id=$2 AND d.deleted_at IS NULL AND (d.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=d.id AND g.principal_id=$1))`, user(r), *selected.BlobID).Scan(&remaining)
-		if assetError(w, err) {
-			return
-		}
-		if remaining > 0 {
-			platform.JSON(w, 200, map[string]int{"remaining_duplicates": remaining})
-			return
-		}
-	}
 	w.WriteHeader(204)
 }
 func (s *Service) grant(w http.ResponseWriter, r *http.Request) {

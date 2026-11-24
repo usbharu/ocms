@@ -95,6 +95,8 @@ func TestPersonalRecommendationsDatabase(t *testing.T) {
 	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES($1,$2)`, seed, blob)
 	duplicate := makeAsset(owner)
 	exec(`INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES($1,$2)`, duplicate, blob)
+	// Simulate migration 015: same-owner identical content is one Asset.
+	exec(`SELECT catalog.merge_asset($1,$2)`, seed, duplicate)
 	for i := 0; i < 35; i++ {
 		makeAsset(owner)
 	}

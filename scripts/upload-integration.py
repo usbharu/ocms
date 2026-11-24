@@ -70,8 +70,8 @@ for data in (b'', body[:part_size]):
     path = f"/api/v1/uploads/{session['upload_id']}"
     if data:
         alice.call('PUT', path + '/parts/0', data)
-    alice.call('POST', path + '/complete')
-    assert alice.call('GET', f"/api/v1/assets/{session['asset_id']}/content")[2] == data
+    completed = alice.call('POST', path + '/complete')[2]
+    assert alice.call('GET', f"/api/v1/assets/{completed['asset_id']}/content")[2] == data
 check('empty and exact 8 MiB boundary assembly')
 
 abandoned = alice.create('abandoned.png', b'x')

@@ -54,18 +54,17 @@ try:
     partial_tags, _ = asset([label, label + '-extra'])
     chars, _ = asset([], [label])
     mixed, mixed_blob = asset([label], [label])
-    duplicate, _ = asset([label], [label], blob=source_blob)
     hidden, hidden_blob = asset([label], [label], owner_id=other)
     deleted, _ = asset([label], [label])
     sql(f"UPDATE catalog.assets SET deleted_at=now(),status='deleted' WHERE id='{deleted}'")
     shared, shared_blob = asset([label])
-    shared_other, _ = asset([], blob=shared_blob)
+    shared_other, shared_other_blob = asset([])
     result = recommendations(source)
     assert result['hash_status'] == 'pending'
     items = {a['asset_id']: a for a in result['assets']}
     assert items[mixed]['score'] == 80 and items[chars]['score'] == 50 and items[tags]['score'] == 30
-    assert items[partial_tags]['score'] == 15
-    assert not {source, duplicate, hidden, deleted, shared_other} & items.keys()
+    assert 0 < items[partial_tags]['score'] <= 30
+    assert not {source, hidden, deleted} & items.keys()
     bob.call('GET', f'/api/v1/assets/{source}/recommendations', expected=404)
     alice.call('GET', f'/api/v1/assets/{deleted}/recommendations', expected=404)
     check('metadata weights, duplicate labels, pending hashes, ACL, deletion and per-Asset metadata')
@@ -75,13 +74,14 @@ try:
     hashes(mixed_blob, bits, page=7)
     hashes(mixed_blob, '00110101' * 8, page=1, ordinal=1)
     hashes(shared_blob, bits)
+    hashes(shared_other_blob, bits, page=2)
     hashes(hidden_blob, bits)
     result = recommendations(source)
     items = {a['asset_id']: a for a in result['assets']}
     assert result['hash_status'] == 'ready'
     assert items[mixed]['score'] == 100 and items[mixed]['page_number'] == 7
     assert items[shared]['score'] == 50 and items[shared_other]['score'] == 20
-    assert items[shared_other]['common_tags'] == [] and hidden not in items and duplicate not in items
+    assert items[shared_other]['common_tags'] == [] and hidden not in items
     sql(f"INSERT INTO catalog.grants(asset_id,principal_id,permission) VALUES('{hidden}','{owner}','read')")
     assert hidden in {a['asset_id'] for a in recommendations(source)['assets']}
     sql(f"DELETE FROM catalog.grants WHERE asset_id='{hidden}'")

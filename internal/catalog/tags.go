@@ -97,7 +97,7 @@ func validAssetTags(tags []string) bool {
 	return true
 }
 
-// Aggregate only authorized, live Assets, deduplicating tags within each Asset.
+// Aggregate only authorized, live Assets, deduplicating labels within each Asset.
 // Nodes and edges share a single database snapshot. Graph work is bounded to 60 tags.
 func (s *Service) listTags(w http.ResponseWriter, r *http.Request) {
 	s.listLabels(w, r, "tags", `CROSS JOIN LATERAL unnest(a.tags) t(name)`)
@@ -113,7 +113,7 @@ func (s *Service) listLabels(w http.ResponseWriter, r *http.Request, key, source
 	}
 	var result json.RawMessage
 	err := s.DB.QueryRow(r.Context(), `WITH visible AS MATERIALIZED (
- SELECT DISTINCT CASE WHEN a.series_kind='' AND o.blob_id IS NOT NULL THEN 'blob:'||o.blob_id::text ELSE 'asset:'||a.id::text END AS id,t.name FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `+source+`
+ SELECT DISTINCT a.id::text AS id,t.name FROM catalog.display_assets a `+source+`
  WHERE `+displayed+` AND btrim(t.name)<>''
  ), counts AS MATERIALIZED (
  SELECT name,count(*) AS asset_count FROM visible WHERE strpos(lower(name),lower($2))>0 GROUP BY name
