@@ -638,7 +638,7 @@ Workerは派生画像を `GET /internal/blobs/{sourceBlobId}/content?rendition={
 
 レーティングは `general < sensitive < questionable < explicit` の順とし、動画・PDFはサンプルフレーム・全ページの判定のうち最も制限の強い段階を採用する。音声などの対象外ファイルと判定前のAssetは `unrated` とする。推論結果は `catalog.wd14_rating_results(blob_id, rating, model_id, model_revision, created_at)` に保存する。`rating` は4段階のいずれかに制約し、Blobを主キーとする。Assetは `rating`・`rating_manual`・`wd14_rated` を持ち、Asset行のロック下で自動判定を一度だけ適用する。手動設定後は再試行・状態同期でも上書きしない。重複Assetへは保存した推論結果だけを適用する。008は完了済みタグJobを再実行し、既存ファイルも判定する。一般タグとキャラクターの適用済み状態は保持する。
 
-015は旧WD14の推論結果と自動付与したタグ・キャラクター・レーティングを取り除き、完了済みのタグJobを再実行する。旧自動タグと同名の手動タグも削除対象となる。手動レーティングは保持する。テーブル・列名は移行前との互換性のため`wd14_*`を維持する。
+015は旧WD14の推論結果を破棄し、既存のタグ・キャラクター・レーティングを保持したまま、完了済みのタグJobを再実行してCL Tagger v2の結果を追加する。既存タグが多い場合は512件の上限までしか追加されない。テーブル・列名は移行前との互換性のため`wd14_*`を維持する。
 
 ### 8.4 派生Blobの再利用
 

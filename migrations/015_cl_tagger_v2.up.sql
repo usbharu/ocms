@@ -1,22 +1,9 @@
 BEGIN;
--- Replace the previous tagger's cached metadata and requeue completed tagging jobs.
--- Automatic tags are identified from the Blob-level inference results; manual tags
--- are kept unless they are identical to a previous automatic tag.
-UPDATE catalog.assets a
-SET tags = ARRAY(SELECT t FROM unnest(a.tags) AS t WHERE NOT (t = ANY(r.tags))),
-    updated_at = now()
-FROM catalog.asset_originals o
-JOIN catalog.wd14_results r ON r.blob_id = o.blob_id
-WHERE a.id = o.asset_id AND a.wd14_tagged;
-
-DELETE FROM catalog.asset_characters c
-USING catalog.asset_originals o, catalog.wd14_character_results r, catalog.assets a
-WHERE c.asset_id = o.asset_id AND o.blob_id = r.blob_id AND a.id = o.asset_id
-  AND a.wd14_characters_tagged AND c.name = ANY(r.characters);
-
+-- Discard cached inference results so completed tagging jobs are recomputed
+-- with CL Tagger v2. Existing Asset tags, characters and ratings are edited
+-- metadata and are deliberately kept; the new results are added on top of them.
 UPDATE catalog.assets
-SET rating = CASE WHEN rating_manual THEN rating ELSE 'unrated' END,
-    wd14_tagged = false,
+SET wd14_tagged = false,
     wd14_characters_tagged = false,
     wd14_rated = false,
     updated_at = now()
