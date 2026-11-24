@@ -60,6 +60,8 @@ import {
   uploadFile,
 } from './lib/uploads';
 
+declare const __OCMS_VERSION__: string;
+
 type ExplorationSnapshot = {
   assets: Asset[];
   page: number;
@@ -1695,6 +1697,7 @@ export function App() {
           </>
         )}
       </main>
+      <footer className="app-footer">OCMS {__OCMS_VERSION__}</footer>
       {me && viewerOpen && selected && (
         <Viewer
           asset={selected}

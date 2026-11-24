@@ -1,10 +1,27 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
+function buildVersion(): string {
+  const version = process.env.OCMS_VERSION?.trim();
+  if (version) return version;
+
+  try {
+    return execFileSync('git', ['describe', '--tags', '--always', '--dirty'], {
+      cwd: new URL('.', import.meta.url),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return '開発ビルド';
+  }
+}
+
 export default defineConfig({
+  define: { __OCMS_VERSION__: JSON.stringify(buildVersion()) },
   plugins: [
     tailwindcss(),
     {

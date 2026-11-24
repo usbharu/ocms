@@ -33,7 +33,7 @@ jobs:
             suffix: ''
             tag_suffix: ''
             compat_alias: false
-            build_args: ''
+            build_args: OCMS_VERSION=${{ github.event.release.tag_name }}
             dockerfile: Dockerfile
           - image: ocms-runtime-cpu
             description: 'OCMSのタグ・キャラクター推定、意味検索、文字起こしと、お気に入りに基づく推薦に使う推論Runtime。CPU版とCUDAライブラリ同梱版を提供します。現在の推論はCPUで実行します。'

@@ -162,6 +162,15 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('shows the build version in the page footer', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  const footer = page.getByRole('contentinfo');
+  const version = process.env.OCMS_VERSION?.trim();
+  await expect(footer).toHaveText(version ? `OCMS ${version}` : /^OCMS \S+/);
+  await footer.scrollIntoViewIfNeeded();
+  await expect(footer).toBeInViewport();
+});
+
 test('shows WD14 tagging as a separate job', async ({ page }) => {
   await page.route('**/api/v1/assets/image/jobs', (route) =>
     route.fulfill({
