@@ -4,13 +4,14 @@ import { type Asset, kindOf } from '../../lib/assets';
 export function Thumbnail({ asset }: { asset: Asset }) {
   const [failed, setFailed] = useState(false);
   const kind = kindOf(asset);
+  const isPDF = asset.mime_type === 'application/pdf';
   const hasPreview =
     Boolean(asset.cover_asset_id) ||
     kind === 'image' ||
     kind === 'video' ||
-    asset.mime_type === 'application/pdf';
+    isPDF;
   const query = new URLSearchParams();
-  if (asset.mime_type === 'application/pdf') query.set('thumbnail', '1');
+  if (isPDF) query.set('thumbnail', '1');
   if (asset.page_number !== undefined)
     query.set('page', String(asset.page_number));
   const url = `/api/v1/assets/${asset.cover_asset_id || asset.asset_id}/preview${query.size ? `?${query}` : ''}`;
@@ -27,6 +28,14 @@ export function Thumbnail({ asset }: { asset: Asset }) {
               : 'プレビューなし'}
         </span>
       )}
+      {kind === 'video' && (
+        <span className="thumbnail-play">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 5.5v13l11-6.5z" />
+          </svg>
+        </span>
+      )}
+      {isPDF && <span className="thumbnail-badge">PDF</span>}
     </span>
   );
 }

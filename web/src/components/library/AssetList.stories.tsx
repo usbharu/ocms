@@ -71,6 +71,14 @@ export const NarrowGrid: Story = {
   globals: { viewport: { value: 'narrow' } },
 };
 export const Empty: Story = { args: { assets: [], resultCount: 0 } };
+export const MediaBadges: Story = {
+  args: { assets: [assets[1], assets[3]], resultCount: 2 },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText('PDF')).toBeVisible();
+    await expect(canvasElement.querySelector('.thumbnail-play')).not.toBeNull();
+  },
+};
 export const NoMatches: Story = {
   args: { assets: [], resultCount: 0, isResult: true },
 };
