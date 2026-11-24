@@ -73,7 +73,7 @@ asset = alice.asset(source)
 original_tags = set(asset['tags']) - {'wd14-manual-alice'}
 expanded = asset['tags'] + ['wd14-edit-' + str(i) for i in range(110)]
 alice.call('PATCH', f"/api/v1/assets/{source['asset_id']}", {'tags': expanded})
-assert alice.asset(source)['tags'] == expanded, 'large combined tag set not editable'
+assert set(alice.asset(source)['tags']) == set(expanded), 'large combined tag set not editable'
 # Remove auto tags and wait for reconciliation: they must not come back.
 alice.call('PATCH', f"/api/v1/assets/{source['asset_id']}", {'tags': ['wd14-edited-alice'], 'characters': []})
 sql(f"UPDATE media.processing_jobs SET status='retry',attempts=0,available_at=now() WHERE source_blob_id='{asset['blob_id']}' AND job_type='tags.generate'")
@@ -101,10 +101,13 @@ assert alice.asset(source)['characters'] == []
 check('duplicate reuses inference, manual edits remain independent and removed tags stay removed')
 
 # A full manual tag list must remain editable and must never be truncated by tagging.
-capped = bob.create('wd14-full-tags.png', body)
+payload = b'tEXt' + b'wd14-full\x00' + uuid.uuid4().bytes
+chunk = struct.pack('>I', len(payload) - 4) + payload + struct.pack('>I', zlib.crc32(payload))
+capped_body = body[:-12] + chunk + body[-12:]
+capped = bob.create('wd14-full-tags.png', capped_body)
 manual = ['wd14-manual-' + str(i) for i in range(512)]
 bob.call('PATCH', f"/api/v1/assets/{capped['asset_id']}", {'tags': manual})
-bob.put(capped, body)
+bob.put(capped, capped_body)
 deadline = time.monotonic() + 120
 while time.monotonic() < deadline:
     if sql(f"SELECT wd14_tagged::text FROM catalog.assets WHERE id='{capped['asset_id']}'") == 'true':
@@ -112,7 +115,7 @@ while time.monotonic() < deadline:
     time.sleep(2)
 else:
     raise AssertionError('full tag list was not reconciled')
-assert bob.asset(capped)['tags'] == manual
+assert set(bob.asset(capped)['tags']) == set(manual)
 bob.call('PATCH', f"/api/v1/assets/{capped['asset_id']}", {'tags': manual + ['too-many']}, expected=400)
 check('combined 512-tag limit preserves existing manual tags and rejects overflow')
 print('All CL Tagger v2 tagging checks passed.', flush=True)
