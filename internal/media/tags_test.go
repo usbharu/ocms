@@ -14,18 +14,22 @@ func TestTagAggregation(t *testing.T) {
 	if err := mergeTags(scores, result); err != nil {
 		t.Fatal(err)
 	}
-	result.Tags = []contracts.TagScore{{Name: "existing", Score: .4}}
+	result.Tags = []contracts.TagScore{{Name: "existing", Score: .6}}
 	if err := mergeTags(scores, result); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(sortedTags(scores), []string{"existing", "new"}) || scores["existing"] != .9 {
 		t.Fatal("lost strongest page/frame score")
 	}
-	for _, score := range []float64{math.NaN(), math.Inf(1), -.1, 1.1, .34} {
+	for _, score := range []float64{math.NaN(), math.Inf(1), -.1, 1.1, .549} {
 		result.Tags = []contracts.TagScore{{Name: "invalid", Score: score}}
 		if mergeTags(scores, result) == nil {
 			t.Fatal("accepted invalid score")
 		}
+	}
+	result.Tags = []contracts.TagScore{{Name: "boundary", Score: .55}}
+	if err := mergeTags(scores, result); err != nil {
+		t.Fatal(err)
 	}
 	result.Model = "unexpected"
 	if mergeTags(scores, result) == nil {
@@ -60,7 +64,7 @@ func TestTagSampling(t *testing.T) {
 
 func TestCharacterAggregationIsIndependent(t *testing.T) {
 	scores := map[string]float64{}
-	result := contracts.TagResult{Model: contracts.TagModel, Revision: contracts.TagRevision, Tags: []contracts.TagScore{{Name: "general", Score: .9}}, Characters: []contracts.TagScore{{Name: "character", Score: .85}}}
+	result := contracts.TagResult{Model: contracts.TagModel, Revision: contracts.TagRevision, Tags: []contracts.TagScore{{Name: "general", Score: .9}}, Characters: []contracts.TagScore{{Name: "character", Score: .55}}}
 	if err := mergeCharacters(scores, result); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +75,7 @@ func TestCharacterAggregationIsIndependent(t *testing.T) {
 	if len(scores) != 1 || scores["character"] != .99 {
 		t.Fatal("character scores mixed or lost")
 	}
-	for _, score := range []float64{.849, math.NaN(), math.Inf(1), 1.1} {
+	for _, score := range []float64{.549, math.NaN(), math.Inf(1), 1.1} {
 		result.Characters[0].Score = score
 		if mergeCharacters(scores, result) == nil {
 			t.Fatal("invalid character confidence accepted")

@@ -80,9 +80,9 @@ docker build --build-arg RUNTIME_VARIANT=cuda -f runtime/Dockerfile -t ocms-runt
 docker run --rm --entrypoint python ocms-runtime:cpu /app/check-runtime-image.py cpu
 ```
 
-推論エンジンはEmbedding・Whisper・WD14ともONNX Runtime 1.23.2です。CPU版は`onnxruntime`、CUDA版は`onnxruntime-gpu[cuda,cudnn]`を導入します。PyTorch・CTranslate2・SentenceTransformers・PyAVは含めません。画像・音声の前処理にはTransformersのNumPy/Pillow実装を使い、FFmpegはWorkerだけに置きます。モデルは初回の推論時に取得するため、モデル保存領域は別途必要です。
+推論エンジンはEmbedding・Whisper・CL Tagger v2ともONNX Runtime 1.23.2です。CPU版は`onnxruntime`、CUDA版は`onnxruntime-gpu[cuda,cudnn]`を導入します。PyTorch・CTranslate2・SentenceTransformers・PyAVは含めません。画像・音声の前処理にはTransformersのNumPy/Pillow実装を使い、FFmpegはWorkerだけに置きます。モデルは初回の推論時に取得するため、モデル保存領域は別途必要です。
 
-現在のEmbedding・Whisper・WD14の推論はCPU固定です。CUDA版の選択だけではGPU推論は有効になりません。GPUへの処理振り分けとGPU実機での検証は未対応です。CPUサーバーでは`-cpu`を選んでください。既に公開された`v0.1.1`のタグは変更せず、この変更を含む新しいReleaseから版を分けます。
+現在のEmbedding・Whisper・CL Tagger v2の推論はCPU固定です。CUDA版の選択だけではGPU推論は有効になりません。GPUへの処理振り分けとGPU実機での検証は未対応です。CPUサーバーでは`-cpu`を選んでください。既に公開された`v0.1.1`のタグは変更せず、この変更を含む新しいReleaseから版を分けます。
 
 既存の `compose.yaml` はローカルビルド用です。公開イメージを使う環境では、各サービスの `image` に上記の同じReleaseタグを指定し、ローカル用の `pull_policy: never` を解除してください。SQLはアプリ共通イメージの `/app/migrations` に同梱します。`migrate` サービスにも各Goサービスと同じReleaseタグを指定してください。DB初期化用スクリプトやホスト側SQLのマウントは不要です。
 
@@ -256,6 +256,8 @@ docker compose -f compose.yaml -f compose.verify.yaml up -d --build --wait
 | [localhost:3000/d/ocms-verification](http://localhost:3000/d/ocms-verification) | OCMS用Grafanaダッシュボード。実際の通信量・処理時間・Job・Trace一覧・相関ログ |
 | [localhost:8080](http://localhost:8080/) | 従来の開発ログイン版OCMS |
 
+タグ・キャラクターの自動推定まで確認するには、事前に`.env`の`HF_TOKEN`を設定してください。未設定でもアップロード・再生・検索は確認できますが、タグ付けJobは失敗します。
+
 1. OIDC版OCMSで「SSOでログイン」→「Aliceでログイン」→「同意してOCMSへ進む」と進みます。Hydraのクライアント登録は起動時に自動実行されます。
 2. 画像・音声・動画・PDFをアップロードし、派生ファイル・検索・ダウンロードを試します。
 3. GrafanaのOCMSダッシュボードで実データの変化を確認します。初回の収集・表示には数秒かかります。実行していない処理のグラフはNo dataになります。
@@ -374,23 +376,25 @@ WorkerはFFprobe / FFmpeg、Poppler、Tesseract（`eng+jpn`）、Chromaprintを�
 
 意味検索は `google/embeddinggemma-2` のリビジョン `914f7f89142e33e77833254d9c9b90c3cef7303b`、768次元を維持します。ONNX版も同じ重み・プロンプト・正規化を使います。テキスト・画像・動画・音声の生成入力10件で、旧ベクトルとのコサイン類似度0.9999超・成分差0.002未満を検査します。この移行では既存ベクトルの再索引は不要です。検索側は引き続き、Runtimeが返す同じモデルID・リビジョンだけを検索対象にします。
 
-ONNXモデルは次の取得元とコミットへ固定しています。モデルはイメージに含めず、名前付き`models`ボリュームへキャッシュします。Embeddingのfp32重みだけで約2.93 GBあり、Whisper・WD14のキャッシュと合わせて数GBの空き領域が必要です。イメージの小型化と推論時の必要メモリは別に確認してください。
+ONNXモデルは次の取得元とコミットへ固定しています。モデルはイメージに含めず、名前付き`models`ボリュームへキャッシュします。Embeddingのfp32重みだけで約2.93 GB、CL Tagger v2の重みだけで約2.2 GBあり、Whisperのキャッシュと合わせて数GBの空き領域が必要です。イメージの小型化と推論時の必要メモリは別に確認してください。
 
 | 用途 | 取得元 | 固定コミット |
 |---|---|---|
 | Embedding（全4モダリティ） | `onnx-community/embeddinggemma-2-ONNX` | `daa72c51243991dfcaf9f9137d2c573d8f7790c0` |
 | ASR | `onnx-community/whisper-tiny` | `ff4177021cc41f7db950912b73ea4fdf7d01d8e7` |
-| タグ・キャラクター | `SmilingWolf/wd-v1-4-convnext-tagger-v2` | `4b34d1b07bdd8e95494072648960b8a6adcbc0ff` |
+| タグ・キャラクター | `cella110n/cl_tagger_v2`（`v2_00`） | `b57909b8e9c63f71e208a26473e7aabdf45ed6b6` |
 
 精度はfloat32固定です。`INFERENCE_DTYPE=bfloat16`を設定済みの場合は`float32`へ変更してください。スレッド数は`INFERENCE_THREADS`（1〜32、既定4）で指定します。ONNXのCPU arenaとメモリパターン最適化を無効にし、glibcのarena数も制限します。推論後に不要なCPUメモリを返却して、入力サイズの違いによるメモリの蓄積を抑えます。
 
-画像・動画・PDFにはWD14 Tagger（`SmilingWolf/wd-v1-4-convnext-tagger-v2`、リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）による一般タグを自動追加します。キャラクター（category 4）は一般タグとは独立したメタデータとして閾値0.85で保存します。レーティング（category 9）は除外します。一般タグの閾値は0.35で、それぞれ最大256件を採用します。画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定し、各タグの最大スコアで集約します。動画の短時間だけ現れる内容をすべて拾う保証はありません。[モデル提供者の実装](https://huggingface.co/spaces/SmilingWolf/wd-tagger/blob/main/app.py)に合わせ、透過部分の白背景合成・正方形への余白追加・BGR変換を行います。推論はRuntime内のONNX Runtimeで実行し、モデルは既存の`models`ボリュームにキャッシュします。
+画像・動画・PDFにはCL Tagger v2（`cella110n/cl_tagger_v2`、`v2_00`、リビジョン `b57909b8e9c63f71e208a26473e7aabdf45ed6b6`）による一般タグを自動追加します。キャラクターは一般タグとは独立したメタデータとして保存し、一般タグ・キャラクターとも閾値0.55で最大256件を採用します。レーティングは4段階のうち最大スコアの段階を採用し、同点の場合は制限の強い段階を選びます。画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定し、各タグの最大スコアで集約します。動画の短時間だけ現れる内容をすべて拾う保証はありません。[モデル仕様](https://huggingface.co/cella110n/cl_tagger_v2)に合わせ、透過部分を白背景へ合成したRGBを直接384×384へ双三次縮小し、mean=std=0.5で正規化します。推論はRuntime内のONNX Runtimeで実行し、モデルは既存の`models`ボリュームにキャッシュします。モデルはGatedでCL Tagger v2 Model License v1.0の対象です。モデルページでライセンスに同意したアカウントの`HF_TOKEN`をRuntimeへ渡し、公式リポジトリから取得してください。モデルをイメージへ同梱・再配布しません。内部のテーブル・列名は移行前との互換性のため`wd14_*`のままです。
 
 `tags.generate` Jobはメディア解析後に作成し、失敗時は通常のJobと同じ再試行・リース管理を使います。推論結果はBlob単位で再利用し、各Assetのタグ欄へ一度だけ追加します。手動タグは保持し、追加後は自動タグも編集・削除できます。手動タグを含む合計は512件までとし、自動追加時に上限を超える場合は既存タグを優先します。削除したタグはJob再試行や状態同期で復活しません。重複アップロードにも推論結果だけをコピーし、別Assetの手動タグはコピーしません。タグは既存の一覧・全文検索で検索できます。音声はタグ付け対象外です。
 
-コンテンツレーティングはWD14のcategory 9から `general`・`sensitive`・`questionable`・`explicit` を自動判定します。動画・PDFは判定したフレーム・ページのうち最も制限の強い段階を採用します。手動設定は右側の詳細パネルで行い、再処理でも保持します。リスト・グリッド・詳細グリッドではgeneral以外の判定済みファイルに「R-18」を表示します。判定前と音声は「未判定」です。検索条件の各段階と未判定を個別にオン・オフでき、すべてオフの場合は0件になります。既定はすべてオンです。
+コンテンツレーティングはCL Tagger v2のレーティングタグから `general`・`sensitive`・`questionable`・`explicit` を自動判定します。動画・PDFは判定したフレーム・ページのうち最も制限の強い段階を採用します。手動設定は右側の詳細パネルで行い、再処理でも保持します。リスト・グリッド・詳細グリッドではgeneral以外の判定済みファイルに「R-18」を表示します。判定前と音声は「未判定」です。検索条件の各段階と未判定を個別にオン・オフでき、すべてオフの場合は0件になります。既定はすべてオンです。
 
-レーティングは `008_content_ratings.up.sql` で追加します。「DBマイグレーションと更新」の手順で未適用分を反映し、Runtime・各Goサービスを同じコードへ更新してください。完了済みタグJobを再実行するため、既存コンテンツも順次判定されます。失敗済みJobは詳細から再試行してください。
+レーティングは `008_content_ratings.up.sql` で追加します。「DBマイグレーションと更新」の手順で未適用分を反映し、Runtime・各Goサービスを同じコードへ更新してください。
+
+`015_cl_tagger_v2.up.sql` は旧WD14の推論結果を破棄し、既存のタグ・キャラクター・レーティングを保持したまま、完了済みのタグJobを再実行してCL Tagger v2の結果を追加します。既存タグが多い場合は512件の上限までしか追加されません。Runtime・各Goサービスを同じコードへ更新してください。失敗済みJobは詳細から再試行してください。
 
 DBを使うレーティングの回帰テストは、全マイグレーションを適用した使い捨てDBに対して実行します。生成行は終了時に削除します。通常の `go test` では接続先を指定しない限りこのテストをスキップします。
 
@@ -427,11 +431,12 @@ Workerは1プロセス内で既定2件のJobを同時に実行します。並列
 | `MEDIA_PDF_PAGE_CONCURRENCY` | 2 | 1 PDF Job内で同時処理するページ数。1〜8 |
 | `INFERENCE_WORKERS` | 1 | 推論Runtimeのプロセス数（正整数）。各プロセスは推論を1件ずつ実行 |
 | `INFERENCE_THREADS` | 4 | 各推論プロセスのスレッド数。1〜32 |
+| `HF_TOKEN` | なし | CL Tagger v2の取得に使うHugging Faceトークン。モデルページでライセンスに同意したアカウントで発行する |
 | `MEDIA_WORKER_CPUS` | 2 | WorkerコンテナのCPU上限 |
 | `MEDIA_WORKER_MEMORY` | `1536m` | Workerコンテナのメモリ上限 |
 | `MEDIA_WORKER_TMPFS_SIZE` | `1536m` | Workerの平文一時領域の上限 |
 
-WorkerとPDFの並列数をともに増やすと、複数のOCR・変換プロセスが同時に動きます。Runtimeはプロセスごとにモデルを別々に読み込むため、`INFERENCE_WORKERS` を増やすとメモリとCPUの使用量が大きくなります。既定1プロセスの推論は引き続き直列で、Workerを増やしても推論が律速になることがあります。環境のCPU・メモリに合わせて段階的に調整し、実データで速度とメモリを確認してください。`INFERENCE_WORKERS` はCompose上でUvicornの `WEB_CONCURRENCY` に渡されます。Workerの並列数が範囲外の場合は起動に失敗します。
+WorkerとPDFの並列数をともに増やすと、複数のOCR・変換プロセスが同時に動きます。Runtimeはプロセスごとにモデルを別々に読み込むため、`INFERENCE_WORKERS` を増やすとメモリとCPUの使用量が大きくなります。CL Tagger v2の重みは約2.2 GBあり、推論時はこれに加えて作業メモリが必要です。既定1プロセスの推論は引き続き直列で、Workerを増やしても推論が律速になることがあります。環境のCPU・メモリに合わせて段階的に調整し、実データで速度とメモリを確認してください。`INFERENCE_WORKERS` はCompose上でUvicornの `WEB_CONCURRENCY` に渡されます。Workerの並列数が範囲外の場合は起動に失敗します。
 
 プレビューと派生メディアはWorker経由でCatalogの閲覧権限を確認し、結果をTransferへ返します。ファイル本体も閲覧権限を毎回確認します。メディアのブラウザキャッシュは再利用前に再検証するため、権限の剥奪後も古い応答を使用しません。サービスを個別に更新する場合は、Catalog、Worker、Transferの順に更新してください。新しいWorkerとTransferはCatalogの閲覧認可APIに、新しいTransferはWorkerの内部APIに依存します。
 

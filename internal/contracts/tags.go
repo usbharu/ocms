@@ -1,7 +1,9 @@
 package contracts
 
-const TagModel = "SmilingWolf/wd-v1-4-convnext-tagger-v2"
-const TagRevision = "4b34d1b07bdd8e95494072648960b8a6adcbc0ff"
+const TagModel = "cella110n/cl_tagger_v2"
+const TagRevision = "b57909b8e9c63f71e208a26473e7aabdf45ed6b6"
+const TagThreshold = 0.55
+const CharacterThreshold = 0.55
 
 // TagResult separates general labels, characters and content rating.
 type TagResult struct {

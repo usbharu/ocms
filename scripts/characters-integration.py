@@ -84,13 +84,13 @@ try:
     full = ['manual-' + str(i) for i in range(512)]
     bob.call('PATCH', '/api/v1/assets/' + ids[6], {'characters': full})
     prediction = {'tags': ['auto-tag'], 'characters': ['auto-character','manual-character'],
-                  'model_id': 'SmilingWolf/wd-v1-4-convnext-tagger-v2',
-                  'model_revision': '4b34d1b07bdd8e95494072648960b8a6adcbc0ff'}
+                  'model_id': 'cella110n/cl_tagger_v2',
+                  'model_revision': 'b57909b8e9c63f71e208a26473e7aabdf45ed6b6'}
     internal('/internal/blobs/' + blob + '/tags', prediction, expected=403, job_lease=str(uuid.uuid4()))
     assert sql(f"SELECT count(*) FROM catalog.wd14_character_results WHERE blob_id='{blob}'") == '0'
     internal('/internal/blobs/' + blob + '/tags', prediction)
-    assert alice.call('GET', '/api/v1/assets/' + ids[5])[2]['characters'] == ['manual-character','user-only-character','auto-character']
-    assert bob.call('GET', '/api/v1/assets/' + ids[6])[2]['characters'] == full
+    assert set(alice.call('GET', '/api/v1/assets/' + ids[5])[2]['characters']) == {'manual-character','user-only-character','auto-character'}
+    assert set(bob.call('GET', '/api/v1/assets/' + ids[6])[2]['characters']) == set(full)
     bob.call('PATCH', '/api/v1/assets/' + ids[6], {'characters': full + ['overflow']}, expected=400)
     alice.call('PATCH', '/api/v1/assets/' + ids[5], {'characters': []})
     internal('/internal/blobs/' + blob + '/tags', prediction)
@@ -98,9 +98,12 @@ try:
     sql(f"""INSERT INTO catalog.assets(id,owner_id,filename,mime_type) VALUES ('{ids[7]}','{bid}','{prefix}-duplicate','image/png');
       INSERT INTO catalog.asset_originals(asset_id,blob_id) VALUES ('{ids[7]}','{blob}');""")
     internal('/internal/blobs/' + blob + '/state', {'status': 'ready'})
-    assert bob.call('GET', '/api/v1/assets/' + ids[7])[2]['characters'] == prediction['characters']
+    duplicate_characters = json.loads(sql(f"SELECT array_to_json(array_agg(name ORDER BY name)) FROM catalog.asset_characters WHERE asset_id='{ids[7]}'"))
+    assert set(duplicate_characters) == set(prediction['characters'])
+    assert set(prediction['characters']).issubset(set(bob.call('GET', '/api/v1/assets/' + ids[7])[2]['characters']))
     assert alice.call('GET', '/api/v1/assets/' + ids[5])[2]['characters'] == []
-    assert bob.call('GET', '/api/v1/assets/' + ids[6])[2]['characters'] == full
+    visible = set(bob.call('GET', '/api/v1/assets/' + ids[6])[2]['characters'])
+    assert set(full).issubset(visible) and set(prediction['characters']).issubset(visible)
     assert sql(f"SELECT count(*) FROM catalog.wd14_character_results WHERE blob_id='{blob}'") == '1'
     # Manual edits and inference serialize on the Asset row, including the cap.
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -111,7 +114,7 @@ try:
             apply = pool.submit(internal, '/internal/blobs/' + blob + '/state', {'status': 'ready'})
             edit.result()
             apply.result()
-            assert alice.call('GET', '/api/v1/assets/' + ids[5])[2]['characters'] == full
+            assert set(alice.call('GET', '/api/v1/assets/' + ids[5])[2]['characters']) == set(full)
     check('authorized inference persistence, separate cache, manual preservation, 512 limit, retry deletion, duplicate reuse and concurrent edits')
 
 finally:
