@@ -171,7 +171,7 @@ test('shows the build version in the page footer', async ({ page }) => {
   await expect(footer).toBeInViewport();
 });
 
-test('shows WD14 tagging as a separate job', async ({ page }) => {
+test('shows tagging as a separate job', async ({ page }) => {
   await page.route('**/api/v1/assets/image/jobs', (route) =>
     route.fulfill({
       json: {

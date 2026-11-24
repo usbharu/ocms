@@ -84,8 +84,8 @@ try:
     full = ['manual-' + str(i) for i in range(512)]
     bob.call('PATCH', '/api/v1/assets/' + ids[6], {'characters': full})
     prediction = {'tags': ['auto-tag'], 'characters': ['auto-character','manual-character'],
-                  'model_id': 'SmilingWolf/wd-v1-4-convnext-tagger-v2',
-                  'model_revision': '4b34d1b07bdd8e95494072648960b8a6adcbc0ff'}
+                  'model_id': 'cella110n/cl_tagger_v2',
+                  'model_revision': 'b57909b8e9c63f71e208a26473e7aabdf45ed6b6'}
     internal('/internal/blobs/' + blob + '/tags', prediction, expected=403, job_lease=str(uuid.uuid4()))
     assert sql(f"SELECT count(*) FROM catalog.wd14_character_results WHERE blob_id='{blob}'") == '0'
     internal('/internal/blobs/' + blob + '/tags', prediction)

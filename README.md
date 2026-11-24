@@ -43,6 +43,12 @@ OIDC_CLIENT_ID=<registered-client-id>
 OIDC_CLIENT_SECRET=<registered-client-secret>
 ```
 
+タグ推定に使うCL Tagger v2はGatedモデルです。Hugging Faceで[モデルのライセンス](https://huggingface.co/cella110n/cl_tagger_v2)に同意し、発行したトークンを `.env` へ追加してください。公開・共有環境で推論を提供する場合は、同ライセンスのサーブ条件を確認してください。
+
+```dotenv
+HF_TOKEN=<hugging-face-token>
+```
+
 ```sh
 docker compose build
 docker compose up -d --wait

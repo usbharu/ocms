@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real WD14 inference, persistence, duplicate reuse, editable tags and ACL checks.
+"""Real CL Tagger v2 inference, persistence, duplicate reuse, editable tags and ACL checks.
 Run after media-integration.py has generated its synthetic fixtures.
 """
 from pathlib import Path
@@ -66,7 +66,7 @@ for name, upload in uploads.items():
     assert any(a['asset_id'] == upload['asset_id'] for a in hits), 'automatic tag not searchable'
     hits = bob.call('POST', '/api/v1/search', {'query': term, 'mode': 'keyword', 'limit': 200})[2]['assets']
     assert not any(a['asset_id'] == upload['asset_id'] for a in hits), 'search leaked asset'
-    check('WD14 general tags persisted and searchable with ACL for ' + name)
+    check('CL Tagger v2 general tags persisted and searchable with ACL for ' + name)
 
 source = uploads['car.png']
 asset = alice.asset(source)
@@ -115,4 +115,4 @@ else:
 assert bob.asset(capped)['tags'] == manual
 bob.call('PATCH', f"/api/v1/assets/{capped['asset_id']}", {'tags': manual + ['too-many']}, expected=400)
 check('combined 512-tag limit preserves existing manual tags and rejects overflow')
-print('All WD14 tagging checks passed.', flush=True)
+print('All CL Tagger v2 tagging checks passed.', flush=True)

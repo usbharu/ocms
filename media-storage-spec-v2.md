@@ -82,7 +82,7 @@ flowchart TB
     CAT -. Outbox / Job .-> WORK[Media Worker]
     WORK --> XFER
     WORK --> SRCH
-    WORK --> INF[推論Runtime / Embedding・ASR・WD14]
+    WORK --> INF[推論Runtime / Embedding・ASR・CL Tagger v2]
     SRCH --> INF
     SRCH --> REC[推薦エンジン / TF-IDF]
 ```
@@ -96,8 +96,8 @@ flowchart TB
 | **Transfer Service** | マスターキー読み込み、DEK生成/ラップ、AES-CTR暗号化・復号、S3 I/O、SHA-256計算、HTTP Range、Blob登録 | OCR、全文検索 |
 | **Search Service** | 全文・pHash・音声フィンガープリント・ベクトル検索、検索結果統合、関連コンテンツ・個人向け推薦の統合、抽選・キャッシュ・履歴・セッション、Catalog経由の一括認可 | 平文ファイル保存 |
 | **推薦エンジン** | 認可済みタグ・キャラクターのTF-IDF学習と類似度計算。Python Runtimeと同じイメージの独立プロセス | DB・S3接続、ACL判断、メディア推論モデルの読み込み |
-| **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成、WD14タグ集約 | ユーザー直接認証、マスターキー参照 |
-| **推論Runtime** | マルチモーダルEmbedding・ASR・WD14一般タグ・キャラクター・レーティング推論API | 検索DB操作、ACL判断 |
+| **Media Worker** | EXIF、OCR、PDF本文抽出、ASR、再エンコード、サムネイル、知覚ハッシュ、Embedding生成、CL Tagger v2タグ集約 | ユーザー直接認証、マスターキー参照 |
+| **推論Runtime** | マルチモーダルEmbedding・ASR・CL Tagger v2一般タグ・キャラクター・レーティング推論API | 検索DB操作、ACL判断 |
 
 ### 3.2 通信ルール
 
@@ -126,7 +126,7 @@ flowchart TB
 erDiagram
     ASSETS ||--o| ASSET_ORIGINALS : points_to
     BLOBS ||--o{ ASSET_ORIGINALS : shared_by
-    BLOBS ||--o| WD14_RATING_RESULTS : rates
+    BLOBS ||--o| TAGGER_RATING_RESULTS : rates
     BLOBS ||--o{ RENDITIONS : source
     BLOBS ||--o{ RENDITIONS : output
     BLOBS ||--o{ PASSAGES : extracted_to
@@ -154,6 +154,8 @@ erDiagram
 | `media` | `renditions`, `processing_jobs` | Media Worker |
 | `search` | `passages`, `perceptual_hashes`, `audio_fingerprints`, `embeddings`, `recommendation_cache`, `recommendation_sessions`, `recommendation_history` | Search |
 | `public` | `schema_migrations` | DB移行管理者（golang-migrate） |
+
+推論結果のテーブル・列名は、CL Tagger v2への移行後も既存の`wd14_*`を内部識別子として維持する。
 
 ### 4.3 主要DDL（設計ベースライン）
 
@@ -623,11 +625,11 @@ Workerは派生画像を `GET /internal/blobs/{sourceBlobId}/content?rendition={
 
 **HLSプレイリスト、HLSセグメント、ABRは実装しない。** MP4は`moov` atomを先頭に配置し、HTTP Rangeでシークする。Codecやコンテナがブラウザ非対応の場合は標準MP4派生ファイルを作る。
 
-### 8.3 WD14による一般タグ・キャラクター・レーティングの自動付与
+### 8.3 CL Tagger v2による一般タグ・キャラクター・レーティングの自動付与
 
 - メディア解析完了後、画像・動画・PDFに `tags.generate` Jobを作成する。音声は対象外とする。リース・期限・最大4回の再試行を既存Jobと共有する。
-- Runtimeは `SmilingWolf/wd-v1-4-convnext-tagger-v2`（リビジョン `4b34d1b07bdd8e95494072648960b8a6adcbc0ff`）をCPUで実行し、category 0の一般タグを閾値0.35、category 4のキャラクターを閾値0.85で分けて返す。category 9のレーティングは一般タグ・キャラクターと分離し、4段階のうち最大スコアの段階を返す。同点の場合は制限の強い段階を採用する。
-- 画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定する。タグごとの最大スコアで集約し、上位256タグを採用する。
+- Runtimeは `cella110n/cl_tagger_v2` の `v2_00`（リビジョン `b57909b8e9c63f71e208a26473e7aabdf45ed6b6`）をCPUで実行し、一般タグとキャラクターをそれぞれ閾値0.55で分けて返す。レーティングは一般タグ・キャラクターと分離し、4段階のうち最大スコアの段階を返す。同点の場合は制限の強い段階を採用する。モデルはGatedでCL Tagger v2 Model License v1.0の対象であり、モデルページでライセンスに同意したアカウントの`HF_TOKEN`を使って公式リポジトリから取得する。モデルをイメージへ同梱・再配布しない。
+- 画像は1枚、動画は全体を等分した最大12フレーム、PDFは全ページを判定する。タグごとの最大スコアで集約し、上位256タグを採用する。入力は透過部分を白背景へ合成したRGBを直接384×384へ双三次縮小し、mean=std=0.5で正規化する。
 - Workerが結果をCatalogへ送る際、CatalogはWorkerに実行中JobのBlob・リース・期限を照会して確認する。Catalogは `catalog.wd14_results` にBlob単位の推論結果とモデル情報を保存し、各Assetの `tags` へ一度だけ追加する。適用済みかどうかは `catalog.assets.wd14_tagged` で管理する。
 - タグの追加は既存タグを保持する原子的な更新とする。手動タグとの合計上限は512件で、上限を超える場合は既存タグを優先する。利用者は自動付与後のタグを編集・削除でき、Jobの再試行で削除済みタグを復活させない。後から作成した重複Assetには推論結果だけをコピーし、別Assetの手動タグをコピーしない。状態同期で追加漏れを補う。
 - 既存の一覧・検索・ACLを利用する。タグの内容・推論入力・元ファイル名はログやTraceに記録しない。
@@ -635,6 +637,8 @@ Workerは派生画像を `GET /internal/blobs/{sourceBlobId}/content?rendition={
 キャラクターは `catalog.asset_characters(asset_id, name, position)` に保存し、タグの配列とは独立させる。主キーは `(asset_id, name)` とし、同じAsset内の重複を防ぐ。推論結果は別テーブル `catalog.wd14_character_results(blob_id, characters, model_id, model_revision, created_at)` に保持し、`catalog.assets.wd14_characters_tagged` で一度だけの適用を管理する。タグと同じく既存の手動入力を優先し、合計512件・1件256バイトまでとする。削除・編集はAsset単位に保持し、再試行・状態同期で復元しない。重複Assetへは推論結果だけを追加する。旧Runtimeのキャラクター欄省略と、判定結果が空配列である場合を区別する。マイグレーション006は完了済みタグJobを再実行し、既存ファイルへキャラクターを付与する。
 
 レーティングは `general < sensitive < questionable < explicit` の順とし、動画・PDFはサンプルフレーム・全ページの判定のうち最も制限の強い段階を採用する。音声などの対象外ファイルと判定前のAssetは `unrated` とする。推論結果は `catalog.wd14_rating_results(blob_id, rating, model_id, model_revision, created_at)` に保存する。`rating` は4段階のいずれかに制約し、Blobを主キーとする。Assetは `rating`・`rating_manual`・`wd14_rated` を持ち、Asset行のロック下で自動判定を一度だけ適用する。手動設定後は再試行・状態同期でも上書きしない。重複Assetへは保存した推論結果だけを適用する。008は完了済みタグJobを再実行し、既存ファイルも判定する。一般タグとキャラクターの適用済み状態は保持する。
+
+015は旧WD14の推論結果と自動付与したタグ・キャラクター・レーティングを取り除き、完了済みのタグJobを再実行する。旧自動タグと同名の手動タグも削除対象となる。手動レーティングは保持する。テーブル・列名は移行前との互換性のため`wd14_*`を維持する。
 
 ### 8.4 派生Blobの再利用
 
@@ -796,7 +800,7 @@ Jobの追加・削除・状態変更は、同じトランザクションでWorke
 
 CatalogはBlobの処理状態を保持し、新規AssetをそのBlobに紐づけるときに処理状態と自動付与結果を引き継ぐ。AssetのACLと手動編集の優先順位は従来どおり。マイグレーション013の適用時と意味検索の有効・無効を切り替えたときは、既存Jobの状態を一度だけ通知キューに積む。
 
-WD14連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], characters: [{name, score}], rating: "general", model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], characters: ["character_name"], rating: "general", model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
+CL Tagger v2連携ではRuntimeの `POST /tag` に `{kind: "image", data: "base64"}` を送り、`{tags: [{name, score}], characters: [{name, score}], rating: "general", model_id, model_revision}` を受け取る。WorkerはCatalogの `POST /internal/blobs/{blobId}/tags` に `{tags: ["general_tag"], characters: ["character_name"], rating: "general", model_id, model_revision}` を送る。サービス認証に加え、`X-Job-ID` と `X-Job-Lease` を使って対象Blobと実行中リースを照合する。
 
 | 呼び出し | 用途 |
 |---|---|
@@ -1051,10 +1055,10 @@ SPAのナビゲーションはライブラリ・シリーズ・タグ・キャ�
 | AC-16 | OTel | サービス横断Trace、主要Metric、相関ログを出力できる |
 | AC-17 | 障害復旧 | S3/DB障害、Job再実行、孤立オブジェクト回収が動作 |
 | AC-18 | 秘密情報の非出力 | ログ/Trace/API応答にKEK/DEK/トークンが出力されない |
-| AC-19 | 自動タグ | 画像・動画・PDFにWD14の一般タグと独立したキャラクターメタデータを付与し、手動編集・重複再利用・ACL分離を保つ |
+| AC-19 | 自動タグ | 画像・動画・PDFにCL Tagger v2の一般タグと独立したキャラクターメタデータを付与し、手動編集・重複再利用・ACL分離を保つ |
 | AC-20 | 関連コンテンツ | キャラクター・タグ・知覚類似の固定重みで推薦し、完全一致除外・Asset別メタデータ・ACL・理由表示・探索からの復帰を保つ |
 | AC-21 | お気に入り | ユーザー別・Asset別に永続保存し、共有・ACL分離、3表示と詳細の状態同期、お気に入り内検索、登録順とページングが動作する |
-| AC-22 | コンテンツレーティング | WD14のレーティングを独立保存し、自動判定・手動設定保持・各段階の検索切替・3表示のR-18表示・ACL分離を保つ |
+| AC-22 | コンテンツレーティング | CL Tagger v2のレーティングを独立保存し、自動判定・手動設定保持・各段階の検索切替・3表示のR-18表示・ACL分離を保つ |
 | AC-23 | 個人向け推薦 | お気に入りの特徴によるTF-IDF推薦、情報不足の区別、関連度・多様性・表示履歴による抽選、キャッシュ・セッションの永続化、変更時失効、ACL分離、探索からの復帰を保つ |
 | AC-24 | 複数・分割アップロード | 最大10ファイルの並列送信・部分再送・再結合・境界サイズ・ACL・重複排除・一時データ回収が動作する |
 | AC-25 | シリーズ | 2種類の構成・順序・競合更新、画像の1件化・メタデータ集約、ACL分離、候補提示、解除・連続閲覧が動作 |
