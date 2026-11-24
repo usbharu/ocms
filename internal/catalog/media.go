@@ -112,7 +112,21 @@ func (s *Service) authorizeBlobs(w http.ResponseWriter, r *http.Request) {
 	if in.Favorites {
 		filter += ` AND ` + favoriteCondition
 	}
-	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE `+displayed+` AND (a.blob_ids && $2::text[] OR a.id=ANY($3::uuid[]) OR (a.series_kind='composite' AND a.member_ids && $3::text[]))`+filter+` ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs, in.GroupID)
+	// Start with matching IDs so authorizing a short list does not build
+	// Blob and member arrays for every asset in the library.
+	rows, err := s.DB.Query(r.Context(), selectAsset+`WHERE a.id IN (
+ SELECT unnest($3::uuid[])
+ UNION ALL
+ SELECT m.series_id FROM catalog.series_members m
+ JOIN catalog.series s ON s.asset_id=m.series_id AND s.kind='composite'
+ WHERE m.asset_id=ANY($3::uuid[])
+ UNION ALL
+ SELECT o.asset_id FROM catalog.asset_originals o WHERE o.blob_id=ANY($2::uuid[])
+ UNION ALL
+ SELECT l.series_id FROM catalog.asset_originals o
+ JOIN catalog.series_leaves l ON l.asset_id=o.asset_id
+ WHERE o.blob_id=ANY($2::uuid[])
+) AND `+displayed+filter+` ORDER BY a.created_at DESC`, user(r), in.IDs, in.AssetIDs, in.GroupID)
 	if err != nil {
 		platform.RespondError(w, err)
 		return

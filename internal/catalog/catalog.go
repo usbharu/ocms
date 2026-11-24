@@ -331,7 +331,10 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 	platform.JSON(w, 200, map[string]string{"asset_id": assetID, "state": "completed"})
 }
 
-const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,a.characters,a.rating,` + favoriteCondition + `,a.series_kind,a.series_version,a.composite_id,a.cover_asset_id,a.blob_ids,a.member_ids,a.blob_asset_ids FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
+// Ordinary assets have at most one original. Only series need to expand their leaves.
+const displayBlobIDs = `CASE WHEN a.series_kind='' THEN ARRAY(SELECT o.blob_id::text WHERE o.blob_id IS NOT NULL) ELSE a.blob_ids END`
+const displayBlobAssetIDs = `CASE WHEN a.series_kind='' THEN ARRAY(SELECT o.asset_id::text WHERE o.asset_id IS NOT NULL) ELSE a.blob_asset_ids END`
+const selectAsset = `SELECT a.id,a.filename,a.mime_type,a.tags,a.status,o.blob_id,a.characters,a.rating,` + favoriteCondition + `,a.series_kind,a.series_version,a.composite_id,a.cover_asset_id,` + displayBlobIDs + `,a.member_ids,` + displayBlobAssetIDs + ` FROM catalog.display_assets a LEFT JOIN catalog.asset_originals o ON o.asset_id=a.id `
 const allowed = `a.deleted_at IS NULL AND (a.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=a.id AND g.principal_id=$1)) AND NOT EXISTS(SELECT 1 FROM catalog.series_leaves l JOIN catalog.assets x ON x.id=l.asset_id WHERE l.series_id=a.id AND NOT(x.owner_id=$1 OR EXISTS(SELECT 1 FROM catalog.grants g WHERE g.asset_id=x.id AND g.principal_id=$1)))`
 const displayed = allowed + ` AND a.composite_id=''`
 
