@@ -77,6 +77,22 @@ test('searches tags, switches list and handles empty results', async ({
   await expect(page.locator('.tag-list li')).toHaveCount(3);
 });
 
+test('sorts tags by asset addition order and keeps it in the URL', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: '一覧', exact: true }).click();
+  await expect(page.getByLabel('タグの並べ替え')).toHaveValue('count');
+  const request = page.waitForRequest(
+    (r) => new URL(r.url()).searchParams.get('sort') === 'added_desc',
+  );
+  await page.getByLabel('タグの並べ替え').selectOption('added_desc');
+  await request;
+  await expect(page).toHaveURL(/sort=added_desc/);
+  await page.reload();
+  await expect(page.getByLabel('タグの並べ替え')).toHaveValue('added_desc');
+  await expect(page.locator('.tag-list li')).toHaveCount(3);
+});
+
 test('the existing tag list remains usable during refresh', async ({
   page,
 }) => {

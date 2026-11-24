@@ -401,12 +401,16 @@ main {
 .view-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
+  max-width: 100%;
 }
 .view-controls select {
   font-size: 12px;
   padding: 8px 28px 8px 10px;
+  max-width: 100%;
 }
 .files-grid,
 .files-detailed-grid {
@@ -1242,6 +1246,19 @@ summary .count {
   display: flex;
   flex-wrap: wrap;
 }
+.tag-sort {
+  display: grid;
+  gap: 8px;
+}
+.tag-sort > span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.tag-sort select {
+  font-size: 12px;
+  padding: 8px 28px 8px 10px;
+  max-width: 100%;
+}
 .tag-hint {
   color: var(--muted-foreground);
   font-size: 13px;
@@ -1328,6 +1345,9 @@ summary .count {
   .tag-search {
     flex-basis: 100%;
     max-width: none;
+  }
+  .tag-sort {
+    flex-basis: 100%;
   }
   .tags-toolbar .view-switch {
     width: auto;

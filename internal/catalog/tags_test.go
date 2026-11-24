@@ -40,6 +40,26 @@ func TestBlobTagsRequiresLiveLeaseBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestLabelOrder(t *testing.T) {
+	for _, tc := range []struct {
+		sort, order string
+		valid       bool
+	}{
+		{"", `asset_count DESC,name COLLATE "C"`, true},
+		{"count", `asset_count DESC,name COLLATE "C"`, true},
+		{"added_desc", `latest_at DESC,name COLLATE "C"`, true},
+		{"added_asc", `earliest_at ASC,name COLLATE "C"`, true},
+		{"unknown", "", false},
+	} {
+		t.Run(tc.sort, func(t *testing.T) {
+			order, valid := labelOrder(tc.sort)
+			if order != tc.order || valid != tc.valid {
+				t.Fatalf("got %q, %v; want %q, %v", order, valid, tc.order, tc.valid)
+			}
+		})
+	}
+}
+
 func TestAssetTagsIncludeRoomForAutomaticLabels(t *testing.T) {
 	if !validAssetTags(make([]string, 512)) || validAssetTags(make([]string, 513)) || validAssetTags([]string{strings.Repeat("x", 257)}) {
 		t.Fatal("invalid combined tag limit")

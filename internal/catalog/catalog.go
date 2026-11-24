@@ -385,12 +385,21 @@ type listOptions struct {
 	offset     int
 	kind       string
 	ratings    []string
+	sort       string
 }
 
 func parseListOptions(r *http.Request) (listOptions, error) {
-	options := listOptions{limit: 200, kind: r.URL.Query().Get("kind"), seriesKind: r.URL.Query().Get("series_kind")}
+	options := listOptions{limit: 200, kind: r.URL.Query().Get("kind"), seriesKind: r.URL.Query().Get("series_kind"), sort: r.URL.Query().Get("sort")}
 	if len(r.URL.Query()["series_kind"]) > 1 || (options.seriesKind != "" && options.seriesKind != "collection" && options.seriesKind != "composite") {
 		return options, errors.New("invalid series kind")
+	}
+	if len(r.URL.Query()["sort"]) > 1 {
+		return options, errors.New("duplicate sort parameter")
+	}
+	switch options.sort {
+	case "", "created_desc", "created_asc", "updated_desc", "updated_asc":
+	default:
+		return options, errors.New("invalid asset sort")
 	}
 	for key, target := range map[string]*int{"limit": &options.limit, "offset": &options.offset} {
 		if values, ok := r.URL.Query()[key]; ok {
@@ -414,6 +423,19 @@ func parseListOptions(r *http.Request) (listOptions, error) {
 		return options, nil
 	default:
 		return options, errors.New("invalid asset kind")
+	}
+}
+
+func assetOrder(sort string) string {
+	switch sort {
+	case "created_asc":
+		return ` ORDER BY a.created_at ASC,a.id ASC`
+	case "updated_desc":
+		return ` ORDER BY a.updated_at DESC,a.id DESC`
+	case "updated_asc":
+		return ` ORDER BY a.updated_at ASC,a.id ASC`
+	default:
+		return ` ORDER BY a.created_at DESC,a.id DESC`
 	}
 }
 
@@ -444,15 +466,22 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	} else if options.seriesKind == "composite" {
 		where += ` AND a.series_kind='composite'`
 	}
-	order := ` ORDER BY a.created_at DESC,a.id DESC`
+	order := assetOrder(options.sort)
 	where += ` AND ` + groupCondition(7)
 	countQuery := `SELECT count(*) FROM catalog.display_assets a ` + where
 	pageQuery := selectAsset + `WHERE a.id IN (SELECT a.id FROM catalog.display_assets a ` + where + order + ` LIMIT $8 OFFSET $9)` + order
 	if favorites {
 		// Resolve the principal's favorites once, page first, then expand the
-		// display metadata for the selected rows.
+		// display metadata for the selected rows. The default remains favorite
+		// registration order; an explicit Asset sort overrides it.
 		countQuery = favoriteTargetsCTE + ` SELECT count(*) FROM catalog.display_assets a JOIN favorite_targets ft ON ft.asset_id=a.id ` + where
-		pageQuery = favoriteTargetsCTE + `,paged AS MATERIALIZED (SELECT a.id,ft.created_at AS favorite_at FROM catalog.display_assets a JOIN favorite_targets ft ON ft.asset_id=a.id ` + where + ` ORDER BY ft.created_at DESC,a.id DESC LIMIT $8 OFFSET $9)` + assetSelect(`TRUE`) + `JOIN paged p ON p.id=a.id ORDER BY p.favorite_at DESC,a.id DESC`
+		pageOrder := ` ORDER BY ft.created_at DESC,a.id DESC`
+		outerOrder := ` ORDER BY p.favorite_at DESC,a.id DESC`
+		if options.sort != "" {
+			pageOrder = order
+			outerOrder = order
+		}
+		pageQuery = favoriteTargetsCTE + `,paged AS MATERIALIZED (SELECT a.id,ft.created_at AS favorite_at FROM catalog.display_assets a JOIN favorite_targets ft ON ft.asset_id=a.id ` + where + pageOrder + ` LIMIT $8 OFFSET $9)` + assetSelect(`TRUE`) + `JOIN paged p ON p.id=a.id ` + outerOrder
 	}
 	var total int
 	err = s.DB.QueryRow(r.Context(), countQuery, user(r), q, options.kind, r.URL.Query().Get("tag"), r.URL.Query().Get("character"), options.ratings, group).Scan(&total)

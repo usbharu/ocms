@@ -9,8 +9,11 @@ const meta = {
   args: {
     kind: 'all',
     view: 'list',
+    sort: 'created_desc',
+    favorites: false,
     onKindChange: fn(),
     onViewChange: fn(),
+    onSortChange: fn(),
     onRefresh: fn(),
   },
   render: function Render(args) {
@@ -18,11 +21,14 @@ const meta = {
     useEffect(() => setKind(args.kind), [args.kind]);
     const [view, setView] = useState(args.view);
     useEffect(() => setView(args.view), [args.view]);
+    const [sort, setSort] = useState(args.sort);
+    useEffect(() => setSort(args.sort), [args.sort]);
     return (
       <LibraryToolbar
         {...args}
         kind={kind}
         view={view}
+        sort={sort}
         onKindChange={(kind) => {
           args.onKindChange(kind);
           setKind(kind);
@@ -30,6 +36,10 @@ const meta = {
         onViewChange={(view) => {
           args.onViewChange(view);
           setView(view);
+        }}
+        onSortChange={(sort) => {
+          args.onSortChange?.(sort);
+          setSort(sort);
         }}
       />
     );
@@ -46,6 +56,11 @@ export const Default: Story = {
       'aria-pressed',
       'true',
     );
+    await userEvent.selectOptions(
+      canvas.getByRole('combobox', { name: '並べ替え' }),
+      'updated_desc',
+    );
+    await expect(args.onSortChange).toHaveBeenCalledWith('updated_desc');
     await userEvent.selectOptions(
       canvas.getByRole('combobox', { name: '表示方法' }),
       'grid',
