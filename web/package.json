@@ -48,7 +48,7 @@
     "@vitest/browser-playwright": "5.1.1",
     "husky": "9.1.7",
     "lint-staged": "17.6.2",
-    "msw": "3.0.7",
+    "msw": "3.0.8",
     "msw-storybook-addon": "3.0.3",
     "storybook": "10.6.9",
     "tailwindcss": "4.3.5",
