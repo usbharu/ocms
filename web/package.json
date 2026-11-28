@@ -47,7 +47,7 @@
     "@types/react-dom": "19.3.0",
     "@vitest/browser-playwright": "5.1.2",
     "husky": "9.1.7",
-    "lint-staged": "17.6.2",
+    "lint-staged": "17.6.3",
     "msw": "3.0.8",
     "msw-storybook-addon": "3.0.3",
     "storybook": "10.6.9",
